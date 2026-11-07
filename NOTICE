@@ -16,6 +16,9 @@ craft-web-host, craft-pdf, MIT OR Apache-2.0) and the Craft forks of egui and wi
 (https://github.com/storytold/egui, https://github.com/storytold/winit, MIT OR Apache-2.0).
 Its packaging scripts and release workflows are adapted from WordCraft
 (https://github.com/storytold/wordcraft) and storytold/craft-common-actions (MIT OR Apache-2.0).
+Its icon drawings (crates/ui-egui/src/icons/deck) are vendored from DeckCraft by the ArtCraft
+team (https://github.com/storytold/deckcraft, MIT OR Apache-2.0), and a few are redrawn after
+WordCraft's (MIT OR Apache-2.0).
 
 NoteCraft contains no ArtCraft or Storyteller names, logos or other brand assets beyond plain-text
 references like this one. If you fork it, keep it that way: don't add ArtCraft logos, and remove

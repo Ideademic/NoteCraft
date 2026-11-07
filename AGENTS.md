@@ -65,7 +65,7 @@ A crash loses notes. **This outranks feature work.**
 - Production crate roots start with `#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]`. Tests may `unwrap` (`clippy.toml`).
 
 ## Assets: no Microsoft iconography or images
-**Non-negotiable.** Never copy, trace, screenshot-crop or recreate icons, images, templates, fonts, sounds or any other asset from OneNote, Office or any Microsoft product, not even temporarily. Icons are drawn in code (`crates/ui-egui/src/icons.rs`). Every asset file has a row in [`ATTRIBUTION.md`](ATTRIBUTION.md) (author, source, licence); `cargo xtask assets` fails otherwise. Proprietary fonts are never bundled.
+**Non-negotiable.** Never copy, trace, screenshot-crop or recreate icons, images, templates, fonts, sounds or any other asset from OneNote, Office or any Microsoft product, not even temporarily. Icons are drawn in code (`crates/ui-egui/src/icons/`, mostly vendored from DeckCraft). Every asset file has a row in [`ATTRIBUTION.md`](ATTRIBUTION.md) (author, source, licence); `cargo xtask assets` fails otherwise. Proprietary fonts are never bundled.
 
 ## Clean room
 - The `.one` / `.onetoc2` / `.onepkg` readers and writers are written **only** from Microsoft's public Open Specifications: [MS-ONESTORE] (revision store), [MS-ONE] (OneNote file structure), [MS-DTYP], [MS-OSHARED] (MsoCrc32), [MS-CAB] / the Cabinet format, and observed black-box behaviour.

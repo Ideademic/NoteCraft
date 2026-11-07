@@ -90,7 +90,7 @@ pub fn show(ui: &mut Ui, app: &mut NoteApp) {
     if resp.hovered() {
         ui.painter().circle_filled(back.center(), 18.0, t.nav_hover);
     }
-    icons::paint_styled(ui.painter(), back.shrink(4.0), Icon::Back, icons::Style::mono(t.on_nav));
+    icons::paint_styled(ui.painter(), back.shrink(4.0), Icon::Back, icons::Style::flat(t.on_nav));
     if resp.on_hover_text(tl!("Back (Esc)")).clicked() || (ui.input(|i| i.key_pressed(egui::Key::Escape)) && !ui.ctx().egui_wants_keyboard_input()) {
         close(app);
     }
@@ -114,7 +114,8 @@ pub fn show(ui: &mut Ui, app: &mut NoteApp) {
             ui.painter(),
             Rect::from_center_size(pos2(r.min.x + 30.0, r.center().y), vec2(18.0, 18.0)),
             page.icon(),
-            icons::Style::mono(t.on_nav),
+            // White glyphs: accents clash with (or vanish into) the purple rail.
+            icons::Style::flat(t.on_nav),
         );
         let at = pos2(r.min.x + 50.0, r.center().y);
         if selected {
@@ -415,15 +416,15 @@ fn export(ui: &mut Ui, app: &mut NoteApp) {
         ui,
         "scope",
         &[
-            (ExportScope::Page, tl!("Page"), Icon::NewPage),
+            (ExportScope::Page, tl!("Page"), Icon::Page),
             (ExportScope::Section, tl!("Section"), Icon::NewSection),
-            (ExportScope::Notebook, tl!("Notebook"), Icon::NewNotebook),
+            (ExportScope::Notebook, tl!("Notebook"), Icon::Notebook),
         ],
         ExportScope::Page,
     );
     subheading(ui, tl!("2. Select Format"));
     let formats: Vec<(ExportFormat, &str, Icon)> = match scope {
-        ExportScope::Notebook => vec![(ExportFormat::Onepkg, tl!("OneNote Package (.onepkg)"), Icon::NewNotebook)],
+        ExportScope::Notebook => vec![(ExportFormat::Onepkg, tl!("OneNote Package (.onepkg)"), Icon::Notebook)],
         _ => vec![
             (ExportFormat::Html, tl!("Web Page (.html)"), Icon::Export),
             (ExportFormat::Markdown, tl!("Markdown (.md)"), Icon::Export),

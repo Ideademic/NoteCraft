@@ -2,7 +2,12 @@
 
 Every asset in this repository (icons, images, fonts, sample files) is listed here with its
 author, source and licence. `cargo xtask assets` (part of `cargo xtask ci`) fails when a file
-isn't. Icons in the app are drawn in code (`crates/ui-egui/src/icons.rs`) and need no entry.
+isn't. Icons in the app are drawn in code (`crates/ui-egui/src/icons/`) and need no entry. Most
+of those drawings are vendored from DeckCraft by the ArtCraft team
+([storytold/deckcraft](https://github.com/storytold/deckcraft), `crates/ui-egui/src/icons*`,
+MIT OR Apache-2.0) into `crates/ui-egui/src/icons/deck/`; NoteCraft's additions in the same style
+(`icons/deck/extra.rs`) redraw a few designs from WordCraft
+([storytold/wordcraft](https://github.com/storytold/wordcraft), MIT OR Apache-2.0).
 
 **Policy (mandatory):** NoteCraft contains **no Microsoft (OneNote, Office or other) iconography,
 images, templates, fonts, sounds or other assets**, and no ArtCraft or Storyteller logos. Every
