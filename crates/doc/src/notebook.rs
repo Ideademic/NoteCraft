@@ -138,6 +138,11 @@ pub struct SearchHit {
     pub snippet: String,
 }
 
+/// The welcome page's pen underline: from x, to x, at y (points).
+const UNDERLINE: (f32, f32, f32) = (35.0, 352.0, 128.0);
+/// The welcome page's highlighter sweep: from x, to x, at y (points).
+const SWEEP: (f32, f32, f32) = (33.0, 377.0, 156.5);
+
 impl Notebook {
     /// An empty notebook.
     pub fn new(name: impl Into<String>) -> Notebook {
@@ -145,34 +150,50 @@ impl Notebook {
     }
 
     /// The notebook a first start opens: "My Notebook" ▸ "Quick Notes" ▸ "Welcome to NoteCraft",
-    /// a page with a note container and a little ink.
+    /// a small demo page: a heading underlined with the pen, a short intro with a highlighter
+    /// sweep over its key sentence, and a To Do list to try.
     pub fn new_default() -> Notebook {
         let mut page = Page::new("Welcome to NoteCraft");
         let mut outline = Outline::with_text(
             CONTENT_ORIGIN,
-            "NoteCraft keeps your notes in notebooks, sections and pages.\n\
-             Click anywhere on a page to start typing.\n\
-             Use the Draw tab to write or sketch with a pen, pencil or highlighter.\n\
-             Everything is saved automatically.",
+            "A notebook for everything you want to remember\n\
+             \n\
+             Notes live in notebooks, sections and pages, like a binder with tabs.\n\
+             Click anywhere on a page to start typing, and everything saves itself.\n\
+             \n\
+             Things to try\n\
+             Open the Welcome page\n\
+             Click below this list and type a note of your own\n\
+             Sketch something with the Pen on the Draw tab\n\
+             Add a section with the + next to the section tabs",
         );
-        if let Some(first) = outline.paragraphs.first_mut() {
-            first.style = crate::ParaStyle::Heading2;
+        for (i, p) in outline.paragraphs.iter_mut().enumerate() {
+            match i {
+                0 => p.style = crate::ParaStyle::Heading2,
+                5 => p.style = crate::ParaStyle::Heading3,
+                6 => p.tag = Some(crate::Tag::ToDo { checked: true }),
+                7..=9 => p.tag = Some(crate::Tag::ToDo { checked: false }),
+                _ => {}
+            }
         }
-        if let Some(p) = outline.paragraphs.get_mut(1) {
-            p.tag = Some(crate::Tag::ToDo { checked: false });
-        }
-        outline.width = 420.0;
+        outline.width = 480.0;
         page.elements.push(PageElement::new(ElementKind::Outline(outline)));
-        // An underline swoosh and a highlight over the first line.
-        let swoosh = (0..=24).map(|i| {
-            let t = i as f32 / 24.0;
-            InkPoint::new(40.0 + t * 380.0, 236.0 + (t * std::f32::consts::PI).sin() * 6.0, 0.6 + 0.4 * (t * std::f32::consts::PI).sin())
+        // A pen underline under the heading: one confident stroke, heavier in the middle.
+        let underline = (0..=32).map(|i| {
+            let t = i as f32 / 32.0;
+            let wave = (t * std::f32::consts::PI).sin();
+            InkPoint::new(UNDERLINE.0 + t * (UNDERLINE.1 - UNDERLINE.0), UNDERLINE.2 + wave * 2.5 - t * 1.5, 0.55 + 0.45 * wave)
         });
-        let mut pen = InkStroke::new(InkTool::Pen, swoosh.collect());
+        let mut pen = InkStroke::new(InkTool::Pen, underline.collect());
         pen.color = Color::NOTECRAFT;
         pen.width = 2.5;
         page.ink.push(pen);
-        page.ink.push(InkStroke::new(InkTool::Highlighter, vec![InkPoint::new(40.0, 116.0, 1.0), InkPoint::new(260.0, 116.0, 1.0)]));
+        // A highlighter sweep over the sentence that matters, drifting up a touch like a hand.
+        let sweep = (0..=12).map(|i| {
+            let t = i as f32 / 12.0;
+            InkPoint::new(SWEEP.0 + t * (SWEEP.1 - SWEEP.0), SWEEP.2 - t * 1.2, 1.0)
+        });
+        page.ink.push(InkStroke::new(InkTool::Highlighter, sweep.collect()));
         let mut quick = Section::new("Quick Notes", Color::section_color(0));
         quick.pages.push(page);
         let mut nb = Notebook::new("My Notebook");
@@ -408,7 +429,17 @@ mod tests {
         assert_eq!(p.title, "Welcome to NoteCraft");
         assert_eq!(p.elements.len(), 1);
         assert_eq!(p.ink.len(), 2);
-        assert!(p.ink.iter().any(|s| s.tool == InkTool::Highlighter));
+        // The highlighter sweeps the whole sentence, the pen underlines the heading.
+        let hl = p.ink.iter().find(|s| s.tool == InkTool::Highlighter).unwrap();
+        let xs = |s: &InkStroke| s.points.iter().map(|q| q.x).fold((f32::MAX, f32::MIN), |(a, b), x| (a.min(x), b.max(x)));
+        let (from, to) = xs(hl);
+        assert!(from <= 36.0 && to >= 370.0, "{from}..{to}");
+        assert!(hl.points.len() > 2, "a sweep, not a ruler line");
+        let pen = p.ink.iter().find(|s| s.tool == InkTool::Pen).unwrap();
+        assert!(xs(pen).1 - xs(pen).0 > 300.0);
+        let ElementKind::Outline(o) = &p.elements[0].kind else { panic!("an outline") };
+        assert_eq!(o.paragraphs.iter().filter(|q| matches!(q.tag, Some(crate::Tag::ToDo { .. }))).count(), 4);
+        assert_eq!(o.paragraphs[0].style, crate::ParaStyle::Heading2);
     }
 
     #[test]

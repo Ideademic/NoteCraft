@@ -440,12 +440,21 @@ impl NoteApp {
             let error = notice.starts_with("Couldn't");
             self.set_status(notice, error);
         }
+        self.drain_canvas_messages();
         self.remember_open_notebooks();
         files::drain_inbox(self);
         keys::handle(self, ctx);
         if let Some(hook) = &self.services.on_dirty {
             hook(self.session.is_dirty());
         }
+    }
+
+    /// Moves the canvas's command errors to the status bar (the last one shows). `true` when there
+    /// was one.
+    pub fn drain_canvas_messages(&mut self) -> bool {
+        let Some(last) = std::mem::take(&mut self.canvas.messages).pop() else { return false };
+        self.set_status(last, true);
+        true
     }
 
     /// Records the previous place for Back whenever the current page changes.
@@ -486,6 +495,9 @@ impl NoteApp {
     /// Draws the whole window into `ui`.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         frame::show(self, ui);
+        if self.drain_canvas_messages() {
+            ui.ctx().request_repaint();
+        }
         #[cfg(target_os = "macos")]
         if self.integrated_titlebar {
             craft_window::title_bar::sync_movable(ui.ctx(), &mut self.movable);

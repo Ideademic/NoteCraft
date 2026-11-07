@@ -242,13 +242,14 @@ impl PageElement {
         }
     }
 
-    /// Moves the element's top-left corner to `to` (no-op for opaque content).
+    /// Moves the element's top-left corner to `to` (no-op for opaque content). A printout's page
+    /// pictures move with it, keeping their places relative to its `pos`.
     pub fn set_pos(&mut self, to: Point) {
         let to = to.sanitized();
         match &mut self.kind {
             ElementKind::Outline(o) => o.pos = to,
             ElementKind::Image(i) => i.pos = to,
-            ElementKind::Printout(p) => p.pos = to,
+            ElementKind::Printout(p) => p.move_to(to),
             ElementKind::EmbeddedFile { pos, .. } => *pos = to,
             ElementKind::Opaque { .. } => {}
         }
@@ -555,6 +556,18 @@ pub struct Printout {
 }
 
 impl Printout {
+    /// Moves the printout so `pos` is `to`, its page pictures by the same amount (sanitized: a
+    /// junk position never spreads to the pages).
+    pub fn move_to(&mut self, to: Point) {
+        let to = to.sanitized();
+        let from = self.pos.sanitized();
+        let (dx, dy) = (to.x - from.x, to.y - from.y);
+        for pg in &mut self.pages {
+            pg.pos = pg.pos.sanitized().offset(dx, dy).sanitized();
+        }
+        self.pos = to;
+    }
+
     /// Union of the page pictures, or a point at `pos` when there are none.
     pub fn bounds(&self) -> Rect {
         self.pages.iter().map(|p| Rect::from_min_size(p.pos, p.size)).reduce(Rect::union).unwrap_or(Rect::from_min_size(self.pos, Size::ZERO))
@@ -564,6 +577,30 @@ impl Printout {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn moving_a_printout_moves_its_pages() {
+        let page = |y: f32| ImageElement {
+            pos: Point::new(40.0, y),
+            size: Size::new(100.0, 140.0),
+            data: Arc::default(),
+            format: ImageFormat::Png,
+            alt: String::new(),
+        };
+        let pr =
+            Printout { file_name: "a.pdf".into(), file_bytes: Arc::default(), pos: Point::new(40.0, 100.0), pages: vec![page(100.0), page(250.0)] };
+        let mut el = PageElement::new(ElementKind::Printout(pr));
+        el.set_pos(Point::new(140.0, 120.0));
+        let ElementKind::Printout(p) = &el.kind else { panic!("a printout") };
+        assert_eq!(p.pos, Point::new(140.0, 120.0));
+        assert_eq!(p.pages[0].pos, Point::new(140.0, 120.0));
+        assert_eq!(p.pages[1].pos, Point::new(140.0, 270.0));
+        assert_eq!(el.bounds().map(|b| (b.x, b.y)), Some((140.0, 120.0)));
+        // A junk position doesn't reach the pages.
+        el.set_pos(Point::new(f32::NAN, f32::INFINITY));
+        let ElementKind::Printout(p) = &el.kind else { panic!("a printout") };
+        assert!(p.pages.iter().all(|pg| pg.pos.x.is_finite() && pg.pos.y.is_finite()));
+    }
 
     #[test]
     fn plain_text_and_lookup() {

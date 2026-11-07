@@ -56,9 +56,16 @@ pub fn show(ui: &mut Ui, app: &mut NoteApp) {
             let b = Btn::new(icon, label).tip(&tip).for_command(app, ids::INSERT_DATE_TIME);
             if widgets::big(ui, app, b) {
                 // Typed at the caret while a note is being edited, else in a new note container.
-                let params =
-                    if app.canvas.editing.is_some() { widgets::selection_params(app, json!({ "what": what })) } else { json!({ "what": what }) };
-                app.act(ids::INSERT_DATE_TIME, params);
+                let extra = json!({ "what": what, "utcOffsetMinutes": app.canvas.utc_offset_minutes });
+                let params = if app.canvas.editing.is_some() { widgets::selection_params(app, extra) } else { extra };
+                if let Ok(out) = app.run(ids::INSERT_DATE_TIME, params)
+                    && let Some(pos) = out.value.get("caret").and_then(notecraft_engine::TextPos::from_json)
+                    && let Some(c) = app.canvas.caret.as_mut()
+                {
+                    // The caret goes after the inserted stamp.
+                    c.head = pos;
+                    c.anchor = pos;
+                }
             }
         }
     });

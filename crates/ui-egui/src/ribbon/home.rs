@@ -4,10 +4,11 @@
 //! with no note container being edited they say so in the status bar.
 
 use egui::{Align2, Color32, Rect, Sense, Stroke, Ui, pos2, vec2};
-use notecraft_doc::ParaStyle;
+use notecraft_doc::{ListKind, ParaStyle};
 use notecraft_engine::ids;
 use serde_json::{Value, json};
 
+use crate::canvas::CurrentFormat;
 use crate::icons::{self, Icon};
 use crate::theme::{RADIUS_SMALL, regular};
 use crate::widgets::{self, Btn, CONTENT_H, color};
@@ -26,26 +27,50 @@ pub fn show(ui: &mut Ui, app: &mut NoteApp) {
     widgets::group(ui, app, tl!("Tags"), Icon::ToDo, tags);
 }
 
-/// Runs a formatting command on what the canvas is editing.
+/// Runs a formatting command on what the canvas is editing, the way the canvas's own shortcuts
+/// do ([`crate::canvas::format_command`]): with a collapsed caret outside a word, or the caret
+/// waiting on empty paper, a character format becomes the style of what is typed next.
 pub fn format(app: &mut NoteApp, id: &str, extra: Value) {
-    if app.canvas.editing.is_none() {
-        app.set_status(tl!("Click in a note first: formatting applies to the text you're editing."), false);
+    if app.canvas.caret.is_none() && app.canvas.pending.is_none() {
+        if app.canvas.editing.is_some() {
+            // The shell pointed the canvas at a container but it hasn't placed the caret yet:
+            // format the whole container.
+            let params = widgets::selection_params(app, extra);
+            app.act(id, params);
+        } else {
+            app.set_status(tl!("Click in a note first: formatting applies to the text you're editing."), false);
+        }
         return;
     }
-    let params = widgets::selection_params(app, extra);
-    app.act(id, params);
+    match crate::canvas::format_command(&mut app.canvas, &mut app.session, id, extra) {
+        // The canvas keeps the error in `messages`; the frame moves it to the status bar.
+        Some(Err(_)) => {}
+        Some(Ok(_)) => {
+            if app.ui.status_error {
+                app.ui.status = None;
+                app.ui.status_error = false;
+            }
+        }
+        None => app.set_status(tl!("Click in a note first: formatting applies to the text you're editing."), false),
+    }
 }
 
-/// The selection's formatting (`text.formatAt`) while a note is being edited: each key is the
-/// common value or `"mixed"`.
-pub fn format_state(app: &mut NoteApp) -> Option<Value> {
-    app.canvas.editing?;
-    let params = widgets::selection_params(app, json!({}));
-    app.session.run("text.formatAt", &params).ok().map(|o| o.value)
+/// The formatting at the caret (the pending style included) while a note is being edited, for
+/// the toggle states. `None` fields are mixed.
+pub fn format_state(app: &NoteApp) -> Option<CurrentFormat> {
+    crate::canvas::current_format(&app.canvas, &app.session)
 }
 
-fn is_on(state: &Option<Value>, key: &str) -> bool {
-    state.as_ref().and_then(|v| v.get(key)).and_then(Value::as_bool).unwrap_or(false)
+fn is_on(state: Option<&CurrentFormat>, key: &str) -> bool {
+    let Some(f) = state else { return false };
+    let v = match key {
+        "bold" => f.bold,
+        "italic" => f.italic,
+        "underline" => f.underline,
+        "strike" => f.strike,
+        _ => None,
+    };
+    v.unwrap_or(false)
 }
 
 fn editing_or_selected(app: &NoteApp) -> bool {
@@ -106,11 +131,11 @@ fn current_size(ui: &Ui) -> f32 {
 fn basic_text(ui: &mut Ui, app: &mut NoteApp) {
     let state = format_state(app);
     if let Some(st) = &state {
-        if let Some(f) = st.get("font").and_then(Value::as_str).filter(|f| *f != "mixed") {
-            ui.data_mut(|d| d.insert_temp(egui::Id::unique("nc_font"), f.to_owned()));
+        if let Some(Some(f)) = &st.font {
+            ui.data_mut(|d| d.insert_temp(egui::Id::unique("nc_font"), f.clone()));
         }
-        if let Some(sz) = st.get("size").and_then(Value::as_f64) {
-            ui.data_mut(|d| d.insert_temp(egui::Id::unique("nc_size"), sz as f32));
+        if let Some(Some(sz)) = st.size {
+            ui.data_mut(|d| d.insert_temp(egui::Id::unique("nc_size"), sz));
         }
     }
     widgets::rows(ui, app, |ui, app| {
@@ -150,8 +175,8 @@ fn basic_text(ui: &mut Ui, app: &mut NoteApp) {
                 }
             });
             ui.add_space(4.0);
-            let list = state.as_ref().and_then(|v| v.get("list")).and_then(Value::as_str).unwrap_or("");
-            let b = Btn::new(Icon::Bullets, tl!("Bullets")).checked(list == "bullet").for_command(app, ids::FORMAT_BULLETS);
+            let list = state.as_ref().and_then(|f| f.list).flatten();
+            let b = Btn::new(Icon::Bullets, tl!("Bullets")).checked(list == Some(ListKind::Bullet)).for_command(app, ids::FORMAT_BULLETS);
             if widgets::small_split(ui, app, b, |ui, app| {
                 for (glyph, name) in [("•", "disc"), ("o", "circle"), ("·", "square"), ("–", "dash")] {
                     if widgets::menu_item(ui, None, &format!("{glyph}   {}", bullet_name(name)), true) {
@@ -164,7 +189,7 @@ fn basic_text(ui: &mut Ui, app: &mut NoteApp) {
             }) {
                 format(app, ids::FORMAT_BULLETS, Value::Null);
             }
-            let b = Btn::new(Icon::Numbering, tl!("Numbering")).checked(list == "numbered").for_command(app, ids::FORMAT_NUMBERING);
+            let b = Btn::new(Icon::Numbering, tl!("Numbering")).checked(list == Some(ListKind::Numbered)).for_command(app, ids::FORMAT_NUMBERING);
             if widgets::small_split(ui, app, b, |ui, app| {
                 for (sample, name) in [("1. 2. 3.", "decimal"), ("a. b. c.", "lowerAlpha"), ("A. B. C.", "upperAlpha"), ("i. ii. iii.", "lowerRoman")]
                 {
@@ -198,7 +223,7 @@ fn basic_text(ui: &mut Ui, app: &mut NoteApp) {
                 (Icon::Underline, tl!("Underline"), ids::FORMAT_UNDERLINE, "underline"),
                 (Icon::Strike, tl!("Strikethrough"), ids::FORMAT_STRIKE, "strike"),
             ] {
-                if widgets::small(ui, app, Btn::new(icon, label).icon_only().checked(is_on(&state, key)).for_command(app, id)) {
+                if widgets::small(ui, app, Btn::new(icon, label).icon_only().checked(is_on(state.as_ref(), key)).for_command(app, id)) {
                     format(app, id, Value::Null);
                 }
             }

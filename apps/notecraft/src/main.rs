@@ -50,9 +50,30 @@ struct App {
     saved: Saved,
     /// Recovery snapshots offered at start, waiting for the answer.
     recovery: Vec<PathBuf>,
+    /// When the local UTC offset was last read (`egui` input time, seconds).
+    offset_read_at: Option<f64>,
+}
+
+/// How often the local UTC offset is read again (daylight saving, a changed time zone).
+const OFFSET_REFRESH_SECS: f64 = 60.0;
+
+/// Minutes east of UTC on this computer now (chrono's `Local`, from the system's time zone).
+fn local_utc_offset_minutes() -> i32 {
+    use chrono::Offset as _;
+    chrono::Local::now().offset().fix().local_minus_utc() / 60
 }
 
 impl App {
+    /// Keeps the canvas's dates (title line, Insert Date/Time) in local time.
+    fn refresh_utc_offset(&mut self, ctx: &egui::Context) {
+        let now = ctx.input(|i| i.time);
+        if self.offset_read_at.is_some_and(|t| now >= t && now - t < OFFSET_REFRESH_SECS) {
+            return;
+        }
+        self.offset_read_at = Some(now);
+        self.app.canvas.utc_offset_minutes = local_utc_offset_minutes();
+    }
+
     /// Writes the settings that changed.
     fn store_settings(&mut self) {
         let Some(dir) = &self.settings else { return };
@@ -118,6 +139,7 @@ impl App {
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.refresh_utc_offset(ctx);
         self.app.logic(ctx);
         self.answer_recovery();
         self.track_window(ctx);
@@ -244,7 +266,8 @@ fn main() -> eframe::Result {
             for f in files {
                 notecraft_ui_egui::app::files::open_path(&mut app, &f);
             }
-            Ok(Box::new(App { app, settings, saved: Saved::default(), recovery }))
+            app.canvas.utc_offset_minutes = local_utc_offset_minutes();
+            Ok(Box::new(App { app, settings, saved: Saved::default(), recovery, offset_read_at: None }))
         }),
     )
 }

@@ -11,8 +11,9 @@ Status words: **done**, **partial**, **planned**.
 | Area | Status | Notes |
 |---|---|---|
 | Notebooks, section groups, sections, pages, subpages | done | Create, rename, reorder, colour, delete; page list with subpages |
-| Note containers | done | Click anywhere and type; rich text, paragraph styles, bullets and numbering, To Do / Important / Question tags |
-| Ink | done | Pen, pencil, highlighter with pressure; stroke eraser; lasso select |
+| Note containers | done | Click anywhere and type; rich text, paragraph styles, bullets and numbering, To Do tags (Important / Question tags from files are shown and kept, not yet applied from the ribbon) |
+| Ink | done | Pen, pencil, highlighter with pressure; stroke eraser; lasso select; ink to shape |
+| Search | done | Page titles and text across open notebooks |
 | Pictures and file printouts | done | Insert pictures; insert a PDF as page pictures and ink over it |
 | Page setup | done | Page colour, rule lines and grids |
 | Native storage | done | Notebook folder with `Open Notebook.onetoc2` and one `.one` per section; autosave |
@@ -34,12 +35,11 @@ Status words: **done**, **partial**, **planned**.
   "never crash" fuzzing of every reader.
 
 ### Notes
-- Search across notebooks (text and page titles), with results by section.
 - Tables in note containers.
-- More note tags, and a tags summary.
+- Important, Question and more note tags from the ribbon, and a tags summary.
 - Page templates, page versions, recycle bin.
 - Linked pages (`[[wiki links]]`) and links to paragraphs.
-- Shape and straight-line tools, ink-to-shape, ruler.
+- Shape and straight-line tools, a ruler, Insert Space.
 - Better handwriting: smoothing, pressure curves, stroke-part erasing everywhere.
 
 ### App

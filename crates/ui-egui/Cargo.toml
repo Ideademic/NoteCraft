@@ -21,6 +21,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
 web-time = { workspace = true }
+# Page dates in the host's time zone (`CanvasState::utc_offset_minutes`).
+chrono = { workspace = true }
 image = { workspace = true }
 # Files picked in the browser travel to the engine as base64 (`bytesBase64` params).
 base64 = { workspace = true }

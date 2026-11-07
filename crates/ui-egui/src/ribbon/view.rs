@@ -73,13 +73,14 @@ pub fn show(ui: &mut Ui, app: &mut NoteApp) {
     });
 }
 
-/// Zoom so the page's content (at least [`MIN_PAGE_WIDTH`]) fills the page area's width.
+/// Zoom so the page's content (at least [`MIN_PAGE_WIDTH`]) fills the page area's width. A page
+/// point is [`crate::canvas::PX_PER_PT`] pixels at 100 %.
 pub fn fit_page_width(app: &mut NoteApp) {
-    let Some(area) = app.canvas_rect else { return };
+    let Some(area) = app.canvas_rect.or(app.canvas.last_rect) else { return };
     let content = app.session.current_page().and_then(|p| p.content_bounds()).map_or(0.0, |b| b.x + b.w);
     let page_w = content.max(MIN_PAGE_WIDTH) + 72.0;
-    if area.width() > 40.0 && page_w > 0.0 {
-        app.canvas.set_zoom((area.width() - 40.0) / page_w);
+    if area.width() > 40.0 && page_w.is_finite() && page_w > 0.0 {
+        app.canvas.set_zoom((area.width() - 40.0) / (page_w * crate::canvas::PX_PER_PT));
     }
 }
 
@@ -137,6 +138,9 @@ mod tests {
         app.canvas_rect = Some(egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1400.0, 800.0)));
         fit_page_width(&mut app);
         assert!(app.canvas.zoom > 1.0 && app.canvas.zoom <= notecraft_geom::zoom::MAX);
+        // The page width (672 pt with the margin) fills the 1360 px left over, in pixels.
+        let px = (MIN_PAGE_WIDTH + 72.0) * app.canvas.scale();
+        assert!((px - 1360.0).abs() < 2.0, "{px}");
         for r in RuleLines::ALL {
             assert!(!rule_label(r).is_empty());
         }

@@ -50,6 +50,18 @@ fn errors_reach_the_status_bar() {
 }
 
 #[test]
+fn canvas_errors_reach_the_status_bar() {
+    let mut app = app();
+    app.canvas.messages.push("first".into());
+    app.canvas.messages.push("The note container is gone.".into());
+    assert!(app.drain_canvas_messages());
+    assert!(app.canvas.messages.is_empty());
+    assert_eq!(app.ui.status.as_deref(), Some("The note container is gone."));
+    assert!(app.ui.status_error);
+    assert!(!app.drain_canvas_messages());
+}
+
+#[test]
 fn clicking_each_ribbon_tab_switches_it() {
     let mut h = harness(app());
     h.run_steps(3);
@@ -89,6 +101,35 @@ fn the_panes_add_sections_and_pages() {
     // Undo from the Quick Access Toolbar takes the page back.
     h.get_by_label("Undo").click();
     h.run_steps(3);
+}
+
+#[test]
+fn ribbon_bold_on_empty_paper_bolds_what_is_typed_next() {
+    let mut h = harness(app());
+    h.run_steps(3);
+    // Empty paper well below the welcome note.
+    let rect = h.state().canvas.last_rect.unwrap();
+    let sheet = crate::canvas::page::sheet_rect(rect);
+    let k = h.state().canvas.scale();
+    let p = egui::pos2(sheet.min.x + 120.0 * k - h.state().canvas.scroll.x, sheet.min.y + 420.0 * k - h.state().canvas.scroll.y);
+    h.event(egui::Event::PointerMoved(p));
+    h.step();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+        h.step();
+    }
+    h.run_steps(2);
+    assert!(h.state().canvas.pending.is_some(), "the caret waits on the paper");
+    h.get_by_label("Bold").click();
+    h.run_steps(3);
+    assert_eq!(h.state().canvas.pending_style.bold, Some(true), "Bold becomes the pending style");
+    assert_eq!(crate::canvas::current_format(&h.state().canvas, &h.state().session).and_then(|f| f.bold), Some(true), "the button shows on");
+    h.event(egui::Event::Text("x".into()));
+    h.run_steps(3);
+    let id = h.state().canvas.caret.as_ref().map(|c| c.outline).unwrap();
+    let o = h.state().session.current_page().unwrap().outline(id).unwrap().clone();
+    assert_eq!(o.text(), "x");
+    assert!(o.paragraphs[0].runs.iter().all(|r| r.bold), "{:?}", o.paragraphs[0].runs);
 }
 
 #[test]

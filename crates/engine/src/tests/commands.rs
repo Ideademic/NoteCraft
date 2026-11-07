@@ -38,11 +38,11 @@ fn with(mut v: Value, extra: Value) -> Value {
     v
 }
 
-fn png_b64(w: u32, h: u32) -> String {
+pub(super) fn png_b64(w: u32, h: u32) -> String {
     STANDARD.encode(notecraft_formats::encode_png(w, h, vec![120; (w * h * 4) as usize]).unwrap())
 }
 
-fn tiny_pdf() -> Vec<u8> {
+pub(super) fn tiny_pdf() -> Vec<u8> {
     let content = "1 0 0 rg 0 0 50 50 re f";
     let objects = [
         "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
@@ -222,6 +222,28 @@ fn inserting_pictures_printouts_files_and_dates() {
     assert!(s.current_page().unwrap().outline(o).unwrap().text().starts_with(&format!("{year}-{year}")));
     assert!(s.run(ids::INSERT_DATE_TIME, &json!({"format": "%Q"})).is_err());
     assert!(s.run(ids::INSERT_DATE_TIME, &json!({"utcOffsetMinutes": 1e9})).is_ok());
+}
+
+#[test]
+fn moving_a_printout_moves_its_pages_and_undo_takes_them_back() {
+    let mut s = Session::new_default();
+    let out =
+        s.run(ids::INSERT_PRINTOUT, &json!({"bytesBase64": STANDARD.encode(tiny_pdf()), "name": "doc.pdf", "dpi": 72, "x": 40, "y": 300})).unwrap();
+    let pr = gid(&out.value, "id");
+    let pages = |s: &Session| match &s.current_page().unwrap().element(pr).unwrap().kind {
+        ElementKind::Printout(p) => (p.pos, p.pages.iter().map(|pg| pg.pos).collect::<Vec<_>>()),
+        k => panic!("{k:?}"),
+    };
+    let (pos, before) = pages(&s);
+    s.run(ids::OUTLINE_MOVE, &json!({"id": pr.to_string(), "x": pos.x + 100.0, "y": pos.y + 50.0})).unwrap();
+    let (moved, after) = pages(&s);
+    assert_eq!((moved.x, moved.y), (pos.x + 100.0, pos.y + 50.0));
+    assert_eq!(before.len(), after.len());
+    for (a, b) in before.iter().zip(&after) {
+        assert_eq!((b.x - a.x, b.y - a.y), (100.0, 50.0), "each page moves with the printout");
+    }
+    s.run(ids::EDIT_UNDO, &json!({})).unwrap();
+    assert_eq!(pages(&s), (pos, before));
 }
 
 fn stroke(s: &mut Session, pts: Value) -> Guid {

@@ -559,7 +559,12 @@ fn key_press(ui: &Ui, state: &mut CanvasState, session: &mut Session, lay: &Page
     if let Some(cmd) = shortcut_command(key, m) {
         if cmd == ids::INSERT_DATE_TIME {
             if let Some(c) = ensure_outline(state, session)
-                && let Some(out) = run(state, session, cmd, json!({"outline": c.outline, "at": c.head.to_json(), "page": state.page}))
+                && let Some(out) = run(
+                    state,
+                    session,
+                    cmd,
+                    json!({"outline": c.outline, "at": c.head.to_json(), "page": state.page, "utcOffsetMinutes": state.utc_offset_minutes}),
+                )
                 && let Some(pos) = caret_from(&out)
             {
                 set_head(state, pos, false);

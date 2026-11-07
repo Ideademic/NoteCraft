@@ -217,7 +217,10 @@ fn info(ui: &mut Ui, app: &mut NoteApp) {
             regular(12.0),
             t.text_dim,
         );
-        let counts = crate::i18n::fmt_plain(tl!("{s} sections · {p} pages"), &[("s", &sections.to_string()), ("p", &pages.to_string())]);
+        let sections_text =
+            if sections == 1 { tl!("1 section").to_owned() } else { crate::i18n::fmt_plain(tl!("{n} sections"), &[("n", &sections.to_string())]) };
+        let pages_text = if pages == 1 { tl!("1 page").to_owned() } else { crate::i18n::fmt_plain(tl!("{n} pages"), &[("n", &pages.to_string())]) };
+        let counts = format!("{sections_text} · {pages_text}");
         ui.painter().text(pos2(tx, r.min.y + 58.0), Align2::LEFT_CENTER, counts, regular(12.0), t.text_dim);
         if resp.clicked() {
             app.ui.info_notebook = Some(id);

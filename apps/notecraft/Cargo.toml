@@ -20,6 +20,9 @@ eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "
 egui = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
+# The local UTC offset for dates under page titles and Insert Date/Time: chrono's `clock` feature
+# (iana-time-zone, MIT OR Apache-2.0), enabled for the desktop app only.
+chrono = { workspace = true, features = ["clock"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rfd = { workspace = true }

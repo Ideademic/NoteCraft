@@ -57,26 +57,19 @@
 
 ## A tour
 
-<!-- TODO(screenshots): the coordinator adds docs/images/*.png (hero, ink, printout, dark) here,
-     each with an ATTRIBUTION.md row. Screenshots must show NoteCraft only, never OneNote. -->
-
-<!--
 <p align="center">
   <img src="docs/images/hero.png" alt="NoteCraft with a notebook open: section tabs across the top, the page list on the right and a page with a note container and handwriting" width="100%">
 </p>
 
 <table>
 <tr>
-<td width="50%" valign="top"><img src="docs/images/ink.png" alt="" width="100%"><p align="center"><sub><b>Draw.</b> Pen, pencil and highlighter with pressure, eraser and lasso.</sub></p></td>
-<td width="50%" valign="top"><img src="docs/images/printout.png" alt="" width="100%"><p align="center"><sub><b>Insert.</b> Pictures and PDF printouts you can write on.</sub></p></td>
+<td width="50%" valign="top"><img src="docs/images/ink.png" alt="The Draw tab: tools, pen gallery and colour and thickness" width="100%"><p align="center"><sub><b>Draw.</b> Pen, pencil and highlighter with pressure, eraser and lasso.</sub></p></td>
+<td width="50%" valign="top"><img src="docs/images/printout.png" alt="A page with headings, lists, To Do tags, ink and a picture on college-ruled paper" width="100%"><p align="center"><sub><b>Write anywhere.</b> Note containers, lists, tags, ink and pictures on ruled paper.</sub></p></td>
 </tr>
 <tr>
-<td colspan="2"><img src="docs/images/dark.png" alt="" width="100%"><p align="center"><sub><b>Dark mode.</b></sub></p></td>
+<td colspan="2"><img src="docs/images/dark.png" alt="The same page in dark mode" width="100%"><p align="center"><sub><b>Dark mode.</b></sub></p></td>
 </tr>
 </table>
--->
-
-*Screenshots are coming with the first release.*
 
 ## What works today
 
@@ -86,11 +79,12 @@ Version 0.1.0:
 |---|---|
 | **Notebooks** | Notebooks, section groups, sections and pages, with colours; subpages; rename, reorder and delete |
 | **Pages** | Click anywhere and type: note containers placed freely on the page; page titles with date and time; page colour and rule lines |
-| **Text** | Rich text (bold, italic, underline, colour, highlight and more), paragraph styles, bullets and numbering, indent levels, To Do / Important / Question tags |
-| **Ink** | Pen, pencil and highlighter with pressure, colours and widths; eraser; lasso select |
+| **Text** | Rich text (bold, italic, underline, colour, highlight and more), paragraph styles, bullets and numbering, indent levels, To Do tags (Important and Question tags in opened notebooks are shown and kept) |
+| **Ink** | Pen, pencil and highlighter with pressure, colours and widths; stroke eraser; lasso select; ink to shape |
 | **Insert** | Pictures; PDF file printouts, placed as page images you can ink over |
-| **Files** | `.one` sections and `.onetoc2` notebooks as the native format (a notebook is a folder); `.onepkg` import and export; HTML and Markdown export |
-| **Saving** | No Save button: changes autosave |
+| **Files** | `.one` sections and `.onetoc2` notebooks as the native format (a notebook is a folder; OneNote 2010–2016 desktop files; OneDrive-packaged files are refused); `.onepkg` import and export; HTML, Markdown and plain-text export |
+| **Saving** | No Save button: changes autosave; crash recovery |
+| **Search** | Page titles and text across every open notebook |
 | **Looks** | Light and dark mode; a flat, purple ribbon interface |
 | **Everywhere** | Desktop on macOS, Windows, Linux and FreeBSD; the browser via WebAssembly; a command-line tool |
 

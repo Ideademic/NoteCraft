@@ -183,11 +183,11 @@ mod tests {
     #[test]
     fn finds_pages_in_every_notebook() {
         let mut app = NoteApp::new(notecraft_engine::Session::new_default(), crate::Services::default());
-        let hits = find(&mut app, "pencil");
-        assert_eq!(hits.len(), 1, "the welcome page mentions the pencil");
+        let hits = find(&mut app, "binder");
+        assert_eq!(hits.len(), 1, "the welcome page mentions a binder");
         assert_eq!(hits.first().map(|h| h.section.as_str()), Some("Quick Notes"));
         assert!(find(&mut app, "").is_empty());
         app.act(ids::NOTEBOOK_NEW, json!({"name": "Second"}));
-        assert_eq!(find(&mut app, "pencil").len(), 1);
+        assert_eq!(find(&mut app, "binder").len(), 1);
     }
 }

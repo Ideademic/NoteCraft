@@ -102,7 +102,12 @@ pub fn title_bar(ui: &mut Ui, app: &mut NoteApp) {
     if !shown.is_empty() {
         ui.painter().text(pos2(cx, full.center().y), Align2::CENTER_CENTER, shown, font, t.on_title_bar);
     }
-    // The OS window title (task bar, window lists), only when it changes.
+    // The OS window title (task bar, window lists), only when it changes. Not on the web: the
+    // web shell sets `document.title` itself (eframe's web runner would log the command as
+    // unhandled).
+    if cfg!(target_arch = "wasm32") {
+        return;
+    }
     let key = egui::Id::unique("nc_window_title");
     if ui.data(|d| d.get_temp::<String>(key)).as_deref() != Some(title.as_str()) {
         ui.data_mut(|d| d.insert_temp(key, title.clone()));

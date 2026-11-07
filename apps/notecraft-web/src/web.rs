@@ -403,6 +403,10 @@ impl eframe::App for WebShell {
         if std::mem::take(&mut self.pasted_now) && !self.app.ui.status_error {
             self.app.ui.status = None;
         }
+        // Dates under page titles and Insert Date/Time in the browser's time zone. JavaScript's
+        // offset is UTC minus local, so its sign is flipped.
+        let offset = -js_sys::Date::new_0().get_timezone_offset();
+        self.app.canvas.utc_offset_minutes = if offset.is_finite() { offset.clamp(-14.0 * 60.0, 14.0 * 60.0) as i32 } else { 0 };
         self.app.logic(ctx);
         self.keep(ctx);
     }

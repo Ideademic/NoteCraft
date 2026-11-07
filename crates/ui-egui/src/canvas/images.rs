@@ -56,21 +56,12 @@ fn texture(ctx: &egui::Context, tex: &mut Textures, id: Guid, index: usize, img:
     handle
 }
 
-/// Where a printout's pages are drawn: their own positions, moved with the printout when only
-/// its `pos` was changed (`outline.move`).
-fn printout_offset(p: &notecraft_doc::Printout) -> (f32, f32) {
-    let first = p.pages.iter().map(|pg| (pg.pos.x, pg.pos.y)).reduce(|a, b| (a.0.min(b.0), a.1.min(b.1)));
-    first.map_or((0.0, 0.0), |(x, y)| (p.pos.x - x, p.pos.y - y))
-}
-
 /// An element's rect on the page (points), as the drag in progress would leave it.
 pub fn element_rect(state: &CanvasState, el: &notecraft_doc::PageElement) -> Option<notecraft_doc::Rect> {
     let r = match &el.kind {
         ElementKind::Image(i) => notecraft_doc::Rect::from_min_size(i.pos, i.size),
-        ElementKind::Printout(p) => {
-            let (dx, dy) = printout_offset(p);
-            p.bounds().translate(dx, dy)
-        }
+        // The pages are drawn where they are: `outline.move` moves them with the printout.
+        ElementKind::Printout(p) => p.bounds(),
         ElementKind::EmbeddedFile { .. } => el.bounds()?,
         _ => return None,
     };
@@ -97,11 +88,11 @@ pub fn paint(ctx: &egui::Context, painter: &Painter, state: &CanvasState, page: 
                 draw_picture(painter, texture(ctx, &mut tex, el.id, 0, img), sr, &ink, tokens);
             }
             ElementKind::Printout(p) => {
-                let (mut dx, mut dy) = printout_offset(p);
+                // Pages sit at their own positions (`outline.move` moves them); a drag in
+                // progress shifts them all.
                 let base = notecraft_doc::Rect::from_min_size(p.pos, notecraft_doc::Size::ZERO);
                 let moved = pointer::preview_rect(state, el.id, base);
-                dx += moved.x - base.x;
-                dy += moved.y - base.y;
+                let (dx, dy) = (moved.x - base.x, moved.y - base.y);
                 if let Some(first) = p.pages.first() {
                     // The file's name over the first page.
                     let at = v.pt(first.pos.x + dx, first.pos.y + dy);

@@ -73,9 +73,15 @@ pub fn title_rect(ctx: &egui::Context, page: &Page, v: &View) -> Rect {
 }
 
 fn date_text(page: &Page, offset_minutes: i32) -> (String, String) {
-    let shift = std::time::Duration::from_secs(u64::from(offset_minutes.unsigned_abs()) * 60);
-    let t = if offset_minutes >= 0 { page.created + shift } else { page.created - shift };
-    (t.format("%A, %B %-d, %Y").to_string(), t.format("%-I:%M %p").to_string())
+    // Checked: a hostile file's date near chrono's limits (or a junk offset) must not overflow.
+    let minutes = offset_minutes.clamp(-14 * 60, 14 * 60);
+    match chrono::FixedOffset::east_opt(minutes * 60) {
+        Some(offset) => {
+            let t = page.created.with_timezone(&offset);
+            (t.format("%A, %B %-d, %Y").to_string(), t.format("%-I:%M %p").to_string())
+        }
+        None => (page.created.format("%A, %B %-d, %Y").to_string(), page.created.format("%-I:%M %p").to_string()),
+    }
 }
 
 /// The rule under the title and the creation date and time.
@@ -155,5 +161,15 @@ mod tests {
         let (d, t) = date_text(&p, 60);
         assert!(d.contains(", 20"), "{d}");
         assert!(t.ends_with("AM") || t.ends_with("PM"), "{t}");
+    }
+
+    #[test]
+    fn dates_at_chronos_limits_do_not_overflow() {
+        let mut p = Page::new("x");
+        for (when, offset) in [(chrono::DateTime::<chrono::Utc>::MAX_UTC, i32::MAX), (chrono::DateTime::<chrono::Utc>::MIN_UTC, i32::MIN)] {
+            p.created = when;
+            let (d, _) = date_text(&p, offset);
+            assert!(!d.is_empty());
+        }
     }
 }
