@@ -4,11 +4,27 @@
 //! (wgpu: WebGPU where available, WebGL2 otherwise). Build with `trunk build --release` from this
 //! directory (output in `dist/web`).
 //!
-//! Differences from the desktop app (phase 2): files open through the browser's picker and
-//! arrive in `Services::inbox`; exports download; the scratch notebook is kept in browser
-//! storage (`notecraft_engine::io::MemoryStorage`'s `on_write`).
+//! Differences from the desktop app:
+//! - Open, Import and Insert use the browser's file picker; files can also be dropped on the
+//!   page. `.one` sections picked or dropped together open as one notebook ([`open`]).
+//! - Exports download.
+//! - The notebooks are kept in the browser between visits (`localStorage`, IndexedDB when they
+//!   outgrow it), and so are the preferences and where the user was ([`persist`], [`prefs`]).
+//!   Leaving the page with changes not yet kept asks first.
+//!
+//! URL flags: `?webgl` forces WebGL2; `?fresh` starts with a new notebook, leaving the stored one
+//! until the next save replaces it.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+#[cfg(any(target_arch = "wasm32", test))]
+mod open;
+#[cfg(any(target_arch = "wasm32", test))]
+mod persist;
+#[cfg(any(target_arch = "wasm32", test))]
+mod prefs;
+
+#[cfg(target_arch = "wasm32")]
+mod browser;
 #[cfg(target_arch = "wasm32")]
 mod web;
 

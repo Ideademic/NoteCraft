@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "NoteCraft command line: inspect, dump and convert notebooks; list commands"
+description = "NoteCraft command line: inspect, dump and convert notebooks, run commands headlessly, list commands"
 
 [[bin]]
 name = "notecraft-cli"
@@ -19,4 +19,5 @@ notecraft-engine = { workspace = true }
 notecraft-formats = { workspace = true }
 notecraft-one = { workspace = true }
 notecraft-onepkg = { workspace = true }
+notecraft-onestore = { workspace = true }
 serde_json = { workspace = true }

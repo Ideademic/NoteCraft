@@ -1,137 +1,207 @@
-//! `notecraft-cli`: NoteCraft from the command line.
+//! `notecraft-cli`: NoteCraft from the command line: inspect, dump and convert notebooks, run
+//! engine commands headlessly, list the commands.
+//!
+//! Exit codes: 0 success, 1 a failure (a file that can't be read or written, a command that
+//! failed), 2 a usage error.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod args;
+mod convert;
+mod run;
+mod store;
+mod summary;
+
 use std::io::Write;
-use std::path::Path;
 use std::process::ExitCode;
 
-use notecraft_doc::{Notebook, Section};
-use serde_json::{Value, json};
+use args::{flag, valued};
 
 const USAGE: &str = "\
 notecraft-cli — NoteCraft from the command line
 
 USAGE:
-  notecraft-cli info <path>             notebook name, sections, page counts (JSON)
-  notecraft-cli dump <path>             the whole notebook as JSON
-  notecraft-cli convert <in> <out>      convert by the output's extension: .onepkg, .one (first
-                                        section), .html / .md / .txt (every page), .json
-  notecraft-cli commands [--json]       list every command
-  notecraft-cli -h | --help             this help
-  notecraft-cli --version
+  notecraft-cli info <path> [--section S] [--page P]
+        the notebook, its section tree and pages with counts (JSON)
+  notecraft-cli dump <path> [--section S] [--page P] [--json]
+        every page with its text; --json: the whole model as JSON
+  notecraft-cli dump --store <file.one | file.onetoc2 | file.onepkg>
+        the low-level revision store objects (MS-ONESTORE) as JSON
+  notecraft-cli convert <in> <out> [--section S] [--page P]
+        convert by <out>'s extension: .onepkg, .json, .one (one section), .html (one file,
+        every page), .md, .txt, or a notebook folder (<out> ending in / or
+        Open Notebook.onetoc2, or an existing folder)
+  notecraft-cli run [--notebook <in>] [--script FILE|-] [--cmd 'id={json}']… [--save OUT]…
+        run engine commands headlessly (on <in>, else on a new \"My Notebook\"), print each
+        result as a JSON line, then save the current notebook (by extension, as convert).
+        A script is JSON: {\"notebook\"?, \"commands\": [{\"command\": id, \"params\"?} | id, …],
+        \"save\"?: [OUT, …]}; it runs before the --cmd commands
+  notecraft-cli commands [--json]
+        every command id with its label and shortcut; --json adds the params
+  notecraft-cli [<command>] -h | --help
+  notecraft-cli -V | --version
 
-<path> is a notebook folder, Open Notebook.onetoc2, a .onepkg or a .one file.
+<path>/<in> is a notebook folder, Open Notebook.onetoc2, a .onepkg, a .one section or a
+NoteCraft .json notebook. --section and --page take a name (case-insensitive) or a GUID; a
+selected section group keeps every section in it.
+
+Exit codes: 0 success, 1 failure, 2 usage error.
 ";
 
+const SUBCOMMANDS: &[&str] = &["info", "dump", "convert", "run", "commands"];
+
 /// A failure with its exit code (1: failed, 2: usage).
-struct Fail(u8, String);
+#[derive(Debug)]
+pub struct Fail {
+    pub code: u8,
+    pub msg: String,
+}
+
+impl Fail {
+    pub fn new(msg: impl Into<String>) -> Fail {
+        Fail { code: 1, msg: msg.into() }
+    }
+
+    pub fn usage(msg: impl Into<String>) -> Fail {
+        Fail { code: 2, msg: msg.into() }
+    }
+}
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    match run(&refs) {
+    let mut args = Vec::new();
+    for (i, a) in std::env::args_os().skip(1).enumerate() {
+        match a.into_string() {
+            Ok(s) => args.push(s),
+            Err(a) => {
+                let _ = writeln!(std::io::stderr(), "notecraft-cli: argument {} is not valid Unicode: {}", i + 1, a.to_string_lossy());
+                return ExitCode::from(2);
+            }
+        }
+    }
+    match run(&args) {
         Ok(out) => {
             let mut stdout = std::io::stdout();
+            // A closed pipe (`| head`) is not a crash, just the end.
             if stdout.write_all(out.as_bytes()).and_then(|()| stdout.flush()).is_err() {
                 return ExitCode::from(1);
             }
             ExitCode::SUCCESS
         }
-        Err(Fail(code, msg)) => {
+        Err(Fail { code, msg }) => {
             let _ = writeln!(std::io::stderr(), "notecraft-cli: {msg}");
             ExitCode::from(code)
         }
     }
 }
 
-fn run(args: &[&str]) -> Result<String, Fail> {
-    match args {
-        [] | ["-h" | "--help" | "help"] => Ok(USAGE.to_owned()),
-        ["--version" | "-V"] => Ok(format!("notecraft-cli {}\n", env!("CARGO_PKG_VERSION"))),
-        ["info", path] => Ok(pretty(&info(&open(path)?))),
-        ["dump", path] => serde_json::to_string_pretty(&open(path)?).map(|s| s + "\n").map_err(|e| Fail(1, e.to_string())),
-        ["convert", input, output] => convert(&open(input)?, output).map(|()| String::new()),
-        ["commands"] => Ok(notecraft_engine::registry().all().iter().map(|s| format!("{:<28} {}\n", s.id, s.label)).collect()),
-        ["commands", "--json"] => Ok(pretty(&notecraft_engine::registry().describe())),
-        _ => Err(Fail(2, format!("unrecognised arguments\n\n{USAGE}"))),
-    }
-}
-
-fn pretty(v: &Value) -> String {
+fn pretty(v: &serde_json::Value) -> String {
     serde_json::to_string_pretty(v).map(|s| s + "\n").unwrap_or_default()
 }
 
-fn open(path: &str) -> Result<Notebook, Fail> {
-    notecraft_engine::io::open_path(Path::new(path)).map_err(|e| match e {
-        // Already names the file.
-        notecraft_engine::IoError::Io(m) => Fail(1, m),
-        e => Fail(1, format!("{path}: {e}")),
-    })
+/// The single positional argument a subcommand needs.
+fn one_path<'a>(cmd: &str, p: &'a args::Parsed) -> Result<&'a str, Fail> {
+    match p.positionals.as_slice() {
+        [path] => Ok(path.as_str()),
+        [] => Err(Fail::usage(format!("{cmd}: missing <path>\n\n{USAGE}"))),
+        _ => Err(Fail::usage(format!("{cmd}: one <path> only\n\n{USAGE}"))),
+    }
 }
 
-fn info(nb: &Notebook) -> Value {
-    let sections: Vec<Value> = nb
-        .all_sections()
-        .iter()
-        .map(|s| json!({"name": s.name, "color": s.color, "pages": s.pages.len(), "unsupportedContent": s.source.unsupported_content}))
-        .collect();
-    json!({"name": nb.name, "id": nb.id, "color": nb.color, "sections": sections, "pages": nb.all_sections().iter().map(|s| s.pages.len()).sum::<usize>()})
-}
-
-fn convert(nb: &Notebook, out: &str) -> Result<(), Fail> {
-    let ext = out.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
-    let fail = |e: &dyn std::fmt::Display| Fail(1, e.to_string());
-    let bytes: Vec<u8> = match ext.as_str() {
-        "onepkg" => notecraft_onepkg::write(nb).map_err(|e| fail(&e))?,
-        "one" => {
-            let s: &Section = nb.first_section().ok_or_else(|| Fail(1, "the notebook has no sections".into()))?;
-            notecraft_one::write_section(s).map_err(|e| fail(&e))?
+fn run(args: &[String]) -> Result<String, Fail> {
+    let Some((cmd, rest)) = args.split_first() else { return Ok(USAGE.to_owned()) };
+    let cmd = cmd.as_str();
+    if matches!(cmd, "-h" | "--help" | "help") || (SUBCOMMANDS.contains(&cmd) && rest.iter().any(|a| a == "-h" || a == "--help")) {
+        return Ok(USAGE.to_owned());
+    }
+    match cmd {
+        "-V" | "--version" | "version" => Ok(format!("notecraft-cli {}\n", env!("CARGO_PKG_VERSION"))),
+        "info" => {
+            let p = args::parse(cmd, rest, &[valued("--section"), valued("--page")])?;
+            let nb = convert::open_input(one_path(cmd, &p)?)?;
+            let nb = summary::select(&nb, p.value("--section"), p.value("--page"))?;
+            Ok(pretty(&summary::info(&nb)))
         }
-        "json" => serde_json::to_vec_pretty(nb).map_err(|e| fail(&e))?,
-        "html" | "htm" => {
-            let mut html = String::new();
-            for s in nb.all_sections() {
-                html.push_str(&notecraft_formats::section_to_html(s).map_err(|e| fail(&e))?);
+        "dump" => {
+            let p = args::parse(cmd, rest, &[valued("--section"), valued("--page"), flag("--json"), flag("--store")])?;
+            let path = one_path(cmd, &p)?;
+            if p.has("--store") {
+                let bytes = std::fs::read(path).map_err(|e| Fail::new(format!("{path}: {e}")))?;
+                return store::dump_store(path, &bytes).map(|v| pretty(&v)).map_err(Fail::new);
             }
-            html.into_bytes()
-        }
-        "md" | "txt" => {
-            let mut text = String::new();
-            for p in nb.all_sections().iter().flat_map(|s| s.pages.iter()) {
-                let one = if ext == "md" { notecraft_formats::page_to_markdown(p) } else { notecraft_formats::page_to_text(p) };
-                text.push_str(&one.map_err(|e| fail(&e))?);
-                text.push_str("\n\n");
+            let nb = summary::select(&convert::open_input(path)?, p.value("--section"), p.value("--page"))?;
+            if p.has("--json") {
+                return serde_json::to_string_pretty(&nb).map(|s| s + "\n").map_err(|e| Fail::new(e.to_string()));
             }
-            text.into_bytes()
+            Ok(summary::dump(&nb))
         }
-        _ => return Err(Fail(2, format!("can't convert to `.{ext}` (onepkg, one, html, md, txt, json)"))),
-    };
-    std::fs::write(out, bytes).map_err(|e| Fail(1, format!("{out}: {e}")))
+        "convert" => {
+            let p = args::parse(cmd, rest, &[valued("--section"), valued("--page")])?;
+            let [input, output] = p.positionals.as_slice() else {
+                return Err(Fail::usage(format!("convert: needs <in> and <out>\n\n{USAGE}")));
+            };
+            // Check the output kind before reading a large input.
+            convert::OutKind::of(output)?;
+            let nb = summary::select(&convert::open_input(input)?, p.value("--section"), p.value("--page"))?;
+            let what = convert::write(&nb, output)?;
+            Ok(format!("wrote {what}\n"))
+        }
+        "run" => {
+            let p = args::parse(cmd, rest, &[valued("--notebook"), valued("--script"), valued("--cmd"), valued("--save")])?;
+            if let Some(extra) = p.positionals.first() {
+                return Err(Fail::usage(format!("run: unexpected `{extra}` (commands go in --cmd)")));
+            }
+            let mut plan = run::Plan::default();
+            if let Some(script) = p.value("--script") {
+                run::add_script(&mut plan, script)?;
+            }
+            if let Some(nb) = p.value("--notebook") {
+                plan.notebook = Some(nb.to_owned());
+            }
+            for c in p.values("--cmd") {
+                plan.commands.push(run::parse_cmd(c)?);
+            }
+            plan.saves.extend(p.values("--save").into_iter().map(str::to_owned));
+            for s in &plan.saves {
+                convert::OutKind::of(s)?;
+            }
+            run::run(&plan)
+        }
+        "commands" => {
+            let p = args::parse(cmd, rest, &[flag("--json")])?;
+            if !p.positionals.is_empty() {
+                return Err(Fail::usage("commands: takes no arguments"));
+            }
+            if p.has("--json") {
+                return Ok(pretty(&notecraft_engine::registry().describe()));
+            }
+            Ok(notecraft_engine::registry()
+                .all()
+                .iter()
+                .map(|s| format!("{:<26} {:<36} {}\n", s.id, s.label, s.shortcut.unwrap_or("")).trim_end().to_owned() + "\n")
+                .collect())
+        }
+        other => Err(Fail::usage(format!("unknown command `{}`\n\n{USAGE}", other.chars().take(60).collect::<String>()))),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn usage_and_commands() {
-        assert!(run(&[]).is_ok_and(|s| s.contains("USAGE")));
-        assert!(run(&["commands"]).is_ok_and(|s| s.contains("page.new")));
-        assert!(matches!(run(&["bogus"]), Err(Fail(2, _))));
-        assert!(matches!(run(&["info", "/no/such/file.one"]), Err(Fail(1, _))));
+    fn s(v: &[&str]) -> Vec<String> {
+        v.iter().map(|x| (*x).to_owned()).collect()
     }
 
     #[test]
-    fn info_and_json_convert() {
-        let nb = Notebook::new_default();
-        let v = info(&nb);
-        assert_eq!(v["sections"][0]["name"], "Quick Notes");
-        let out = std::env::temp_dir().join(format!("notecraft-cli-{}.json", std::process::id()));
-        let out_s = out.to_string_lossy().into_owned();
-        convert(&nb, &out_s).map_err(|Fail(_, m)| m).unwrap();
-        let back: Notebook = serde_json::from_slice(&std::fs::read(&out).unwrap()).unwrap();
-        let _ = std::fs::remove_file(&out);
-        assert_eq!(back, nb);
-        assert!(matches!(convert(&nb, "x.docx"), Err(Fail(2, _))));
+    fn usage_and_commands() {
+        assert!(run(&[]).is_ok_and(|s| s.contains("USAGE")));
+        assert!(run(&s(&["convert", "--help"])).is_ok_and(|s| s.contains("USAGE")));
+        assert!(run(&s(&["--version"])).is_ok_and(|s| s.starts_with("notecraft-cli ")));
+        assert!(run(&s(&["commands"])).is_ok_and(|s| s.contains("page.new")));
+        assert!(run(&s(&["commands", "--json"])).is_ok_and(|s| s.contains("\"params\"")));
+        assert!(matches!(run(&s(&["bogus"])), Err(Fail { code: 2, .. })));
+        assert!(matches!(run(&s(&["info"])), Err(Fail { code: 2, .. })));
+        assert!(matches!(run(&s(&["info", "/no/such/file.one"])), Err(Fail { code: 1, .. })));
+        assert!(matches!(run(&s(&["convert", "a.one", "b.docx"])), Err(Fail { code: 2, .. })));
+        assert!(matches!(run(&s(&["run", "page.new"])), Err(Fail { code: 2, .. })));
     }
 }
