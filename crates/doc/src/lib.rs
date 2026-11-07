@@ -39,10 +39,15 @@ pub enum DocError {
 
 /// The current time. Uses `web-time`, so it works in the browser too (`SystemTime::now()`
 /// panics on wasm32-unknown-unknown); a clock before 1970 reads as the epoch.
+///
+/// Rounded down to whole 100 ns ticks, the resolution of the FILETIME stamps `.one` files store,
+/// so a page's times survive a save and reopen unchanged on every platform (Linux clocks have
+/// nanosecond resolution).
 pub fn now() -> DateTime<Utc> {
     let since = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).unwrap_or_default();
     let secs = i64::try_from(since.as_secs()).unwrap_or(0);
-    DateTime::from_timestamp(secs, since.subsec_nanos()).unwrap_or_default()
+    let nanos = since.subsec_nanos() / 100 * 100;
+    DateTime::from_timestamp(secs, nanos).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -50,5 +55,10 @@ mod tests {
     #[test]
     fn now_is_after_2020() {
         assert!(super::now().timestamp() > 1_577_836_800);
+    }
+
+    #[test]
+    fn now_fits_filetime_ticks() {
+        assert_eq!(super::now().timestamp_subsec_nanos() % 100, 0);
     }
 }
