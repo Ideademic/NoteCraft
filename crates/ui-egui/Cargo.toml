@@ -22,6 +22,9 @@ serde_json = { workspace = true }
 log = { workspace = true }
 web-time = { workspace = true }
 image = { workspace = true }
+# Files picked in the browser travel to the engine as base64 (`bytesBase64` params).
+base64 = { workspace = true }
 
 [dev-dependencies]
-egui_kittest = { workspace = true }
+# Headless window tests and the `ui_shot` example (renders PNGs offscreen with wgpu).
+egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }

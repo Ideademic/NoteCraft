@@ -13,13 +13,13 @@ pub enum OpenPurpose {
     Notebook,
     /// A notebook folder (desktop).
     NotebookFolder,
-    /// Insert ▸ Pictures.
+    /// Insert › Pictures.
     Picture,
-    /// Insert ▸ File Printout (PDF).
+    /// Insert › File Printout (PDF).
     Printout,
-    /// Insert ▸ File Attachment.
+    /// Insert › File Attachment.
     Attachment,
-    /// File ▸ Import a `.onepkg` or `.one`.
+    /// File › Import a `.onepkg` or `.one`.
     Import,
 }
 

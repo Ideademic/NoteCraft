@@ -14,6 +14,8 @@ workspace = true
 notecraft-doc = { workspace = true }
 notecraft-engine = { workspace = true }
 notecraft-ui-egui = { workspace = true }
+# Who draws the window frame (the desktop, or the app on GNOME's Wayland session).
+craft-window = { workspace = true }
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "clipboard", "wayland", "x11", "links"] }
 egui = { workspace = true }
 serde_json = { workspace = true }
