@@ -118,6 +118,10 @@ pub fn notebook_pane(ui: &mut Ui, app: &mut NoteApp) {
     if resp.on_hover_text(tl!("Create a new notebook")).clicked() {
         crate::backstage::open(app, crate::backstage::BackstagePage::New);
     }
+    // egui saves a resizable panel's *used* rect as its width for the next frame. The list above
+    // stops 1 px short of the edge, so without claiming the whole pane it lost a pixel on every
+    // repaint and shrank back after being dragged wider.
+    ui.expand_to_include_rect(full);
 }
 
 fn draw_row(ui: &mut Ui, app: &mut NoteApp, row: &Row) {
