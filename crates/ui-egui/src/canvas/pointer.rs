@@ -39,6 +39,9 @@ pub enum Gesture {
     Lasso { points: Vec<Point> },
     /// Dragging the ink selection.
     InkMove { from: Point, to: Point },
+    /// Dragging out a shape with the Shape tool: where the drag started and is now (page
+    /// points), and whether Shift constrains it.
+    Shape { kind: super::ShapeKind, from: Point, to: Point, constrain: bool },
 }
 
 /// Whether a drag is under way.
@@ -351,10 +354,10 @@ pub fn cursor(ui: &Ui, state: &CanvasState, session: &Session, v: &View, lay: &P
         Gesture::Resize { .. } => CursorIcon::ResizeHorizontal,
         Gesture::ImageResize { corner, .. } => corner_cursor(*corner),
         Gesture::SelectText { .. } => CursorIcon::Text,
-        Gesture::Ink { .. } | Gesture::Lasso { .. } => CursorIcon::Crosshair,
+        Gesture::Ink { .. } | Gesture::Lasso { .. } | Gesture::Shape { .. } => CursorIcon::Crosshair,
         Gesture::Erase { .. } => CursorIcon::None,
         Gesture::None => match state.tool {
-            Tool::Pen | Tool::Pencil | Tool::Highlighter | Tool::Lasso => CursorIcon::Crosshair,
+            Tool::Pen | Tool::Pencil | Tool::Highlighter | Tool::Lasso | Tool::Shape(_) => CursorIcon::Crosshair,
             Tool::Eraser => CursorIcon::None,
             Tool::Type | Tool::Select => hover_icon(state, session, v, lay, at),
         },

@@ -3,11 +3,12 @@
 //! a highlighter is wide, see-through, flat-ended and drawn under the text.
 //!
 //! Tools: the pens draw a live stroke and commit it on release with `draw.stroke` (pressure from
-//! a pen or touch screen's `Event::Touch` force, else 0.5, which draws at full width); Ink to
-//! Shape runs `draw.inkToShape` on it. The eraser removes strokes it passes over
-//! (`draw.eraseAt`, one undo step per drag) and shows its size as a circle. The lasso draws a
-//! loop and selects the ink inside (`draw.lassoSelect`); the selection shows a dashed box, a drag
-//! inside it moves the ink (`draw.moveSelection`) and Delete deletes it.
+//! a pen or touch screen's `Event::Touch` force, else 0.5, which draws at full width); with Ink to
+//! Shape on, the engine redraws it as a shape in that same command. The eraser removes strokes it
+//! passes over (`draw.eraseAt`, one undo step per drag) and shows its size as a circle. The lasso
+//! draws a loop and selects the ink inside (`draw.lassoSelect`); the selection shows a dashed box,
+//! a drag inside it moves the ink (`draw.moveSelection`) and Delete deletes it. The Shape tool is
+//! in [`super::shape`].
 
 use egui::{Color32, Mesh, Painter, Pos2, Rect, Shape, Stroke, Ui, pos2, vec2};
 use notecraft_doc::ink::MAX_POINTS;
@@ -41,7 +42,7 @@ pub fn reported_pressure(ui: &Ui) -> Option<f32> {
 }
 
 /// The colour a stroke is drawn in.
-fn stroke_color(tool: InkTool, c: notecraft_doc::Color, ink: &Ink) -> Color32 {
+pub(crate) fn stroke_color(tool: InkTool, c: notecraft_doc::Color, ink: &Ink) -> Color32 {
     let base = ink.adapt(color32(c.with_alpha(255)));
     let base = if tool == InkTool::Pencil { mix(base, ink.paper, 0.18) } else { base };
     let a = (f32::from(c.a) * tool.alpha()).round().clamp(0.0, 255.0) as u8;
@@ -71,39 +72,69 @@ pub fn paint_stroke(painter: &Painter, v: &View, samples: &[(Point, f32)], tool:
         }
         return;
     }
+    // Each sample becomes a cross-section of four vertices (feathered edges); a bend is joined
+    // with a mitre so the line keeps its width round a corner, and a sharp corner (a shape's)
+    // ends one strip and starts the next, with a round dot over the joint.
+    let perp = |d: egui::Vec2| {
+        let l = d.length();
+        (l > 1.0e-4).then(|| vec2(-d.y / l, d.x / l))
+    };
     let mut mesh = Mesh::default();
+    let mut corners: Vec<(Pos2, f32)> = Vec::new();
     let n = pts.len();
+    let mut ring = 0u32;
     for i in 0..n {
         let (p, hw) = pts.get(i).copied().unwrap_or(first);
-        let prev = pts.get(i.saturating_sub(1)).map_or(p, |q| q.0);
-        let next = pts.get((i + 1).min(n - 1)).map_or(p, |q| q.0);
-        let d = next - prev;
-        let len = d.length();
-        let t = if len > 1.0e-4 { d / len } else { vec2(1.0, 0.0) };
-        let nrm = vec2(-t.y, t.x);
-        let inner = (hw - feather / 2.0).max(0.0);
-        let outer = hw + feather / 2.0;
+        let n_in = i.checked_sub(1).and_then(|j| pts.get(j)).and_then(|q| perp(p - q.0));
+        let n_out = pts.get(i + 1).and_then(|q| perp(q.0 - p));
         // Very thin lines fade instead of thinning below a pixel.
         let c = if hw * 2.0 < feather { color.gamma_multiply((hw * 2.0 / feather).clamp(0.2, 1.0)) } else { color };
-        mesh.colored_vertex(p + nrm * outer, Color32::TRANSPARENT);
-        mesh.colored_vertex(p + nrm * inner, c);
-        mesh.colored_vertex(p - nrm * inner, c);
-        mesh.colored_vertex(p - nrm * outer, Color32::TRANSPARENT);
-        if i > 0 {
-            let a = u32::try_from((i - 1) * 4).unwrap_or(0);
-            let b = a + 4;
-            for k in 0..3 {
-                mesh.add_triangle(a + k, a + k + 1, b + k);
-                mesh.add_triangle(a + k + 1, b + k + 1, b + k);
+        let mut section = |off: egui::Vec2, join: bool| {
+            let inner = (hw - feather / 2.0).max(0.0);
+            let outer = hw + feather / 2.0;
+            mesh.colored_vertex(p + off * outer, Color32::TRANSPARENT);
+            mesh.colored_vertex(p + off * inner, c);
+            mesh.colored_vertex(p - off * inner, c);
+            mesh.colored_vertex(p - off * outer, Color32::TRANSPARENT);
+            if join && ring > 0 {
+                let a = (ring - 1) * 4;
+                let b = a + 4;
+                for k in 0..3 {
+                    mesh.add_triangle(a + k, a + k + 1, b + k);
+                    mesh.add_triangle(a + k + 1, b + k + 1, b + k);
+                }
             }
+            ring += 1;
+        };
+        match (n_in, n_out) {
+            (Some(a), Some(b)) => {
+                let m = a + b;
+                let ml = m.length();
+                let k = if ml > 1.0e-3 { 1.0 / (m / ml).dot(a).max(1.0e-3) } else { f32::INFINITY };
+                if k <= MITER_LIMIT {
+                    section(m / ml * k, true);
+                } else {
+                    section(a, true);
+                    section(b, false);
+                    corners.push((p, hw));
+                }
+            }
+            (Some(a), None) | (None, Some(a)) => section(a, true),
+            (None, None) => section(vec2(0.0, 1.0), true),
         }
     }
     painter.add(Shape::mesh(mesh));
     if round && color.a() == 255 {
         painter.circle_filled(first.0, first.1, color);
         painter.circle_filled(last.0, last.1, color);
+        for (p, hw) in corners {
+            painter.circle_filled(p, hw, color);
+        }
     }
 }
+
+/// Longest mitre at a bend, in half-widths; sharper corners are joined round instead.
+const MITER_LIMIT: f32 = 2.0;
 
 fn samples_of(s: &InkStroke, dx: f32, dy: f32) -> Vec<(Point, f32)> {
     s.points.iter().map(|p| (Point::new(p.x + dx, p.y + dy), s.sample_width(p.pressure))).collect()
@@ -253,6 +284,7 @@ pub fn pointer(
                 }
             }
         }
+        Tool::Shape(kind) => super::shape::pointer(ui, state, session, v, kind, (starts, down, released, at)),
         Tool::Type | Tool::Select => {}
     }
 }
@@ -264,12 +296,7 @@ fn commit_stroke(state: &mut CanvasState, session: &mut Session, tool: InkTool, 
     let pen = state.pens.style(tool);
     let pts: Vec<[f32; 3]> = points.iter().map(|q| [q.x, q.y, q.pressure]).collect();
     let params = json!({"points": pts, "tool": tool.name(), "color": pen.color.to_hex(), "width": pen.width, "page": state.page});
-    let Some(out) = run(state, session, ids::DRAW_STROKE, params) else { return };
-    if state.ink_to_shape
-        && let Some(id) = out.value.get("id").cloned()
-    {
-        run(state, session, ids::DRAW_INK_TO_SHAPE, json!({"ids": [id], "page": state.page}));
-    }
+    run(state, session, ids::DRAW_STROKE, params);
 }
 
 /// Erases along `a`→`b` when a stroke is in reach (no command, and no undo snapshot, otherwise).

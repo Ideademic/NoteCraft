@@ -187,3 +187,64 @@ fn prefs_round_trip_and_survive_junk() {
     assert_eq!(odd.qat, vec![QAT_BACK.to_owned()]);
     assert_eq!(odd.window, None);
 }
+
+/// Drags a side pane's splitter by `dx` and releases it, then moves the pointer around.
+fn drag_splitter(h: &mut Harness<'static, NoteApp>, x0: f32, dx: f32) {
+    let y = 500.0;
+    let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+    h.event(egui::Event::PointerMoved(egui::pos2(x0, y)));
+    h.step();
+    h.event(button(egui::pos2(x0, y), true));
+    h.step();
+    for f in [0.2, 0.6, 1.0] {
+        h.event(egui::Event::PointerMoved(egui::pos2(x0 + dx * f, y)));
+        h.step();
+    }
+    h.event(button(egui::pos2(x0 + dx, y), false));
+    h.step();
+    for i in 0..30 {
+        h.event(egui::Event::PointerMoved(egui::pos2(760.0 + i as f32 * 3.0, 640.0)));
+        h.step();
+    }
+}
+
+/// The notebook pane's right edge (its collapse button sits 18 px inside it).
+fn notebook_edge(h: &Harness<'static, NoteApp>) -> f32 {
+    h.get_by_label("Collapse Notebook Pane").rect().center().x + 18.0
+}
+
+/// The page list's left edge (its Add Page button starts 6 px inside it).
+fn page_list_edge(h: &Harness<'static, NoteApp>) -> f32 {
+    h.get_by_label("Add Page").rect().min.x - 6.0
+}
+
+#[test]
+fn the_notebook_pane_keeps_its_width_while_idle() {
+    let mut h = harness(app());
+    h.run_steps(3);
+    let start = notebook_edge(&h);
+    for i in 0..30 {
+        h.event(egui::Event::PointerMoved(egui::pos2(700.0 + i as f32, 600.0)));
+        h.step();
+    }
+    assert!((notebook_edge(&h) - start).abs() <= 1.0, "pane went from {start} to {}", notebook_edge(&h));
+}
+
+#[test]
+fn a_dragged_notebook_pane_keeps_its_width() {
+    let mut h = harness(app());
+    h.run_steps(3);
+    // The splitter is grabbed just inside the pane's edge.
+    let x0 = notebook_edge(&h) - 2.0;
+    drag_splitter(&mut h, x0, 100.0);
+    assert!((notebook_edge(&h) - (x0 + 100.0)).abs() <= 2.0, "dragged to {}, now {}", x0 + 100.0, notebook_edge(&h));
+}
+
+#[test]
+fn a_dragged_page_list_keeps_its_width() {
+    let mut h = harness(app());
+    h.run_steps(3);
+    let x0 = page_list_edge(&h) + 2.0;
+    drag_splitter(&mut h, x0, -100.0);
+    assert!((page_list_edge(&h) - (x0 - 100.0)).abs() <= 2.0, "dragged to {}, now {}", x0 - 100.0, page_list_edge(&h));
+}

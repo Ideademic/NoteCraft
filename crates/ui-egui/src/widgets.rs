@@ -150,7 +150,7 @@ pub fn tooltip(resp: Response, b: &Btn<'_>) -> Response {
 }
 
 fn icon_style(b: &Btn<'_>, t: &Tokens) -> icons::Style {
-    if b.enabled { icons::Style::new(t.icon, t.accent) } else { icons::Style::mono(t.text_disabled) }
+    if b.enabled { icons::Style::new(t.icon, t.accent) } else { icons::Style::disabled(t.icon) }
 }
 
 fn sense(enabled: bool) -> Sense {
@@ -433,7 +433,7 @@ pub fn menu_item(ui: &mut Ui, icon: Option<Icon>, text: &str, enabled: bool) -> 
     }
     let color = if enabled { t.text } else { t.text_disabled };
     if let Some(icon) = icon {
-        let style = if enabled { icons::Style::new(t.icon, t.accent) } else { icons::Style::mono(t.text_disabled) };
+        let style = if enabled { icons::Style::new(t.icon, t.accent) } else { icons::Style::disabled(t.icon) };
         icons::paint_styled(ui.painter(), Rect::from_center_size(pos2(r.min.x + 14.0, r.center().y), vec2(16.0, 16.0)), icon, style);
     }
     ui.painter().text(pos2(r.min.x + 30.0, r.center().y), egui::Align2::LEFT_CENTER, text, regular(12.5), color);

@@ -1,5 +1,6 @@
-//! The window frame, top to bottom: title bar ([`crate::chrome`]), ribbon tab strip and body
-//! ([`crate::ribbon`]), the body (notebook pane | section tabs over the page | page list,
+//! The window frame, top to bottom: title bar ([`crate::chrome`]; in the ribbon's full-screen mode
+//! a thin strip, [`crate::ribbon::display`]), ribbon tab strip and body ([`crate::ribbon`], as its
+//! display options say), the body (notebook pane | section tabs over the page | page list,
 //! [`crate::panes`]), the status bar. File swaps the body for the backstage; Full Page View keeps
 //! only the title bar, the page and the status bar.
 
@@ -13,30 +14,60 @@ use crate::{backstage, canvas, chrome, panes, ribbon, tl};
 
 pub fn show(app: &mut NoteApp, ui: &mut Ui) {
     let t = app.tokens.clone();
-    let bar_h = if app.integrated_titlebar { MAC_TITLE_BAR_HEIGHT } else { TITLE_BAR_HEIGHT };
-    Panel::top("nc_title_bar").exact_size(bar_h).resizable(false).show_separator_line(false).frame(Frame::NONE.fill(t.title_bar)).show(ui, |ui| {
-        chrome::title_bar(ui, app);
-    });
+    let normal_bar_h = if app.integrated_titlebar { MAC_TITLE_BAR_HEIGHT } else { TITLE_BAR_HEIGHT };
+    // Full-screen mode: a thin strip stands in for the title bar (macOS keeps the height its
+    // traffic lights need). A title bar with app-drawn window buttons stays, with a strip under it.
+    let full_screen = !app.ui.backstage && !app.ui.full_page_view && ribbon::display::full_screen_bar(app);
+    let strip_for_bar = full_screen && app.window_buttons.is_none();
+    let bar_h = match (strip_for_bar, app.integrated_titlebar) {
+        (true, false) => ribbon::display::FULL_SCREEN_BAR_H,
+        _ => normal_bar_h,
+    };
+    let title = Panel::top("nc_title_bar").exact_size(bar_h).resizable(false).show_separator_line(false).frame(Frame::NONE.fill(t.title_bar)).show(
+        ui,
+        |ui| {
+            if strip_for_bar {
+                ribbon::display::full_screen_strip(ui, app);
+            } else {
+                chrome::title_bar(ui, app);
+            }
+        },
+    );
     if app.ui.backstage {
         CentralPanel::default().frame(Frame::NONE.fill(t.panel)).show(ui, |ui| backstage::show(ui, app));
         finish(app, ui);
         return;
     }
     if !app.ui.full_page_view {
-        Panel::top("nc_ribbon_tabs")
-            .exact_size(ribbon::TAB_STRIP_H)
-            .resizable(false)
-            .show_separator_line(false)
-            .frame(Frame::NONE.fill(t.tab_strip))
-            .show(ui, |ui| ribbon::tab_strip(ui, app));
-        if ribbon::body_visible(app) {
-            Panel::top("nc_ribbon").exact_size(ribbon::BODY_H).resizable(false).show_separator_line(false).frame(Frame::NONE.fill(t.ribbon)).show(
-                ui,
-                |ui| {
-                    ribbon::body(ui, app);
-                },
-            );
+        let mut area = title.response.rect;
+        if full_screen && !strip_for_bar {
+            let r = Panel::top("nc_ribbon_reveal")
+                .exact_size(ribbon::display::REVEAL_STRIP_H)
+                .resizable(false)
+                .show_separator_line(false)
+                .frame(Frame::NONE.fill(t.tab_strip))
+                .show(ui, |ui| ribbon::display::reveal_strip(ui, app));
+            area = area.union(r.response.rect);
         }
+        if ribbon::display::tabs_visible(app) {
+            let r = Panel::top("nc_ribbon_tabs")
+                .exact_size(ribbon::TAB_STRIP_H)
+                .resizable(false)
+                .show_separator_line(false)
+                .frame(Frame::NONE.fill(t.tab_strip))
+                .show(ui, |ui| ribbon::tab_strip(ui, app));
+            area = area.union(r.response.rect);
+        }
+        if ribbon::body_visible(app) {
+            let r = Panel::top("nc_ribbon")
+                .exact_size(ribbon::body_h(app))
+                .resizable(false)
+                .show_separator_line(false)
+                .frame(Frame::NONE.fill(t.ribbon))
+                .show(ui, |ui| ribbon::body(ui, app));
+            area = area.union(r.response.rect);
+        }
+        ribbon::display::end_frame(ui, app, area);
     }
     Panel::bottom("nc_status")
         .exact_size(chrome::STATUS_BAR_H)

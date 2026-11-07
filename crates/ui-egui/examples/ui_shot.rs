@@ -4,7 +4,8 @@
 //! `cargo run -p notecraft-ui-egui --example ui_shot -- OUT_DIR [light|dark|all]`
 //!
 //! Writes `main-light.png`, `main-dark.png`, one per ribbon tab (`tab-insert-light.png`…), the
-//! backstage pages, and the collapsed panes, at 1440×900 pt and 2× scale.
+//! backstage pages, the collapsed panes, and the ribbon's layouts and display options
+//! (`simplified-home-light.png`, `ribbon-full-screen-light.png`…), at 1440×900 pt and 2× scale.
 
 use notecraft_engine::Session;
 use notecraft_ui_egui::{Appearance, NoteApp, Services};
@@ -20,7 +21,8 @@ fn main() {
         _ => vec![(Appearance::Light, "light"), (Appearance::Dark, "dark")],
     };
     for (appearance, name) in themes {
-        for shot in notecraft_ui_egui::app::shots::SHOTS {
+        let shots = notecraft_ui_egui::app::shots::SHOTS.iter().chain(notecraft_ui_egui::app::shots::RIBBON_SHOTS.iter());
+        for &shot in shots {
             let mut app = NoteApp::new(Session::new_default(), Services::default());
             app.ui.prefs.appearance = appearance;
             notecraft_ui_egui::app::shots::prepare(&mut app, shot);
@@ -39,6 +41,12 @@ fn main() {
                     app,
                 );
             harness.run_steps(8);
+            // Ribbon display options: the menu is open in its shot.
+            if shot == "ribbon-display-menu" {
+                use egui_kittest::kittest::Queryable;
+                harness.get_by_label(notecraft_ui_egui::ribbon::display::OPTIONS_LABEL).click();
+                harness.run_steps(4);
+            }
             let path = out.join(format!("{shot}-{name}.png"));
             match harness.render() {
                 Ok(img) => {

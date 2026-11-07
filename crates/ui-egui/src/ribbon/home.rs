@@ -431,7 +431,7 @@ fn tags(ui: &mut Ui, app: &mut NoteApp) {
         if enabled && resp.hovered() {
             ui.painter().rect_filled(r, RADIUS_SMALL, t.hover);
         }
-        let style = if enabled { icons::Style::new(t.icon, t.accent) } else { icons::Style::mono(t.text_disabled) };
+        let style = if enabled { icons::Style::new(t.icon, t.accent) } else { icons::Style::disabled(t.icon) };
         icons::paint_styled(ui.painter(), Rect::from_center_size(pos2(r.min.x + 12.0, r.center().y), vec2(15.0, 15.0)), icon, style);
         let color = if enabled { t.text } else { t.text_disabled };
         ui.painter().text(pos2(r.min.x + 24.0, r.center().y), Align2::LEFT_CENTER, label, regular(11.5), color);

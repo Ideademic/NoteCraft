@@ -1,23 +1,33 @@
 //! The ribbon: the tab row (File, Home, Insert, Draw, View) on the accent band under the title
-//! bar, and the selected tab's groups on a light body. File opens the backstage. Double-click a
-//! tab to collapse the ribbon to its tabs (Ctrl+F1); a click on a tab then shows it once.
+//! bar, and the selected tab's commands on a light body. File opens the backstage.
+//!
+//! The body has two layouts ([`display::RibbonLayout`]): Classic, groups of large and small
+//! buttons with captions (OneNote 2016/2019), and Simplified, one thin row of small buttons with
+//! related commands in drop-downs ([`simplified`]). How much of the ribbon shows is a display
+//! option too ([`display::RibbonDisplay`]): always, tabs only (Ctrl+F1, or double-click a tab; a
+//! click on a tab then shows it once), or full-screen mode. Both are chosen from the right-click
+//! menu on empty ribbon space or the arrow at the ribbon's bottom-right corner.
 
+pub mod display;
 pub mod draw;
 pub mod home;
 pub mod insert;
+pub mod simplified;
 pub mod view;
 
 use egui::{Align2, Rect, Sense, Stroke, Ui, pos2, vec2};
 
-use crate::icons::{self, Icon};
 use crate::theme::{paint_strong, regular, text_width};
-use crate::widgets::{CONTENT_H, LABEL_H};
+use crate::widgets::{CONTENT_H, LABEL_H, SMALL_H};
 use crate::{NoteApp, tl};
+use display::{RibbonDisplay, RibbonLayout};
 
 /// Height of the tab row.
 pub const TAB_STRIP_H: f32 = 26.0;
-/// Height of the ribbon body (content, group titles, margins).
+/// Height of the classic ribbon body (content, group titles, margins).
 pub const BODY_H: f32 = CONTENT_H + LABEL_H + 8.0;
+/// Height of the simplified ribbon body: one row of small buttons.
+pub const SIMPLIFIED_H: f32 = SMALL_H + 14.0;
 
 /// Ribbon tabs. File opens the backstage instead of a tab.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -55,23 +65,30 @@ impl RibbonTab {
     }
 }
 
-/// Opens a tab (File opens the backstage); a collapsed ribbon shows the tab once.
+/// Opens a tab (File opens the backstage); a hidden ribbon shows the tab once.
 pub fn select(app: &mut NoteApp, tab: RibbonTab) {
     if tab == RibbonTab::File {
         app.ui.backstage = true;
         app.ui.keytips.off();
         return;
     }
-    if app.ui.ribbon_collapsed {
+    if app.ui.ribbon_display != RibbonDisplay::Always {
         app.ui.ribbon_peek = !(app.ui.ribbon_peek && app.ui.ribbon_tab == tab);
     }
     app.ui.ribbon_tab = tab;
 }
 
-/// Collapses the ribbon to its tabs, or pins it open again.
+/// Ctrl+F1: shows only the tabs, or the whole ribbon again.
 pub fn toggle_collapsed(app: &mut NoteApp) {
-    app.ui.ribbon_collapsed = !app.ui.ribbon_collapsed;
-    app.ui.ribbon_peek = false;
+    display::toggle_tabs_only(app);
+}
+
+/// Height of the ribbon body in the current layout.
+pub fn body_h(app: &NoteApp) -> f32 {
+    match app.ui.ribbon_layout {
+        RibbonLayout::Classic => BODY_H,
+        RibbonLayout::Simplified => SIMPLIFIED_H,
+    }
 }
 
 /// The tab row (on the accent band).
@@ -79,6 +96,8 @@ pub fn tab_strip(ui: &mut Ui, app: &mut NoteApp) {
     let t = app.tokens.clone();
     let full = ui.max_rect();
     ui.painter().rect_filled(full, 0.0, t.tab_strip);
+    // Empty band: right-click for the display options (registered first: the tabs keep theirs).
+    let band = ui.interact(full, ui.scope_id().with("nc_tab_band"), Sense::click());
     let mut x = full.min.x + 6.0;
     for tab in RibbonTab::ALL {
         let label = tab.label();
@@ -86,7 +105,7 @@ pub fn tab_strip(ui: &mut Ui, app: &mut NoteApp) {
         let r = Rect::from_min_max(pos2(x, full.min.y + 2.0), pos2(x + w, full.max.y));
         x += w + 2.0;
         let resp = ui.interact(r, ui.scope_id().with(("ribbon_tab", tab.key())), Sense::click());
-        let active = tab != RibbonTab::File && app.ui.ribbon_tab == tab && !app.ui.backstage && (!app.ui.ribbon_collapsed || app.ui.ribbon_peek);
+        let active = tab != RibbonTab::File && app.ui.ribbon_tab == tab && !app.ui.backstage && display::body_visible(app);
         resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, active, label));
         app.ui.keytips.tab(r, crate::keytips::tab_letter(tab));
         let radius = egui::CornerRadius { nw: 2, ne: 2, sw: 0, se: 0 };
@@ -109,44 +128,51 @@ pub fn tab_strip(ui: &mut Ui, app: &mut NoteApp) {
         if resp.double_clicked() && tab != RibbonTab::File {
             toggle_collapsed(app);
         }
-        resp.context_menu(|ui| {
-            let text = if app.ui.ribbon_collapsed { tl!("Pin the Ribbon") } else { tl!("Collapse the Ribbon") };
-            if crate::widgets::menu_item(ui, None, text, true) {
-                toggle_collapsed(app);
-            }
-        });
+        if tab != RibbonTab::File {
+            resp.context_menu(|ui| display::context_menu(ui, app));
+        }
     }
-    // Collapse / pin at the right end of the row.
-    let r = Rect::from_center_size(pos2(full.max.x - 18.0, full.center().y + 1.0), vec2(24.0, 22.0));
-    let resp = ui.interact(r, ui.scope_id().with("ribbon_pin"), Sense::click());
-    let (icon, tip) = if app.ui.ribbon_collapsed {
-        (Icon::ChevronDown, tl!("Pin the Ribbon (Ctrl+F1)"))
-    } else {
-        (Icon::ChevronUp, tl!("Collapse the Ribbon (Ctrl+F1)"))
-    };
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
-    if resp.hovered() {
-        ui.painter().rect_filled(r, 2.0, t.title_hover);
+    // With only the tabs showing, the display options sit at the right end of the row.
+    if !display::body_visible(app) {
+        let r = Rect::from_center_size(pos2(full.max.x - 18.0, full.center().y + 1.0), vec2(24.0, 22.0));
+        display::options_button(ui, app, r, true);
     }
-    icons::paint_styled(ui.painter(), Rect::from_center_size(r.center(), vec2(14.0, 14.0)), icon, icons::Style::mono(t.tab_text));
-    if resp.on_hover_text(tip).clicked() {
-        toggle_collapsed(app);
-    }
+    band.context_menu(|ui| display::context_menu(ui, app));
 }
 
 /// Whether the ribbon body shows this frame.
 pub fn body_visible(app: &NoteApp) -> bool {
-    !app.ui.ribbon_collapsed || app.ui.ribbon_peek
+    display::body_visible(app)
 }
 
-/// The selected tab's groups.
+/// The selected tab's commands, in the chosen layout, with the display options arrow at the
+/// bottom-right corner.
 pub fn body(ui: &mut Ui, app: &mut NoteApp) {
     let t = app.tokens.clone();
     let full = ui.max_rect();
     ui.painter().rect_filled(full, 0.0, t.ribbon);
     ui.painter().line_segment([pos2(full.min.x, full.max.y - 0.5), pos2(full.max.x, full.max.y - 0.5)], Stroke::new(1.0, t.border));
+    // Empty ribbon: right-click for the display options (registered first: controls keep theirs).
+    let empty = ui.interact(full, ui.scope_id().with("nc_ribbon_empty"), Sense::click());
+    let arrow = match app.ui.ribbon_layout {
+        RibbonLayout::Classic => {
+            classic(ui, app, full);
+            Rect::from_center_size(pos2(full.max.x - 14.0, full.max.y - 11.0), vec2(20.0, 16.0))
+        }
+        RibbonLayout::Simplified => {
+            simplified::show(ui, app, full);
+            Rect::from_center_size(pos2(full.max.x - 14.0, full.center().y), vec2(20.0, SMALL_H))
+        }
+    };
+    display::options_button(ui, app, arrow, false);
+    empty.context_menu(|ui| display::context_menu(ui, app));
+}
+
+/// The classic body: the tab's groups, folding to fit ([`crate::ribbon_fit`]).
+fn classic(ui: &mut Ui, app: &mut NoteApp, full: Rect) {
     let tab = app.ui.ribbon_tab;
-    crate::ribbon_fit::begin(ui.ctx(), tab.key(), ui.available_width() - 16.0);
+    // Room for the groups: the margins and the display options arrow.
+    crate::ribbon_fit::begin(ui.ctx(), tab.key(), full.width() - 40.0);
     egui::ScrollArea::horizontal()
         .id_salt(("ribbon_scroll", tab.key()))
         .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
@@ -163,16 +189,6 @@ pub fn body(ui: &mut Ui, app: &mut NoteApp) {
             });
         });
     crate::ribbon_fit::end(ui.ctx());
-    // A collapsed ribbon shown once goes away after a click outside it or a used button.
-    if app.ui.ribbon_peek {
-        let click = ui.input(|i| if i.pointer.any_click() { i.pointer.interact_pos() } else { None });
-        if let Some(p) = click
-            && !full.contains(p)
-            && !egui::Popup::is_any_open(ui.ctx())
-        {
-            app.ui.ribbon_peek = false;
-        }
-    }
 }
 
 #[cfg(test)]
@@ -192,6 +208,6 @@ mod tests {
         select(&mut app, RibbonTab::Home);
         assert!(body_visible(&app), "a click on a tab shows a collapsed ribbon once");
         toggle_collapsed(&mut app);
-        assert!(!app.ui.ribbon_collapsed && body_visible(&app));
+        assert!(app.ui.ribbon_display == RibbonDisplay::Always && body_visible(&app));
     }
 }

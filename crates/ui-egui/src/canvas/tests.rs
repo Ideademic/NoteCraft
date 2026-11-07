@@ -488,3 +488,216 @@ fn typing_continues_after_a_ribbon_button() {
     let o = o.expect("a container");
     assert_eq!(o.text(), "plain bold", "typing goes on after the ribbon click");
 }
+
+/// The whole window on a fresh page with the Draw tab open.
+fn window_on_draw_tab() -> Harness<'static, crate::NoteApp> {
+    let mut session = Session::new_default();
+    session.run(ids::PAGE_NEW, &json!({"title": "Shapes"})).unwrap();
+    let mut app = crate::NoteApp::new(session, Services::default());
+    app.ui.ribbon_tab = crate::ribbon::RibbonTab::Draw;
+    let mut h = Harness::builder().with_size(vec2(1440.0, 900.0)).build_ui_state(
+        |ui, app: &mut crate::NoteApp| {
+            let ctx = ui.ctx().clone();
+            app.logic(&ctx);
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+    h
+}
+
+/// Screen position of page point (x, y) in a whole-window harness.
+fn app_at(h: &Harness<'_, crate::NoteApp>, x: f32, y: f32) -> Pos2 {
+    let c = &h.state().canvas;
+    let sheet = page::sheet_rect(c.last_rect.unwrap());
+    let k = c.scale();
+    pos2(sheet.min.x + x * k - c.scroll.x, sheet.min.y + y * k - c.scroll.y)
+}
+
+fn app_drag(h: &mut Harness<'_, crate::NoteApp>, pts: &[Pos2], mods: Modifiers) {
+    let Some(first) = pts.first().copied() else { return };
+    // Held modifiers (Shift) as the window reports them.
+    h.event(Event::ModifiersChanged(mods));
+    h.event(Event::PointerMoved(first));
+    h.step();
+    h.event(Event::PointerButton { pos: first, button: PointerButton::Primary, pressed: true, modifiers: mods });
+    h.step();
+    for p in pts.iter().skip(1) {
+        h.event(Event::PointerMoved(*p));
+        h.step();
+    }
+    let last = pts.last().copied().unwrap_or(first);
+    h.event(Event::PointerButton { pos: last, button: PointerButton::Primary, pressed: false, modifiers: mods });
+    h.run_steps(2);
+    h.event(Event::ModifiersChanged(Modifiers::NONE));
+    h.step();
+}
+
+/// A rough, slightly tilted rectangle as a hand drags it (page points).
+fn rough_rectangle(cx: f32, cy: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    let corners = [
+        (-w / 2.0, -h / 2.0 - 3.0),
+        (w / 2.0, -h / 2.0 + 4.0),
+        (w / 2.0 - 2.0, h / 2.0 + 3.0),
+        (-w / 2.0 + 3.0, h / 2.0 - 2.0),
+        (-w / 2.0, -h / 2.0),
+    ];
+    let mut out = Vec::new();
+    for (i, pair) in corners.windows(2).enumerate() {
+        for k in 0..12 {
+            let t = k as f32 / 12.0;
+            let wob = ((i * 12 + k) as f32 * 1.9).sin() * 1.2;
+            out.push((cx + pair[0].0 + (pair[1].0 - pair[0].0) * t + wob, cy + pair[0].1 + (pair[1].1 - pair[0].1) * t - wob));
+        }
+    }
+    // Over the start a little, as a hand closes a box.
+    out.push((cx - w / 2.0 + 10.0, cy - h / 2.0 - 0.5));
+    out
+}
+
+#[test]
+fn ink_to_shape_toggle_turns_a_rough_rectangle_clean() {
+    use egui_kittest::kittest::Queryable;
+    let mut h = window_on_draw_tab();
+    assert!(!h.state().session.ink_to_shape());
+    h.get_by_label("Ink to Shape").click();
+    h.run_steps(2);
+    assert!(h.state().session.ink_to_shape(), "the button turns the mode on");
+    h.get_by_label("Pen").click();
+    h.run_steps(2);
+    assert_eq!(h.state().canvas.tool, Tool::Pen);
+    let pts: Vec<Pos2> = rough_rectangle(300.0, 300.0, 200.0, 110.0).into_iter().map(|(x, y)| app_at(&h, x, y)).collect();
+    app_drag(&mut h, &pts, Modifiers::NONE);
+    let ink = h.state().session.current_page().unwrap().ink.clone();
+    assert_eq!(ink.len(), 1);
+    let pts = &ink[0].points;
+    assert_eq!(pts.len(), 5, "a clean closed rectangle: {pts:?}");
+    assert_eq!(pts.first().map(|p| p.pos()), pts.last().map(|p| p.pos()));
+    let b = ink[0].bbox().unwrap();
+    assert!((b.w - 200.0).abs() < 12.0 && (b.h - 110.0).abs() < 12.0, "{b:?}");
+    // One undo takes the stroke away.
+    h.state_mut().session.run(ids::EDIT_UNDO, &json!({})).unwrap();
+    h.run_steps(1);
+    assert!(h.state().session.current_page().unwrap().ink.is_empty());
+    // Off again: the same drag stays as drawn.
+    h.get_by_label("Ink to Shape").click();
+    h.run_steps(2);
+    assert!(!h.state().session.ink_to_shape());
+    h.get_by_label("Pen").click();
+    h.run_steps(2);
+    let pts: Vec<Pos2> = rough_rectangle(300.0, 300.0, 200.0, 110.0).into_iter().map(|(x, y)| app_at(&h, x, y)).collect();
+    app_drag(&mut h, &pts, Modifiers::NONE);
+    assert!(h.state().session.current_page().unwrap().ink[0].points.len() > 20);
+}
+
+#[test]
+fn shape_tool_drags_out_a_shape_with_preview_shift_and_esc() {
+    use egui_kittest::kittest::Queryable;
+    let mut h = window_on_draw_tab();
+    h.get_by_label("Ellipse").click();
+    h.run_steps(2);
+    assert_eq!(h.state().canvas.tool, Tool::Shape(ShapeKind::Ellipse));
+    // Mid-drag: a live preview, nothing inserted yet.
+    let (a, b) = (app_at(&h, 100.0, 200.0), app_at(&h, 260.0, 280.0));
+    h.event(Event::PointerMoved(a));
+    h.step();
+    h.event(Event::PointerButton { pos: a, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+    h.step();
+    h.event(Event::PointerMoved(b));
+    h.step();
+    assert_eq!(shape::preview_strokes(&h.state().canvas).len(), 1, "previewed");
+    assert!(h.state().session.current_page().unwrap().ink.is_empty());
+    h.event(Event::PointerButton { pos: b, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+    h.run_steps(2);
+    let ink = h.state().session.current_page().unwrap().ink.clone();
+    assert_eq!(ink.len(), 1);
+    let bb = ink[0].bbox().unwrap();
+    assert!((bb.x - 100.0).abs() < 1.0 && (bb.w - 160.0).abs() < 1.0 && (bb.h - 80.0).abs() < 1.0, "{bb:?}");
+    assert_eq!(ink[0].color, h.state().canvas.pens.pen.color);
+    assert_eq!(h.state().session.ink_selection, vec![ink[0].id], "the new shape is selected");
+    assert_eq!(h.state().canvas.tool, Tool::Shape(ShapeKind::Ellipse), "the tool stays");
+    // Shift: a circle.
+    let pts = [app_at(&h, 400.0, 200.0), app_at(&h, 450.0, 230.0), app_at(&h, 520.0, 240.0)];
+    app_drag(&mut h, &pts, Modifiers::SHIFT);
+    let c = h.state().session.current_page().unwrap().ink.last().unwrap().bbox().unwrap();
+    assert!((c.w - c.h).abs() < 0.5 && (c.w - 120.0).abs() < 1.0, "{c:?}");
+    // Esc during a drag cancels it.
+    let (a, b) = (app_at(&h, 100.0, 400.0), app_at(&h, 200.0, 480.0));
+    h.event(Event::PointerMoved(a));
+    h.step();
+    h.event(Event::PointerButton { pos: a, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+    h.step();
+    h.event(Event::PointerMoved(b));
+    h.step();
+    h.key_press(Key::Escape);
+    h.step();
+    h.event(Event::PointerButton { pos: b, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+    h.run_steps(2);
+    assert_eq!(h.state().session.current_page().unwrap().ink.len(), 2, "cancelled");
+    // An arrow is two strokes, one undo step.
+    h.get_by_label("Arrow").click();
+    h.run_steps(2);
+    let pts = [app_at(&h, 100.0, 500.0), app_at(&h, 300.0, 520.0)];
+    app_drag(&mut h, &pts, Modifiers::NONE);
+    assert_eq!(h.state().session.current_page().unwrap().ink.len(), 4);
+    h.state_mut().session.run(ids::EDIT_UNDO, &json!({})).unwrap();
+    h.run_steps(1);
+    assert_eq!(h.state().session.current_page().unwrap().ink.len(), 2);
+}
+
+/// A page of inserted shapes and an Ink to Shape result, for the screenshots.
+fn shapes_sample(dark: bool) -> T {
+    let mut t = blank();
+    t.tokens = Tokens::for_dark(dark);
+    let s = &mut t.session;
+    s.run(ids::PAGE_RENAME, &json!({"title": "Shapes and Ink to Shape"})).unwrap();
+    let colors = ["#1f5fbf", "#c42b1c", "#2ea04f", "#000000", "#c44df0", "#d67a00"];
+    for (i, kind) in ShapeKind::ALL.iter().enumerate() {
+        let (x, y) = (48.0 + (i % 6) as f32 * 110.0, 110.0 + (i / 6) as f32 * 100.0);
+        let color = colors[i % colors.len()];
+        s.run(ids::DRAW_SHAPE, &json!({"kind": kind.name(), "x": x, "y": y, "w": 86, "h": 70, "color": color, "width": 1.5})).unwrap();
+    }
+    s.run(ids::DRAW_INK_TO_SHAPE, &json!({"value": true})).unwrap();
+    // Raw (mode off) and converted (mode on) versions of the same rough rectangle and circle.
+    for (on, dx) in [(false, 0.0), (true, 300.0)] {
+        s.run(ids::DRAW_INK_TO_SHAPE, &json!({"value": on})).unwrap();
+        let r: Vec<[f32; 3]> = rough_rectangle(130.0 + dx, 450.0, 160.0, 80.0).into_iter().map(|(x, y)| [x, y, 0.6]).collect();
+        s.run(ids::DRAW_STROKE, &json!({"points": r, "color": "#1f5fbf", "width": 2.0})).unwrap();
+        let c: Vec<[f32; 3]> = (0..=95)
+            .map(|i| {
+                let a = i as f32 / 80.0 * std::f32::consts::TAU;
+                let k = 1.0 + 0.04 * (a * 3.0).sin();
+                [270.0 + dx + 40.0 * k * a.cos(), 450.0 + 38.0 * k * a.sin(), 0.6]
+            })
+            .collect();
+        s.run(ids::DRAW_STROKE, &json!({"points": c, "color": "#c42b1c", "width": 2.0})).unwrap();
+    }
+    s.ink_selection.clear();
+    t
+}
+
+#[test]
+fn shapes_screenshots() {
+    let Ok(dir) = std::env::var("NOTECRAFT_CANVAS_SHOTS") else { return };
+    let dir = std::path::PathBuf::from(dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for dark in [false, true] {
+        let t = shapes_sample(dark);
+        let mut app = crate::NoteApp::new(t.session, Services::default());
+        app.ui.prefs.appearance = if dark { crate::Appearance::Dark } else { crate::Appearance::Light };
+        app.ui.ribbon_tab = crate::ribbon::RibbonTab::Draw;
+        app.canvas.set_tool(Tool::Shape(ShapeKind::Hexagon));
+        let mut h = Harness::builder().with_size(vec2(1440.0, 900.0)).with_pixels_per_point(2.0).wgpu().build_ui_state(
+            |ui, app: &mut crate::NoteApp| {
+                let ctx = ui.ctx().clone();
+                app.logic(&ctx);
+                app.ui(ui);
+            },
+            app,
+        );
+        h.run_steps(6);
+        let img = h.render().unwrap();
+        img.save(dir.join(format!("shapes-window-{}.png", if dark { "dark" } else { "light" }))).unwrap();
+    }
+}

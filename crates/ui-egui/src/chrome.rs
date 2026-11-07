@@ -57,7 +57,7 @@ pub fn title_bar(ui: &mut Ui, app: &mut NoteApp) {
     let resp = ui.interact(r, ui.scope_id().with("qat_more"), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!("Customize Quick Access Toolbar")));
     hover_fill(ui, r, &resp, &t);
-    icons::paint_styled(ui.painter(), Rect::from_center_size(r.center(), vec2(12.0, 12.0)), Icon::More, icons::Style::mono(t.on_title_bar));
+    icons::paint_styled(ui.painter(), Rect::from_center_size(r.center(), vec2(12.0, 12.0)), Icon::More, icons::Style::flat(t.on_title_bar));
     let resp = resp.on_hover_text(tl!("Customize Quick Access Toolbar"));
     egui::Popup::menu(&resp).show(|ui| {
         ui.set_min_width(220.0);
@@ -86,7 +86,7 @@ pub fn title_bar(ui: &mut Ui, app: &mut NoteApp) {
             ui.painter(),
             Rect::from_center_size(r.center(), vec2(16.0, 16.0)),
             Icon::FullPageView,
-            icons::Style::mono(t.on_title_bar),
+            icons::Style::flat(t.on_title_bar),
         );
         if resp.on_hover_text(tl!("Normal View (F11)")).clicked() {
             app.ui.full_page_view = false;
@@ -153,7 +153,7 @@ fn qat_button(ui: &mut Ui, app: &mut NoteApp, r: Rect, id: &str, index: usize) {
         hover_fill(ui, r, &resp, &t);
     }
     let color = if enabled { t.on_title_bar } else { crate::theme::mix(t.on_title_bar, t.title_bar, 0.55) };
-    icons::paint_styled(ui.painter(), Rect::from_center_size(r.center(), vec2(16.0, 16.0)), icon, icons::Style::mono(color));
+    icons::paint_styled(ui.painter(), Rect::from_center_size(r.center(), vec2(16.0, 16.0)), icon, icons::Style::flat(color));
     let key = notecraft_engine::registry().get(id).and_then(|s| s.shortcut).map(crate::widgets::shortcut_text);
     let tip = match key {
         Some(k) => format!("{label} ({k})"),
@@ -184,7 +184,7 @@ fn window_button(ui: &mut Ui, app: &NoteApp, r: Rect, b: craft_window::Button) {
         let fill = if b == craft_window::Button::Close { t.close_hover } else { t.title_hover };
         ui.painter().rect_filled(r, 0.0, fill);
     }
-    icons::paint_styled(ui.painter(), Rect::from_center_size(r.center(), vec2(12.0, 12.0)), icon, icons::Style::mono(t.on_title_bar));
+    icons::paint_styled(ui.painter(), Rect::from_center_size(r.center(), vec2(12.0, 12.0)), icon, icons::Style::flat(t.on_title_bar));
     if resp.on_hover_text(label).clicked() {
         ui.ctx().send_viewport_cmd(cmd);
     }

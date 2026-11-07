@@ -63,6 +63,7 @@ pub const DRAW_MOVE_SELECTION: &str = "draw.moveSelection";
 pub const DRAW_DELETE_SELECTION: &str = "draw.deleteSelection";
 pub const DRAW_RECOLOR: &str = "draw.recolor";
 pub const DRAW_INK_TO_SHAPE: &str = "draw.inkToShape";
+pub const DRAW_SHAPE: &str = "draw.shape";
 
 pub const VIEW_RULE_LINES: &str = "view.ruleLines";
 pub const VIEW_PAGE_COLOR: &str = "view.pageColor";
@@ -141,6 +142,7 @@ pub const ALL: &[&str] = &[
     DRAW_DELETE_SELECTION,
     DRAW_RECOLOR,
     DRAW_INK_TO_SHAPE,
+    DRAW_SHAPE,
     VIEW_RULE_LINES,
     VIEW_PAGE_COLOR,
     EDIT_UNDO,

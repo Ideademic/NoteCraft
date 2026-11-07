@@ -88,6 +88,8 @@ pub fn page_list(ui: &mut Ui, app: &mut NoteApp) {
         });
     });
     drag_and_drop(ui, app, &rows, &row_rects);
+    // The panel keeps the width its content used (see `notebook_pane`): claim all of it.
+    ui.expand_to_include_rect(full);
 }
 
 fn draw_row(ui: &mut Ui, app: &mut NoteApp, row: &Row, index: usize, rows: &[Row]) -> Rect {

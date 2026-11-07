@@ -12,6 +12,7 @@ pub mod outline;
 pub mod page;
 pub mod search;
 pub mod section;
+pub mod shapes;
 pub mod text;
 pub mod view;
 

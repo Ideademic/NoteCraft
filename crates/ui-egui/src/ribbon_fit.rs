@@ -11,6 +11,9 @@
 //! a compact group over a collapsed one before it has ever been drawn compact. A width not measured
 //! yet is estimated, and the plan settles once it is. Widths are measured again after the interface
 //! language or scale changes. The ribbon still scrolls if even fully collapsed groups don't fit.
+//!
+//! The simplified ribbon fits differently: whole segments move into a More commands menu from the
+//! right ([`overflow_fit`]).
 
 use std::collections::HashMap;
 
@@ -71,6 +74,33 @@ pub fn plan(groups: &[GroupWidths], avail: f32) -> Vec<u8> {
         }
     }
     levels
+}
+
+/// The simplified ribbon's row: how many of its segments (widths in drawing order, `None` when not
+/// measured yet, counted as `guess`) stay in a row `avail` points wide. All of them when they fit;
+/// else as many from the left as leave room for the More commands button (`more_w`); the rest
+/// move into its menu.
+pub fn overflow_fit(widths: &[Option<f32>], avail: f32, more_w: f32, guess: f32) -> usize {
+    if avail.is_nan() {
+        return 0;
+    }
+    let w = |x: &Option<f32>| x.filter(|v| v.is_finite() && *v >= 0.0).unwrap_or(guess);
+    let total: f32 = widths.iter().map(w).sum();
+    if total <= avail {
+        return widths.len();
+    }
+    let room = avail - more_w;
+    let mut used = 0.0;
+    let mut n = 0;
+    for x in widths {
+        let next = used + w(x);
+        if next > room || !next.is_finite() {
+            break;
+        }
+        used = next;
+        n += 1;
+    }
+    n
 }
 
 /// What this frame's ribbon is drawing.
@@ -299,6 +329,19 @@ mod tests {
     fn same_titles_keep_their_own_levels() {
         let gs = [g("New Group", 300.0, Some(300.0), Some(60.0)), g("New Group", 100.0, Some(100.0), Some(60.0))];
         assert_eq!(plan(&gs, 200.0), vec![COLLAPSED, FULL]);
+    }
+
+    #[test]
+    fn simplified_row_moves_segments_into_more_from_the_right() {
+        let w = [Some(100.0), Some(100.0), Some(100.0)];
+        assert_eq!(overflow_fit(&w, 300.0, 30.0, 90.0), 3, "all fit without the More button");
+        assert_eq!(overflow_fit(&w, 299.0, 30.0, 90.0), 2);
+        assert_eq!(overflow_fit(&w, 229.0, 30.0, 90.0), 1);
+        assert_eq!(overflow_fit(&w, 50.0, 30.0, 90.0), 0);
+        assert_eq!(overflow_fit(&[None, Some(10.0)], 100.0, 30.0, 90.0), 2, "unknown widths are guessed");
+        assert_eq!(overflow_fit(&[Some(f32::NAN), Some(f32::INFINITY)], 100.0, 30.0, 40.0), 2);
+        assert_eq!(overflow_fit(&w, f32::NAN, 30.0, 90.0), 0);
+        assert_eq!(overflow_fit(&[], 0.0, 30.0, 90.0), 0);
     }
 
     #[test]

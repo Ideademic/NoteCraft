@@ -73,19 +73,20 @@
 
 ## What works today
 
-Version 0.1.0:
+Version 0.1.1 (see [CHANGELOG.md](CHANGELOG.md)):
 
 | Area | Highlights |
 |---|---|
 | **Notebooks** | Notebooks, section groups, sections and pages, with colours; subpages; rename, reorder and delete |
 | **Pages** | Click anywhere and type: note containers placed freely on the page; page titles with date and time; page colour and rule lines |
 | **Text** | Rich text (bold, italic, underline, colour, highlight and more), paragraph styles, bullets and numbering, indent levels, To Do tags (Important and Question tags in opened notebooks are shown and kept) |
-| **Ink** | Pen, pencil and highlighter with pressure, colours and widths; stroke eraser; lasso select; ink to shape |
+| **Ink** | Pen, pencil and highlighter with pressure, colours and widths; stroke eraser; lasso select; Ink to Shape mode (rough lines, arrows, rectangles, circles and polygons are redrawn clean as you draw; handwriting is left alone) |
+| **Shapes** | Draw › Shapes gallery: lines, arrows, rectangles, rounded rectangles, ellipses, triangles, parallelograms, trapezoids, diamonds, pentagons, hexagons and graph axes; drag to place, Shift for squares, circles and 45° lines; saved as ink in `.one` files |
 | **Insert** | Pictures; PDF file printouts, placed as page images you can ink over |
 | **Files** | `.one` sections and `.onetoc2` notebooks as the native format (a notebook is a folder; OneNote 2010–2016 desktop files; OneDrive-packaged files are refused); `.onepkg` import and export; HTML, Markdown and plain-text export |
 | **Saving** | No Save button: changes autosave; crash recovery |
 | **Search** | Page titles and text across every open notebook |
-| **Looks** | Light and dark mode; a flat, purple ribbon interface |
+| **Looks** | Light and dark mode; a flat, purple ribbon, Classic or Simplified (single row), with Full-screen mode, Show tabs only and Always show ribbon |
 | **Everywhere** | Desktop on macOS, Windows, Linux and FreeBSD; the browser via WebAssembly; a command-line tool |
 
 The honest picture, area by area, is in [ROADMAP.md](ROADMAP.md).
