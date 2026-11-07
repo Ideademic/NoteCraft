@@ -1,0 +1,22 @@
+[package]
+name = "notecraft-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "NoteCraft command line: inspect, dump and convert notebooks; list commands"
+
+[[bin]]
+name = "notecraft-cli"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+notecraft-doc = { workspace = true }
+notecraft-engine = { workspace = true }
+notecraft-formats = { workspace = true }
+notecraft-one = { workspace = true }
+notecraft-onepkg = { workspace = true }
+serde_json = { workspace = true }

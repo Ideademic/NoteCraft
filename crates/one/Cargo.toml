@@ -1,0 +1,17 @@
+[package]
+name = "notecraft-one"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "NoteCraft .one sections and .onetoc2 notebooks: the MS-ONE mapping between the revision store and the model, from Microsoft's public spec"
+
+[lints]
+workspace = true
+
+[dependencies]
+notecraft-geom = { workspace = true }
+notecraft-doc = { workspace = true }
+notecraft-onestore = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+chrono = { workspace = true }

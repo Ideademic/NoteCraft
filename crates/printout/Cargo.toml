@@ -1,0 +1,17 @@
+[package]
+name = "notecraft-printout"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "NoteCraft file printouts: PDF pages rendered to pictures (craft-pdf raster) to place on a page and ink over"
+
+[lints]
+workspace = true
+
+[dependencies]
+notecraft-geom = { workspace = true }
+notecraft-doc = { workspace = true }
+craft-pdf = { workspace = true }
+image = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }

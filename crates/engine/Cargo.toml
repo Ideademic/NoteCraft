@@ -1,0 +1,22 @@
+[package]
+name = "notecraft-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "NoteCraft engine: session (open notebooks, current page), the command registry (every action is a command), snapshot undo, file I/O dispatch, autosave"
+
+[lints]
+workspace = true
+
+[dependencies]
+notecraft-geom = { workspace = true }
+notecraft-doc = { workspace = true }
+notecraft-one = { workspace = true }
+notecraft-onepkg = { workspace = true }
+notecraft-formats = { workspace = true }
+notecraft-printout = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+chrono = { workspace = true }

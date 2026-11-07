@@ -1,0 +1,14 @@
+[package]
+name = "notecraft-onestore"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "NoteCraft clean-room MS-ONESTORE container reader/writer (.one / .onetoc2 revision store), from Microsoft's public spec"
+
+[lints]
+workspace = true
+
+[dependencies]
+notecraft-doc = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }

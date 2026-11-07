@@ -1,0 +1,139 @@
+//! Command ids. Stable: scripts, shortcuts and saved settings name commands by these.
+
+pub const NOTEBOOK_NEW: &str = "notebook.new";
+pub const NOTEBOOK_OPEN: &str = "notebook.open";
+pub const NOTEBOOK_CLOSE: &str = "notebook.close";
+pub const NOTEBOOK_RENAME: &str = "notebook.rename";
+pub const NOTEBOOK_COLOR: &str = "notebook.color";
+
+pub const SECTION_NEW: &str = "section.new";
+pub const SECTION_RENAME: &str = "section.rename";
+pub const SECTION_DELETE: &str = "section.delete";
+pub const SECTION_COLOR: &str = "section.color";
+pub const SECTION_MOVE: &str = "section.move";
+pub const SECTION_GROUP_NEW: &str = "sectionGroup.new";
+
+pub const PAGE_NEW: &str = "page.new";
+pub const PAGE_NEW_SUBPAGE: &str = "page.newSubpage";
+pub const PAGE_DELETE: &str = "page.delete";
+pub const PAGE_RENAME: &str = "page.rename";
+pub const PAGE_MOVE: &str = "page.move";
+pub const PAGE_INDENT: &str = "page.indent";
+pub const PAGE_OUTDENT: &str = "page.outdent";
+
+pub const OUTLINE_NEW: &str = "outline.new";
+pub const OUTLINE_MOVE: &str = "outline.move";
+pub const OUTLINE_RESIZE: &str = "outline.resize";
+pub const OUTLINE_DELETE: &str = "outline.delete";
+
+pub const TEXT_SET_PARAGRAPHS: &str = "text.setParagraphs";
+
+pub const FORMAT_BOLD: &str = "format.bold";
+pub const FORMAT_ITALIC: &str = "format.italic";
+pub const FORMAT_UNDERLINE: &str = "format.underline";
+pub const FORMAT_STRIKE: &str = "format.strike";
+pub const FORMAT_HIGHLIGHT: &str = "format.highlight";
+pub const FORMAT_COLOR: &str = "format.color";
+pub const FORMAT_SIZE: &str = "format.size";
+pub const FORMAT_FONT: &str = "format.font";
+pub const FORMAT_STYLE: &str = "format.style";
+pub const FORMAT_BULLETS: &str = "format.bullets";
+pub const FORMAT_NUMBERING: &str = "format.numbering";
+pub const FORMAT_INDENT: &str = "format.indent";
+pub const FORMAT_OUTDENT: &str = "format.outdent";
+pub const FORMAT_TAG_TODO: &str = "format.tag.todo";
+pub const FORMAT_TOGGLE_TODO: &str = "format.toggleTodo";
+
+pub const INSERT_IMAGE: &str = "insert.image";
+pub const INSERT_PRINTOUT: &str = "insert.printout";
+pub const INSERT_FILE: &str = "insert.file";
+pub const INSERT_DATE_TIME: &str = "insert.dateTime";
+
+pub const DRAW_STROKE: &str = "draw.stroke";
+pub const DRAW_ERASE_STROKE: &str = "draw.eraseStroke";
+pub const DRAW_ERASE_AT: &str = "draw.eraseAt";
+pub const DRAW_LASSO_SELECT: &str = "draw.lassoSelect";
+pub const DRAW_MOVE_SELECTION: &str = "draw.moveSelection";
+pub const DRAW_DELETE_SELECTION: &str = "draw.deleteSelection";
+pub const DRAW_RECOLOR: &str = "draw.recolor";
+
+pub const VIEW_RULE_LINES: &str = "view.ruleLines";
+pub const VIEW_PAGE_COLOR: &str = "view.pageColor";
+
+pub const EDIT_UNDO: &str = "edit.undo";
+pub const EDIT_REDO: &str = "edit.redo";
+
+pub const FILE_EXPORT_ONEPKG: &str = "file.exportOnepkg";
+pub const FILE_EXPORT_HTML: &str = "file.exportHtml";
+pub const FILE_EXPORT_MARKDOWN: &str = "file.exportMarkdown";
+pub const FILE_IMPORT_ONEPKG: &str = "file.importOnepkg";
+pub const FILE_IMPORT_ONE: &str = "file.importOne";
+
+pub const NAV_NOTEBOOK: &str = "nav.notebook";
+pub const NAV_SECTION: &str = "nav.section";
+pub const NAV_PAGE: &str = "nav.page";
+
+/// Every id above, for tests and tooling.
+pub const ALL: &[&str] = &[
+    NOTEBOOK_NEW,
+    NOTEBOOK_OPEN,
+    NOTEBOOK_CLOSE,
+    NOTEBOOK_RENAME,
+    NOTEBOOK_COLOR,
+    SECTION_NEW,
+    SECTION_RENAME,
+    SECTION_DELETE,
+    SECTION_COLOR,
+    SECTION_MOVE,
+    SECTION_GROUP_NEW,
+    PAGE_NEW,
+    PAGE_NEW_SUBPAGE,
+    PAGE_DELETE,
+    PAGE_RENAME,
+    PAGE_MOVE,
+    PAGE_INDENT,
+    PAGE_OUTDENT,
+    OUTLINE_NEW,
+    OUTLINE_MOVE,
+    OUTLINE_RESIZE,
+    OUTLINE_DELETE,
+    TEXT_SET_PARAGRAPHS,
+    FORMAT_BOLD,
+    FORMAT_ITALIC,
+    FORMAT_UNDERLINE,
+    FORMAT_STRIKE,
+    FORMAT_HIGHLIGHT,
+    FORMAT_COLOR,
+    FORMAT_SIZE,
+    FORMAT_FONT,
+    FORMAT_STYLE,
+    FORMAT_BULLETS,
+    FORMAT_NUMBERING,
+    FORMAT_INDENT,
+    FORMAT_OUTDENT,
+    FORMAT_TAG_TODO,
+    FORMAT_TOGGLE_TODO,
+    INSERT_IMAGE,
+    INSERT_PRINTOUT,
+    INSERT_FILE,
+    INSERT_DATE_TIME,
+    DRAW_STROKE,
+    DRAW_ERASE_STROKE,
+    DRAW_ERASE_AT,
+    DRAW_LASSO_SELECT,
+    DRAW_MOVE_SELECTION,
+    DRAW_DELETE_SELECTION,
+    DRAW_RECOLOR,
+    VIEW_RULE_LINES,
+    VIEW_PAGE_COLOR,
+    EDIT_UNDO,
+    EDIT_REDO,
+    FILE_EXPORT_ONEPKG,
+    FILE_EXPORT_HTML,
+    FILE_EXPORT_MARKDOWN,
+    FILE_IMPORT_ONEPKG,
+    FILE_IMPORT_ONE,
+    NAV_NOTEBOOK,
+    NAV_SECTION,
+    NAV_PAGE,
+];

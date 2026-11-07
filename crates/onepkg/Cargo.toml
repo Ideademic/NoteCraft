@@ -1,0 +1,16 @@
+[package]
+name = "notecraft-onepkg"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "NoteCraft .onepkg notebook packages (Microsoft Cabinet holding .onetoc2 + .one files)"
+
+[lints]
+workspace = true
+
+[dependencies]
+notecraft-doc = { workspace = true }
+notecraft-one = { workspace = true }
+cab = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }

@@ -1,0 +1,12 @@
+[package]
+name = "notecraft-geom"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "NoteCraft geometry and units: points, half-inches (OneNote layout), ink units (0.01 mm), zoom; points, sizes, rectangles"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
