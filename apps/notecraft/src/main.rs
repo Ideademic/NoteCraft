@@ -34,7 +34,7 @@ USAGE:
 #[cfg(target_os = "macos")]
 const ICON_PNG: &[u8] = include_bytes!("../../../assets/app-icon/notecraft-macos-512.png");
 #[cfg(not(target_os = "macos"))]
-const ICON_PNG: &[u8] = include_bytes!("../../../assets/app-icon/hicolor/256x256/com.ideademic.notecraft.png");
+const ICON_PNG: &[u8] = include_bytes!("../../../assets/app-icon/hicolor/256x256/apps/com.ideademic.notecraft.png");
 
 /// What the settings files held when last written (to write them only when they change).
 #[derive(Default)]
