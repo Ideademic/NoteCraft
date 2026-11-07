@@ -23,8 +23,49 @@ pub const SHOTS: [&str; 12] = [
     "busy-notebook",
 ];
 
+/// The ribbon's layouts and display options (`ribbon-display-menu` also needs the options arrow
+/// clicked; the `ui_shot` example does that).
+pub const RIBBON_SHOTS: [&str; 8] = [
+    "simplified-home",
+    "simplified-insert",
+    "simplified-draw",
+    "simplified-view",
+    "ribbon-display-menu",
+    "ribbon-full-screen",
+    "ribbon-full-screen-revealed",
+    "ribbon-tabs-only",
+];
+
+/// The ribbon states of [`RIBBON_SHOTS`]; `false` for other names.
+fn prepare_ribbon(app: &mut NoteApp, shot: &str) -> bool {
+    use crate::ribbon::display::{RibbonDisplay, RibbonLayout};
+    let simplified = |app: &mut NoteApp, tab| {
+        app.ui.ribbon_layout = RibbonLayout::Simplified;
+        app.ui.ribbon_tab = tab;
+    };
+    match shot {
+        "simplified-home" => simplified(app, RibbonTab::Home),
+        "simplified-insert" => simplified(app, RibbonTab::Insert),
+        "simplified-draw" => simplified(app, RibbonTab::Draw),
+        "simplified-view" => simplified(app, RibbonTab::View),
+        "ribbon-display-menu" => simplified(app, RibbonTab::Home),
+        "ribbon-full-screen" => app.ui.ribbon_display = RibbonDisplay::FullScreen,
+        "ribbon-full-screen-revealed" => {
+            simplified(app, RibbonTab::Home);
+            app.ui.ribbon_display = RibbonDisplay::FullScreen;
+            app.ui.ribbon_peek = true;
+        }
+        "ribbon-tabs-only" => app.ui.ribbon_display = RibbonDisplay::TabsOnly,
+        _ => return false,
+    }
+    true
+}
+
 /// Puts `app` in the state named `shot` (unknown names leave it as it is).
 pub fn prepare(app: &mut NoteApp, shot: &str) {
+    if prepare_ribbon(app, shot) {
+        return;
+    }
     match shot {
         "tab-insert" => app.ui.ribbon_tab = RibbonTab::Insert,
         "tab-draw" => app.ui.ribbon_tab = RibbonTab::Draw,

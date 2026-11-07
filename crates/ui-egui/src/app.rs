@@ -16,6 +16,7 @@ use crate::backstage::BackstagePage;
 use crate::canvas::CanvasState;
 use crate::keytips::Keytips;
 use crate::ribbon::RibbonTab;
+use crate::ribbon::display::{RibbonDisplay, RibbonLayout};
 use crate::services::Services;
 use crate::theme::{Appearance, Tokens};
 
@@ -92,7 +93,11 @@ pub struct Prefs {
     pub autosave: bool,
     pub notebook_pane_open: bool,
     pub page_list_open: bool,
-    pub ribbon_collapsed: bool,
+    /// Classic or Simplified ribbon.
+    pub ribbon_layout: RibbonLayout,
+    /// Always show the ribbon, show tabs only, or full-screen mode. (Older settings files say
+    /// `ribbonCollapsed: true` for Show tabs only; [`Prefs::from_json`] reads that too.)
+    pub ribbon_display: RibbonDisplay,
     /// Quick Access Toolbar entries shown, in [`QAT_CHOICES`] order.
     pub qat: Vec<String>,
     pub window: Option<WindowGeometry>,
@@ -109,7 +114,8 @@ impl Default for Prefs {
             autosave: true,
             notebook_pane_open: true,
             page_list_open: true,
-            ribbon_collapsed: false,
+            ribbon_layout: RibbonLayout::Classic,
+            ribbon_display: RibbonDisplay::Always,
             qat: vec![QAT_BACK.to_owned(), notecraft_engine::ids::EDIT_UNDO.to_owned(), notecraft_engine::ids::EDIT_REDO.to_owned()],
             window: None,
             open_notebooks: Vec::new(),
@@ -121,6 +127,12 @@ impl Prefs {
     /// Reads prefs from JSON; anything unreadable falls back to the defaults.
     pub fn from_json(s: &str) -> Prefs {
         let mut p: Prefs = serde_json::from_str(s).unwrap_or_default();
+        // Settings from before the display options: a collapsed ribbon is Show tabs only.
+        let legacy =
+            serde_json::from_str::<Value>(s).ok().map(|v| (v.get("ribbonCollapsed").and_then(Value::as_bool), v.get("ribbonDisplay").is_some()));
+        if let Some((Some(true), false)) = legacy {
+            p.ribbon_display = RibbonDisplay::TabsOnly;
+        }
         p.recent.truncate(MAX_RECENT);
         p.open_notebooks.truncate(64);
         p.qat.retain(|id| QAT_CHOICES.contains(&id.as_str()));
@@ -183,9 +195,12 @@ pub struct UiState {
     /// File › (Backstage) is showing instead of the body.
     pub backstage: bool,
     pub backstage_page: BackstagePage,
-    /// The ribbon shows only its tabs until one is clicked.
-    pub ribbon_collapsed: bool,
-    /// A collapsed ribbon shown for one use (a tab was clicked).
+    /// Classic or Simplified ribbon ([`crate::ribbon::display`]).
+    pub ribbon_layout: RibbonLayout,
+    /// Always show the ribbon, show tabs only, or full-screen mode.
+    pub ribbon_display: RibbonDisplay,
+    /// A hidden ribbon shown for one use (Show tabs only: a tab was clicked; full-screen mode:
+    /// the strip at the top was clicked).
     pub ribbon_peek: bool,
     pub notebook_pane_open: bool,
     pub page_list_open: bool,
@@ -228,7 +243,8 @@ impl Default for UiState {
             ribbon_tab: RibbonTab::Home,
             backstage: false,
             backstage_page: BackstagePage::Info,
-            ribbon_collapsed: prefs.ribbon_collapsed,
+            ribbon_layout: prefs.ribbon_layout,
+            ribbon_display: prefs.ribbon_display,
             ribbon_peek: false,
             notebook_pane_open: prefs.notebook_pane_open,
             page_list_open: prefs.page_list_open,
@@ -300,7 +316,9 @@ impl NoteApp {
     pub fn load_prefs(&mut self, prefs: Prefs) {
         self.ui.notebook_pane_open = prefs.notebook_pane_open;
         self.ui.page_list_open = prefs.page_list_open;
-        self.ui.ribbon_collapsed = prefs.ribbon_collapsed;
+        self.ui.ribbon_layout = prefs.ribbon_layout;
+        self.ui.ribbon_display = prefs.ribbon_display;
+        self.ui.ribbon_peek = false;
         self.ui.prefs = prefs;
         self.applied_dark = None;
     }
@@ -319,7 +337,8 @@ impl NoteApp {
             .collect();
         p.notebook_pane_open = self.ui.notebook_pane_open;
         p.page_list_open = self.ui.page_list_open;
-        p.ribbon_collapsed = self.ui.ribbon_collapsed;
+        p.ribbon_layout = self.ui.ribbon_layout;
+        p.ribbon_display = self.ui.ribbon_display;
         p
     }
 

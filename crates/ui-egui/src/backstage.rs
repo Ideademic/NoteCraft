@@ -485,6 +485,8 @@ fn options(ui: &mut Ui, app: &mut NoteApp) {
             }
         });
     }
+    subheading(ui, tl!("Ribbon"));
+    crate::ribbon::display::options(ui, app);
     subheading(ui, tl!("Recent Notebooks"));
     if flat_button(ui, tl!("Clear the List"), false, !app.session.recent.entries.is_empty()) {
         app.session.recent.entries.clear();
