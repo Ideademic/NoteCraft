@@ -1,0 +1,122 @@
+name: CI
+
+# Quality gates for every push to main and every pull request: `cargo xtask ci` runs rustfmt
+# --check, clippy -D warnings, the tests (cargo-nextest), the asset and layering checks and the
+# wasm32 check. Adapted from the Craft apps' shared gate (storytold/craft-common-actions,
+# gate.yml) and kept in this repository: NoteCraft is a community app and runs its own CI.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to a PR branch cancels its older run; every push to main runs to the end.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  RUST_BACKTRACE: 1
+  # Line tables keep file and line in panics without full debug info (the test profile inherits it).
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+jobs:
+  # Git dependencies may come only from github.com/storytold (craft-libs and the Craft forks of
+  # egui and winit) and github.com/Ideademic, and nothing may silently replace a source.
+  git-sources:
+    name: Git dependencies come from storytold or Ideademic
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check Cargo.lock and cargo config
+        run: |
+          set -euo pipefail
+          test -f Cargo.lock || { echo "Cargo.lock is missing"; exit 1; }
+          python3 - <<'PY'
+          import os, sys, tomllib
+          for path in (".cargo/config", ".cargo/config.toml"):
+              if not os.path.exists(path):
+                  continue
+              config = tomllib.load(open(path, "rb"))
+              replaced = [name for name, source in config.get("source", {}).items()
+                          if isinstance(source, dict) and "replace-with" in source]
+              if replaced or "patch" in config or "paths" in config:
+                  print(f"{path} replaces, patches or overrides a source")
+                  sys.exit(1)
+          lock = tomllib.load(open("Cargo.lock", "rb"))
+          allowed = ("git+https://github.com/storytold/", "git+https://github.com/Ideademic/")
+          bad = sorted({p["source"] for p in lock.get("package", [])
+                        if p.get("source", "").startswith("git+")
+                        and not p["source"].startswith(allowed)})
+          if bad:
+              print("Git dependencies outside github.com/storytold and github.com/Ideademic:", *bad, sep="\n")
+              sys.exit(1)
+          print("git sources ok")
+          PY
+          # Fails when Cargo.lock is out of date with the manifests.
+          cargo metadata --locked --format-version 1 > /dev/null
+
+  gate:
+    name: cargo xtask ci (ubuntu-24.04)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Nothing waits on it: the space is free before the build needs it.
+      - name: Free disk space
+        run: |
+          nohup sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL </dev/null >/dev/null 2>&1 &
+
+      - name: Install Linux build dependencies
+        uses: ./.github/actions/install-apt-packages
+        with:
+          packages: >-
+            pkg-config libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev
+            libxi-dev libgtk-3-dev libfontconfig1-dev libfreetype-dev mesa-vulkan-drivers
+
+      # The channel in rust-toolchain.toml wins when there is one.
+      - name: Install Rust (stable, clippy, rustfmt, wasm32)
+        run: |
+          set -euo pipefail
+          toolchain=stable
+          if [ -f rust-toolchain.toml ]; then
+            channel=$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' rust-toolchain.toml)
+            toolchain=${channel:-$toolchain}
+          fi
+          rustup toolchain install "$toolchain" --profile minimal --no-self-update \
+            --component clippy --component rustfmt --target wasm32-unknown-unknown
+          rustup default "$toolchain"
+          rustc --version
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+        with:
+          tool: cargo-nextest@0.9.150
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          prefix-key: v1-rust
+          save-if: ${{ github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch }}
+          cache-on-failure: true
+
+      # CI is set by Actions, so a missing wasm32 target fails `cargo xtask wasm` instead of
+      # skipping it.
+      - name: cargo xtask ci
+        run: cargo xtask ci
+
+      # A gate that changed Cargo.lock ran against a lockfile that is not the one in the repository.
+      - name: Lockfile unchanged
+        run: git diff --exit-code -- Cargo.lock

@@ -8,7 +8,13 @@
 //! - [`Session`]: the open notebooks, the current [`Location`], undo/redo, the dirty set,
 //!   autosave ([`Session::tick`]).
 //! - [`registry`]: every command by id. Ids are the constants in [`ids`].
-//! - [`io`]: opening files by extension, the [`io::Storage`] trait that saves notebooks.
+//! - [`io`]: opening files by extension, the [`io::Storage`] trait that saves notebooks
+//!   (desktop [`io::FolderStorage`], web [`io::MemoryStorage`]), crash [`io::recovery`], the
+//!   [`io::recent`] list.
+//! - [`text`]: caret positions and rich-text editing on the model (the canvas's selection
+//!   model is described in [`cmd::text`]).
+//!
+//! Every command's parameters are listed in `COMMANDS.md` and in [`Registry::describe`].
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod cmd;
@@ -16,6 +22,7 @@ mod history;
 pub mod ids;
 pub mod io;
 mod session;
+pub mod text;
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -23,9 +30,10 @@ use std::sync::LazyLock;
 use serde_json::Value;
 
 pub use history::{MAX_UNDO, Snapshot};
-pub use io::{IoError, Origin, Storage};
+pub use io::{IoError, Origin, SaveJob, SaveOutcome, Storage};
 pub use notecraft_doc as doc;
 pub use session::{AUTOSAVE_DELAY_SECS, AUTOSAVE_MAX_WAIT_SECS, Location, Session};
+pub use text::TextPos;
 
 /// Why a command did not run.
 #[derive(Debug, thiserror::Error, Clone, PartialEq)]

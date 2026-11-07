@@ -1,0 +1,64 @@
+name: "Install nfpm"
+description: "Installs nfpm packaging tool with strict SHA256 checksum verification"
+
+inputs:
+  nfpm-version:
+    description: "Version of nfpm to install"
+    required: false
+    default: "2.48.0"
+  deb-arch:
+    description: "Debian architecture for nfpm package (amd64 or arm64)"
+    required: false
+    default: "amd64"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Download and verify nfpm
+      shell: bash
+      env:
+        NFPM_VERSION: ${{ inputs.nfpm-version }}
+        DEB_ARCH: ${{ inputs.deb-arch }}
+      run: |
+        version="$NFPM_VERSION"
+        arch="$DEB_ARCH"
+        if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+          echo "::error::invalid nfpm-version '$version'"
+          exit 1
+        fi
+        case "$arch" in
+          amd64 | arm64) ;;
+          *) echo "::error::invalid deb-arch '$arch'"; exit 1 ;;
+        esac
+
+        deb_url="https://github.com/goreleaser/nfpm/releases/download/v${version}/nfpm_${version}_${arch}.deb"
+        curl --proto '=https' --proto-redir =https -fsSL -o "$RUNNER_TEMP/nfpm.deb" "$deb_url"
+
+        case "${version}:${arch}" in
+          "2.48.0:amd64")
+            expected="787af76e172dd5fc7cedf4d7c5a090a2f62be9001557a4db1103e270f90ddefd"
+            ;;
+          "2.48.0:arm64")
+            expected="8e9cd8b4ed372a5e8af555a997dfe5e111cb6c7d4d757fd0a0368a35ad84a9b0"
+            ;;
+          "2.47.0:amd64")
+            expected="3f1cf344bd0b57373ca55636a78c08b0491f7293d609a456a9ac3b0b150fda97"
+            ;;
+          "2.47.0:arm64")
+            expected="27419eb382695a7942be8ad52259f3ec1854fad001b3ae4baed34ce39a223b97"
+            ;;
+          *)
+            curl --proto '=https' --proto-redir =https -fsSL -o "$RUNNER_TEMP/checksums.txt" "https://github.com/goreleaser/nfpm/releases/download/v${version}/checksums.txt"
+            expected=$(grep -E "nfpm_${version}_${arch}\.deb" "$RUNNER_TEMP/checksums.txt" | awk '{print $1}')
+            ;;
+        esac
+
+        if [ -n "$expected" ]; then
+          echo "$expected  $RUNNER_TEMP/nfpm.deb" | sha256sum -c -
+        else
+          echo "::error::Could not determine expected SHA256 for nfpm"
+          exit 1
+        fi
+
+        sudo dpkg -i "$RUNNER_TEMP/nfpm.deb"
+        nfpm --version

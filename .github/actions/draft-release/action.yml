@@ -1,0 +1,112 @@
+name: "Draft GitHub Release"
+description: "Collects release artifacts, signs the Linux packages when given a key, computes (and signs) sha256 checksums, and creates or updates a draft GitHub Release"
+
+inputs:
+  version:
+    description: "Release version string without 'v' prefix"
+    required: true
+  app-title:
+    description: "Human-readable application name"
+    required: true
+  prerelease:
+    description: "Whether release is marked as prerelease"
+    required: false
+    default: "false"
+  github-token:
+    description: "GitHub token for authenticating gh CLI"
+    required: true
+  tag-prefix:
+    description: "Release tag prefix"
+    default: "v"
+  signing-key:
+    description: "ASCII-armored OpenPGP secret key (LINUX_SIGNING_KEY) that signs the Linux packages and SHA256SUMS.txt; empty publishes them unsigned"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Download all release artifacts
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        pattern: release-*
+        path: artifacts
+        merge-multiple: true
+
+    - name: Import the Linux signing key
+      id: key
+      uses: ./.github/actions/import-signing-key
+      with:
+        key: ${{ inputs.signing-key }}
+
+    - name: Install the signing tools
+      if: steps.key.outputs.enabled == 'true'
+      uses: ./.github/actions/install-apt-packages
+      with:
+        packages: rpm debsigs skopeo binutils
+
+    - name: Sign the Linux packages
+      shell: bash
+      working-directory: artifacts
+      env:
+        SIGNING_ENABLED: ${{ steps.key.outputs.enabled }}
+      run: |
+        if [ "$SIGNING_ENABLED" != "true" ]; then
+          # shortcut: unsigned when the caller passes no LINUX_SIGNING_KEY; fail on the release branch, like macOS and Windows, once every app's caller passes it.
+          echo "::warning::LINUX_SIGNING_KEY is empty, so the Linux packages and SHA256SUMS.txt are published unsigned."
+          exit 0
+        fi
+        # The registry and repository Flatpak pulls the OCI images from (the identity it checks).
+        OCI_REGISTRY="ghcr.io/${GITHUB_REPOSITORY,,}" "$GITHUB_ACTION_PATH/sign-linux.sh" .
+
+    - name: Compute checksums
+      shell: bash
+      working-directory: artifacts
+      env:
+        SIGNING_ENABLED: ${{ steps.key.outputs.enabled }}
+      run: |
+        sha256sum -- * | tee SHA256SUMS.txt
+        if [ "$SIGNING_ENABLED" = "true" ]; then
+          gpg --batch --yes --local-user "$SIGNING_FPR" --armor --detach-sign -o SHA256SUMS.txt.asc SHA256SUMS.txt
+          gpgv --quiet --keyring "$SIGNING_PUBKEY" SHA256SUMS.txt.asc SHA256SUMS.txt
+        fi
+
+    - name: Create or update draft release
+      shell: bash
+      working-directory: artifacts
+      env:
+        TAG_PREFIX: ${{ inputs.tag-prefix }}
+        VERSION: ${{ inputs.version }}
+        APP_TITLE: ${{ inputs.app-title }}
+        PRERELEASE: ${{ inputs.prerelease }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        GH_REPO: ${{ github.repository }}
+      run: |
+        tag="${TAG_PREFIX}$VERSION"
+        title="$APP_TITLE v$VERSION"
+        pre=()
+        if [ "$PRERELEASE" = "true" ]; then pre=(--prerelease); fi
+        if draft="$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null)"; then
+          if [ "$draft" != "true" ]; then
+            echo "::error::Release $tag is already published. Bump the version (cargo xtask version set) before pushing to release."
+            exit 1
+          fi
+          echo "Updating draft $tag: replacing its assets"
+          gh release view "$tag" --json assets --jq '.assets[].name' | while read -r asset; do
+            gh release delete-asset "$tag" "$asset" --yes
+          done
+          gh release edit "$tag" --draft --title "$title" --target "$GITHUB_SHA" --prerelease="$PRERELEASE"
+          gh release upload "$tag" --clobber -- *
+        else
+          echo "Creating draft $tag"
+          gh release create "$tag" --draft --title "$title" --target "$GITHUB_SHA" --generate-notes "${pre[@]}" -- *
+        fi
+        {
+          echo "Draft release **$title** at \`${GITHUB_SHA::9}\`:"
+          echo
+          sed 's/^/    /' SHA256SUMS.txt
+          if [ -n "${SIGNING_FPR:-}" ]; then
+            echo
+            echo "Linux packages and SHA256SUMS.txt signed with \`$SIGNING_FPR\` (release-signing-key.asc)."
+          fi
+        } >>"$GITHUB_STEP_SUMMARY"

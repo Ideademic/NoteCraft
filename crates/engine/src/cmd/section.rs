@@ -57,6 +57,8 @@ fn rename(s: &mut Session, params: &Value) -> CmdResult {
         return Ok(CmdOutput::unchanged());
     }
     sec.name = name;
+    // OneNote names a section by its file: the next save moves it to a file with the new name.
+    sec.source.file_name = None;
     Ok(CmdOutput::ok())
 }
 

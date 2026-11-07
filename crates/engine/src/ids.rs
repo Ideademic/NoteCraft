@@ -27,6 +27,11 @@ pub const OUTLINE_RESIZE: &str = "outline.resize";
 pub const OUTLINE_DELETE: &str = "outline.delete";
 
 pub const TEXT_SET_PARAGRAPHS: &str = "text.setParagraphs";
+pub const TEXT_INSERT: &str = "text.insert";
+pub const TEXT_DELETE: &str = "text.delete";
+pub const TEXT_SPLIT_PARAGRAPH: &str = "text.splitParagraph";
+pub const TEXT_MERGE_PARAGRAPHS: &str = "text.mergeParagraphs";
+pub const TEXT_FORMAT_AT: &str = "text.formatAt";
 
 pub const FORMAT_BOLD: &str = "format.bold";
 pub const FORMAT_ITALIC: &str = "format.italic";
@@ -43,6 +48,7 @@ pub const FORMAT_INDENT: &str = "format.indent";
 pub const FORMAT_OUTDENT: &str = "format.outdent";
 pub const FORMAT_TAG_TODO: &str = "format.tag.todo";
 pub const FORMAT_TOGGLE_TODO: &str = "format.toggleTodo";
+pub const FORMAT_CLEAR: &str = "format.clear";
 
 pub const INSERT_IMAGE: &str = "insert.image";
 pub const INSERT_PRINTOUT: &str = "insert.printout";
@@ -56,6 +62,7 @@ pub const DRAW_LASSO_SELECT: &str = "draw.lassoSelect";
 pub const DRAW_MOVE_SELECTION: &str = "draw.moveSelection";
 pub const DRAW_DELETE_SELECTION: &str = "draw.deleteSelection";
 pub const DRAW_RECOLOR: &str = "draw.recolor";
+pub const DRAW_INK_TO_SHAPE: &str = "draw.inkToShape";
 
 pub const VIEW_RULE_LINES: &str = "view.ruleLines";
 pub const VIEW_PAGE_COLOR: &str = "view.pageColor";
@@ -66,12 +73,15 @@ pub const EDIT_REDO: &str = "edit.redo";
 pub const FILE_EXPORT_ONEPKG: &str = "file.exportOnepkg";
 pub const FILE_EXPORT_HTML: &str = "file.exportHtml";
 pub const FILE_EXPORT_MARKDOWN: &str = "file.exportMarkdown";
+pub const FILE_EXPORT_TEXT: &str = "file.exportText";
 pub const FILE_IMPORT_ONEPKG: &str = "file.importOnepkg";
 pub const FILE_IMPORT_ONE: &str = "file.importOne";
 
 pub const NAV_NOTEBOOK: &str = "nav.notebook";
 pub const NAV_SECTION: &str = "nav.section";
 pub const NAV_PAGE: &str = "nav.page";
+
+pub const SEARCH: &str = "search";
 
 /// Every id above, for tests and tooling.
 pub const ALL: &[&str] = &[
@@ -98,6 +108,11 @@ pub const ALL: &[&str] = &[
     OUTLINE_RESIZE,
     OUTLINE_DELETE,
     TEXT_SET_PARAGRAPHS,
+    TEXT_INSERT,
+    TEXT_DELETE,
+    TEXT_SPLIT_PARAGRAPH,
+    TEXT_MERGE_PARAGRAPHS,
+    TEXT_FORMAT_AT,
     FORMAT_BOLD,
     FORMAT_ITALIC,
     FORMAT_UNDERLINE,
@@ -113,6 +128,7 @@ pub const ALL: &[&str] = &[
     FORMAT_OUTDENT,
     FORMAT_TAG_TODO,
     FORMAT_TOGGLE_TODO,
+    FORMAT_CLEAR,
     INSERT_IMAGE,
     INSERT_PRINTOUT,
     INSERT_FILE,
@@ -124,6 +140,7 @@ pub const ALL: &[&str] = &[
     DRAW_MOVE_SELECTION,
     DRAW_DELETE_SELECTION,
     DRAW_RECOLOR,
+    DRAW_INK_TO_SHAPE,
     VIEW_RULE_LINES,
     VIEW_PAGE_COLOR,
     EDIT_UNDO,
@@ -131,9 +148,11 @@ pub const ALL: &[&str] = &[
     FILE_EXPORT_ONEPKG,
     FILE_EXPORT_HTML,
     FILE_EXPORT_MARKDOWN,
+    FILE_EXPORT_TEXT,
     FILE_IMPORT_ONEPKG,
     FILE_IMPORT_ONE,
     NAV_NOTEBOOK,
     NAV_SECTION,
     NAV_PAGE,
+    SEARCH,
 ];

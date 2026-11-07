@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::history::{History, Snapshot};
-use crate::io::{IoError, Origin, Storage};
+use crate::io::recent::RecentNotebooks;
+use crate::io::{IoError, Layout, Origin, Storage};
 use crate::{CmdError, CmdOutput, registry};
 
 /// Autosave waits this long after the last change, seconds.
@@ -47,7 +48,19 @@ pub struct Session {
     pub notices: Vec<String>,
     /// Bumped by every change to the notebooks (commands, undo, redo): caches compare it.
     pub revision: u64,
+    /// Recently opened notebooks (File ▸ Open). The app loads and stores it
+    /// ([`RecentNotebooks::from_json`]); opening a notebook or saving a new one updates it.
+    pub recent: RecentNotebooks,
+    /// Where new notebooks are created (`Documents/NoteCraft Notebooks`), set by the app; the
+    /// same folder as its [`crate::io::FolderStorage::root`]. `notebook.new` uses it.
+    pub default_location: Option<std::path::PathBuf>,
     pub(crate) history: History,
+    /// Where each notebook's sections were last saved (or found when opened).
+    pub(crate) layouts: HashMap<Guid, Layout>,
+    /// Sections the "can't edit yet; backup kept" notice was shown for.
+    pub(crate) warned_unsupported: HashSet<Guid>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) recovery: Option<crate::io::recovery::Recovery>,
     autosave: AutosaveClock,
 }
 
@@ -77,7 +90,13 @@ impl Session {
             storage: None,
             notices: Vec::new(),
             revision: 0,
+            recent: RecentNotebooks::default(),
+            default_location: None,
             history: History::default(),
+            layouts: HashMap::new(),
+            warned_unsupported: HashSet::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            recovery: None,
             autosave: AutosaveClock::default(),
         }
     }
@@ -99,6 +118,9 @@ impl Session {
         let id = notebook.id;
         if let Some(s) = notebook.all_sections().iter().find(|s| s.source.unsupported_content) {
             self.notices.push(format!("\u{201c}{}\u{201d} has content NoteCraft can show but not edit; it is kept when saving.", s.name));
+        }
+        if let Some(l) = crate::io::initial_layout(&notebook, &origin) {
+            self.layouts.insert(id, l);
         }
         self.notebooks.push(notebook);
         self.origins.insert(id, origin);
@@ -239,6 +261,21 @@ impl Session {
         }
     }
 
+    /// Marks every section and the table of contents of notebook `id` unsaved (an imported
+    /// notebook, a restored copy).
+    pub fn mark_notebook_dirty(&mut self, id: Guid) {
+        let Some(nb) = self.notebook(id) else { return };
+        let sections: Vec<Guid> = nb.all_sections().iter().map(|s| s.id).collect();
+        self.dirty.extend(sections);
+        self.dirty_tocs.insert(id);
+        self.revision += 1;
+    }
+
+    /// Forgets notebook `id`'s save bookkeeping (it was closed).
+    pub(crate) fn forget_notebook(&mut self, id: Guid) {
+        self.layouts.remove(&id);
+    }
+
     /// Whether anything is unsaved.
     pub fn is_dirty(&self) -> bool {
         !self.dirty.is_empty() || !self.dirty_tocs.is_empty()
@@ -258,11 +295,19 @@ impl Session {
     /// Autosave, called by the front end every frame (or timer) with a monotonic clock in
     /// seconds. Saves [`AUTOSAVE_DELAY_SECS`] after the last change, or at the latest
     /// [`AUTOSAVE_MAX_WAIT_SECS`] after the first unsaved one. Returns the save's result when it
-    /// tried to save; a failure is also added to [`Session::notices`].
+    /// tried to save; a failure is also added to [`Session::notices`]. Also keeps the crash
+    /// recovery snapshot ([`Session::enable_recovery`]) up to date.
     pub fn tick(&mut self, now: f64) -> Option<Result<usize, IoError>> {
         if !now.is_finite() {
             return None;
         }
+        let result = self.autosave_tick(now);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.recovery_tick(now);
+        result
+    }
+
+    fn autosave_tick(&mut self, now: f64) -> Option<Result<usize, IoError>> {
         if self.revision != self.autosave.seen_revision {
             self.autosave.seen_revision = self.revision;
             self.autosave.last_change = Some(now);

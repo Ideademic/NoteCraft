@@ -16,7 +16,7 @@
 //!     Plans.one
 //! ```
 //!
-//! Scope (phase 2, format agent): Section / PageSeries / PageManifest / Page / PageMetaData /
+//! See `README.md` for what is supported and what is uncertain. Covered: Section / PageSeries / PageManifest / Page / PageMetaData /
 //! Title / Outline / OutlineElement / RichTextOE / Image / NumberList / Table (read-only,
 //! flattened) / EmbeddedFile, ink (InkContainer / InkData / InkStroke / StrokeProperties, ISF
 //! multibyte delta encoding), and the `.onetoc2` TOC. Unknown objects are kept as
@@ -24,10 +24,27 @@
 //! [`notecraft_doc::SourceInfo::unsupported_content`].
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod build;
+mod icon;
+pub mod ids;
+mod ink;
+mod notebook;
+mod opaque;
+mod read;
+mod toc;
+mod util;
+mod write;
+
+#[cfg(not(target_arch = "wasm32"))]
+mod dir;
+
 use notecraft_doc::{Color, Guid, Section};
 
 #[cfg(not(target_arch = "wasm32"))]
 use notecraft_doc::Notebook;
+
+pub use notebook::{NotebookFile, notebook_files, notebook_from_files};
+pub use write::WRITER_NAME;
 
 /// The table of contents' file name in a notebook folder and in each section group folder.
 pub const TOC_FILE_NAME: &str = "Open Notebook.onetoc2";
@@ -68,28 +85,48 @@ pub enum TocEntry {
     Group { folder_name: String },
 }
 
-/// Reads a `.one` section file.
+/// Reads a `.one` section file. Its name is the display name stored in the file (NoteCraft and
+/// recent OneNote versions store one), else "Untitled section"; callers that know the file name
+/// use [`read_section_named`].
 pub fn read_section(bytes: &[u8]) -> Result<Section> {
-    let _store = notecraft_onestore::read(bytes)?;
-    Err(Error::NotImplemented("notecraft_one::read_section"))
+    read_section_named(bytes, "Untitled section")
 }
 
-/// Writes a section as a `.one` file.
+/// Reads a `.one` section file, naming it `name` when the file stores no display name.
+pub fn read_section_named(bytes: &[u8], name: &str) -> Result<Section> {
+    let store = notecraft_onestore::read(bytes)?;
+    read::section(&store, name)
+}
+
+/// Writes a section as a `.one` file (pure: bytes out). Its `crcName` is computed for
+/// [`section_file_name`]; it doesn't link to a table of contents (`guidAncestor` nil).
 pub fn write_section(section: &Section) -> Result<Vec<u8>> {
-    let _ = section;
-    Err(Error::NotImplemented("notecraft_one::write_section"))
+    write_section_with(section, &section_file_name(section), Guid::NIL)
+}
+
+/// Writes a section as a `.one` file named `file_name`, next to the table of contents whose
+/// `guidFile` is `toc_id` (nil for none).
+pub fn write_section_with(section: &Section, file_name: &str, toc_id: Guid) -> Result<Vec<u8>> {
+    let store = write::section_store(section, file_name, toc_id)?;
+    Ok(notecraft_onestore::write(&store)?)
 }
 
 /// Reads a `.onetoc2` table of contents.
 pub fn read_toc(bytes: &[u8]) -> Result<NotebookToc> {
-    let _store = notecraft_onestore::read(bytes)?;
-    Err(Error::NotImplemented("notecraft_one::read_toc"))
+    read_toc_ids(bytes).map(|(t, _)| t)
 }
 
-/// Writes a `.onetoc2` table of contents.
+/// Reads a table of contents and each entry's FileIdentityGuid (the section's `guidFile`, or
+/// the group folder's table of contents id).
+pub(crate) fn read_toc_ids(bytes: &[u8]) -> Result<(NotebookToc, Vec<Option<Guid>>)> {
+    let store = notecraft_onestore::read(bytes)?;
+    toc::toc(&store)
+}
+
+/// Writes a `.onetoc2` table of contents (pure: bytes out). Its `guidFile` is `toc.id`; it
+/// lists only the entries given (one folder level).
 pub fn write_toc(toc: &NotebookToc) -> Result<Vec<u8>> {
-    let _ = toc;
-    Err(Error::NotImplemented("notecraft_one::write_toc"))
+    toc::write(toc, &[], Guid::NIL)
 }
 
 /// The file name a section is saved as: its [`notecraft_doc::SourceInfo::file_name`] when it
@@ -115,23 +152,21 @@ pub fn safe_file_stem(name: &str) -> String {
     if trimmed.is_empty() { "Untitled".to_owned() } else { trimmed.to_owned() }
 }
 
-/// Reads a notebook folder: its `Open Notebook.onetoc2`, every section file it lists (and any
-/// other `.one` files in the folder), and section group subfolders, recursively (bounded).
+/// Reads a notebook folder: its `Open Notebook.onetoc2`, every `.one` file in it and section
+/// group subfolders, recursively (bounded). Sections are named after their files, groups after
+/// their folders; OneNote's recycle bin, backups and NoteCraft's temporary files are skipped, as
+/// are sections that can't be read (logged).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn read_notebook_dir(dir: &std::path::Path) -> Result<Notebook> {
-    if !dir.is_dir() {
-        return Err(Error::Io(format!("{} is not a folder", dir.display())));
-    }
-    Err(Error::NotImplemented("notecraft_one::read_notebook_dir"))
+    dir::read(dir)
 }
 
 /// Writes a notebook as a folder (created if needed): the TOC, one `.one` per section, a
 /// subfolder per section group. Each file is written to a temporary name and then renamed over
-/// the old one.
+/// the old one. Files the notebook doesn't mention are left alone.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn write_notebook_dir(notebook: &Notebook, dir: &std::path::Path) -> Result<()> {
-    let _ = (notebook, dir);
-    Err(Error::NotImplemented("notecraft_one::write_notebook_dir"))
+    dir::write(notebook, dir)
 }
 
 #[cfg(test)]
@@ -151,9 +186,11 @@ mod tests {
     }
 
     #[test]
-    fn stubs_return_errors() {
+    fn junk_is_an_error() {
         assert!(read_section(b"junk").is_err());
         assert!(read_toc(&[]).is_err());
-        assert!(write_section(&Section::new("x", Color::WHITE)).is_err());
     }
 }
+
+#[cfg(test)]
+mod tests_roundtrip;

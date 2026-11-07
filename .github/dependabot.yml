@@ -1,0 +1,46 @@
+version: 2
+updates:
+  # Rust / Cargo dependencies. Minor and patch updates share one PR; a breaking bump gets its own.
+  # The egui family and craft-libs' hayro crates must move together, so they are grouped first.
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/New_York"
+    groups:
+      egui:
+        patterns:
+          - "egui"
+          - "egui_*"
+          - "eframe"
+          - "winit"
+      hayro:
+        patterns:
+          - "hayro-*"
+      cargo-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "chore(deps)"
+
+  # GitHub Actions in .github/workflows and the composite actions in .github/actions.
+  - package-ecosystem: "github-actions"
+    directories:
+      - "/"
+      - "/.github/actions/*"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/New_York"
+    groups:
+      actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "ci(deps)"

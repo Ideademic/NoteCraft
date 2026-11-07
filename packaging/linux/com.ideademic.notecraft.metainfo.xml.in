@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AppStream metadata (software centres, Flathub). Template: package.sh and the Flatpak
+     manifest substitute @VERSION@ and @DATE@ from Cargo.toml and the build date. -->
+<component type="desktop-application">
+  <id>com.ideademic.notecraft</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT OR Apache-2.0</project_license>
+  <name>NoteCraft</name>
+  <summary>Notebooks, sections, pages and ink</summary>
+  <developer id="com.ideademic">
+    <name>Ideademic</name>
+  </developer>
+  <description>
+    <p>
+      NoteCraft is a fast, open-source notebook in the spirit of the classic desktop note-taking apps: notebooks with section groups, sections and pages; note containers you place anywhere on a page with rich text, lists and To Do tags; a pen, pencil and highlighter with pressure; pictures and PDF printouts you can ink over.
+    </p>
+    <p>
+      Notebooks are stored locally as .one sections and an .onetoc2 table of contents, and can be imported and exported as .onepkg packages. Changes save automatically. NoteCraft is a community app made to fit in with the Craft apps; its file support is a clean-room implementation of Microsoft's published Open Specifications, and writing files for Microsoft OneNote is experimental.
+    </p>
+  </description>
+  <launchable type="desktop-id">com.ideademic.notecraft.desktop</launchable>
+  <icon type="stock">com.ideademic.notecraft</icon>
+  <!-- Only url types known to appstream 0.15 (Ubuntu 22.04, where CI validates): no vcs-browser. -->
+  <url type="homepage">https://github.com/Ideademic/NoteCraft</url>
+  <url type="bugtracker">https://github.com/Ideademic/NoteCraft/issues</url>
+  <url type="help">https://github.com/Ideademic/NoteCraft#readme</url>
+  <categories>
+    <category>Office</category>
+  </categories>
+  <keywords>
+    <keyword>notes</keyword>
+    <keyword>notebook</keyword>
+    <keyword>note-taking</keyword>
+    <keyword>ink</keyword>
+    <keyword>handwriting</keyword>
+  </keywords>
+  <branding>
+    <color type="primary" scheme_preference="light">#f3dcfc</color>
+    <color type="primary" scheme_preference="dark">#5c1f78</color>
+  </branding>
+  <requires>
+    <display_length compare="ge">760</display_length>
+  </requires>
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+    <control>tablet</control>
+    <control>touch</control>
+  </supports>
+  <!-- Document types NoteCraft opens, as in the desktop entry's MimeType=. -->
+  <provides>
+    <binary>notecraft</binary>
+    <binary>notecraft-cli</binary>
+    <mediatype>application/onenote</mediatype>
+    <mediatype>application/msonenote</mediatype>
+  </provides>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="@VERSION@" date="@DATE@"/>
+  </releases>
+</component>

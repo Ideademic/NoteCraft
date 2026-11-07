@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=NoteCraft
+GenericName=Notebook
+Comment=Take notes in notebooks, sections and pages; write, type and ink; open OneNote files
+Exec=notecraft %F
+TryExec=notecraft
+Icon=com.ideademic.notecraft
+Terminal=false
+StartupNotify=true
+StartupWMClass=com.ideademic.notecraft
+Categories=Office;
+Keywords=notes;notebook;note-taking;onenote;one;onetoc2;onepkg;ink;pen;handwriting;journal;
+MimeType=application/onenote;application/msonenote;

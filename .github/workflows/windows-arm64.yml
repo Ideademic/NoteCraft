@@ -1,0 +1,96 @@
+# Windows on ARM: package the ARM64 release the way release.yml does (cross-compiled on an x64
+# runner, unsigned here), then install that MSI per user on a Windows 11 ARM64 runner, check the
+# installed binaries are ARM64, run the CLI natively, and uninstall. Adapted from
+# storytold/craft-common-actions' windows-arm64.yml. Optional: nothing waits on it.
+name: Windows ARM64
+
+# Nightly and on pushes to `release` (dependency and runner-image drift shows up within a day, and
+# always before a release ships), and on PRs that change the Windows packaging itself.
+on:
+  schedule:
+    - cron: "13 6 * * *"
+  push:
+    branches: [release]
+  pull_request:
+    paths:
+      - .github/workflows/windows-arm64.yml
+      - packaging/windows/**
+  workflow_dispatch:
+
+concurrency:
+  group: windows-arm64-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  package:
+    name: package (cross-compiled on x64)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+          targets: aarch64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: windows-arm64-package
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install WiX
+        uses: ./.github/actions/install-wix
+        with:
+          wix-version: "5.0.2"
+      - name: Build and package (unsigned)
+        shell: pwsh
+        env:
+          DIST: ${{ github.workspace }}\dist\arm64
+        run: ./packaging/windows/package.ps1 -Arch arm64
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: notecraft-windows-arm64
+          path: dist/arm64/*
+          if-no-files-found: error
+          retention-days: 7
+
+  install:
+    name: install and run on ARM64
+    needs: package
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: notecraft-windows-arm64
+          path: dist
+      - name: Install the MSI per user, check it, run it, uninstall it
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # The per-user default from packaging/windows/install-policy.wxi.
+          $dir = Join-Path $env:LOCALAPPDATA 'Programs\Ideademic\NoteCraft'
+          $msi = (Get-ChildItem dist/*.msi | Select-Object -First 1).FullName
+          $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/l*v', 'install.log', 'ALLUSERS=2', 'MSIINSTALLPERUSER=1' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content install.log -Tail 60; throw "msiexec /i exited $($p.ExitCode)" }
+          foreach ($exe in 'notecraft.exe', 'notecraft-cli.exe') {
+            $path = Join-Path $dir $exe
+            if (-not (Test-Path -LiteralPath $path)) { Get-Content install.log -Tail 60; throw "$exe not installed in $dir" }
+            $bytes = [System.IO.File]::ReadAllBytes($path)
+            $machine = [BitConverter]::ToUInt16($bytes, [BitConverter]::ToInt32($bytes, 0x3C) + 4)
+            if ($machine -ne 0xAA64) { throw "$exe is for machine 0x$('{0:X}' -f $machine), not ARM64" }
+            Write-Output "ok $path (ARM64)"
+          }
+          $cli = Join-Path $dir 'notecraft-cli.exe'
+          $out = & $cli --version 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0) { Write-Output $out; throw "notecraft-cli --version exited $LASTEXITCODE" }
+          Write-Output "ok notecraft-cli --version: $($out.Trim())"
+          $p = Start-Process msiexec.exe -ArgumentList '/x', "`"$msi`"", '/qn' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec /x exited $($p.ExitCode)" }
+          if (Test-Path -LiteralPath (Join-Path $dir 'notecraft.exe')) { throw 'uninstall left notecraft.exe behind' }
+          Write-Output 'ok uninstalled'

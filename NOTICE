@@ -1,0 +1,53 @@
+NoteCraft
+Copyright (c) 2026 Ideademic and NoteCraft contributors.
+Licensed under the MIT License or the Apache License, Version 2.0, at your option
+(LICENSE-MIT, LICENSE-APACHE).
+
+https://github.com/Ideademic/NoteCraft
+
+Community app
+
+NoteCraft is a community "Craft" app by Ideademic, made to fit in with the open-source Crafting
+Apps of the ArtCraft team (https://getartcraft.com/), such as WordCraft, DeckCraft and GridCraft.
+It is not an official ArtCraft app and is not endorsed by the ArtCraft team. It follows their
+conventions and is built on their open-source shared libraries, used under their licences:
+craft-libs (https://github.com/storytold/craft-libs: craft-ui, craft-i18n, craft-window,
+craft-web-host, craft-pdf, MIT OR Apache-2.0) and the Craft forks of egui and winit
+(https://github.com/storytold/egui, https://github.com/storytold/winit, MIT OR Apache-2.0).
+Its packaging scripts and release workflows are adapted from WordCraft
+(https://github.com/storytold/wordcraft) and storytold/craft-common-actions (MIT OR Apache-2.0).
+
+NoteCraft contains no ArtCraft or Storyteller names, logos or other brand assets beyond plain-text
+references like this one. If you fork it, keep it that way: don't add ArtCraft logos, and remove
+any you find.
+
+Trademarks
+
+Microsoft, OneNote and Office are trademarks of the Microsoft group of companies. NoteCraft is an
+independent project. It is not affiliated with, sponsored by or endorsed by Microsoft. "OneNote"
+is used only to describe the file formats NoteCraft reads and writes and the style of app it is.
+
+Clean room
+
+NoteCraft's .one, .onetoc2 and .onepkg support is written only from Microsoft's published Open
+Specifications ([MS-ONESTORE], [MS-ONE], [MS-DTYP], [MS-OSHARED], [MS-CAB]) and observed
+black-box behaviour, under the Microsoft Open Specifications Promise. No code from other OneNote
+implementations, and no icons, images, templates, fonts or other assets from Microsoft products,
+are used. Writing files that Microsoft OneNote opens is experimental and unverified.
+
+Third-party material
+
+This product includes third-party material under its own licences. The per-file list of assets
+in this repository (author, source, licence) is in ATTRIBUTION.md.
+
+- egui's default fonts, embedded by the desktop and web builds (epaint_default_fonts, from
+  https://github.com/storytold/egui):
+  - Ubuntu Light — Ubuntu Font Licence 1.0.
+  - Hack — MIT License, with Bitstream Vera License for the glyphs derived from Bitstream Vera.
+  - Noto Emoji — SIL Open Font License 1.1.
+  - emoji-icon-font and egui's icon subset — MIT License, Copyright (c) 2014 John Slegers.
+- Rust crates linked into the binaries are under MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause,
+  ISC, Zlib, BSL-1.0, Unicode-3.0, OFL-1.1 or CC0-1.0 licences; see each crate's own licence
+  (Cargo.lock lists them).
+- The macOS DMG window background outlines a few words of Inter and JetBrains Mono (SIL Open
+  Font License 1.1) as vector shapes; no font files are included.

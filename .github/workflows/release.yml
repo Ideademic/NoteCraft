@@ -1,0 +1,633 @@
+name: Release
+
+# Builds every release artifact and attaches them to a DRAFT GitHub release `v<version>` titled
+# "NoteCraft v<version>", with SHA256SUMS.txt. A person publishes the draft.
+#
+# Adapted from the Craft apps' shared release pipeline (storytold/craft-common-actions,
+# .github/workflows/release.yml) and kept in this repository, with its composite actions copied
+# into .github/actions/. Differences: the macOS job runs on `macos-15`; there is no craft-fonts,
+# craft-i18n, contributor-credits or GHCR step; and every signing secret is optional: without
+# them the macOS build is ad-hoc signed and not notarized, Windows and Linux packages are
+# unsigned, and each job says so in a warning instead of failing.
+#
+# Artifacts (<v> is the version, e.g. 0.1.0):
+#   notecraft-<v>-macos-universal.dmg, notecraft-cli-<v>-macos-universal.zip
+#   notecraft-<v>-windows-{x64,x86,arm64}.msi, notecraft-<v>-windows-{x64,x86,arm64}-portable.zip
+#   notecraft-<v>-linux-{x86_64,aarch64}.{AppImage,AppImage.zsync,deb,rpm,tar.gz}
+#   notecraft-<v>-linux-{x86_64,aarch64}.flatpak
+#   notecraft-<v>-linux-{x86_64,aarch64}.pkg.tar.zst (Arch Linux)
+#   notecraft-<v>-freebsd-{x86_64,aarch64}.tar.gz
+#   notecraft-<v>-linux-riscv64.{deb,rpm,tar.gz}
+#   notecraft-web-<v>.zip
+#   SHA256SUMS.txt
+on:
+  push:
+    branches: [release]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version override for a test run, e.g. 0.2.0-rc.1 (empty: Cargo.toml)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  WIX_VERSION: "5.0.2"
+  NFPM_VERSION: "2.47.0"
+  TRUNK_VERSION: "0.21.14"
+
+jobs:
+  # Fails fast before any build: git dependencies must come from github.com/storytold or
+  # github.com/Ideademic, and cargo config must not replace, patch or override a source.
+  # Every build job needs `version`, so they are all gated by this one.
+  git-sources:
+    name: Git dependencies come from storytold or Ideademic
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Git dependencies come from storytold or Ideademic
+        run: |
+          set -euo pipefail
+          test -f Cargo.lock || { echo "Cargo.lock is missing"; exit 1; }
+          python3 - <<'PY'
+          import os, sys, tomllib
+          for path in (".cargo/config", ".cargo/config.toml"):
+              if not os.path.exists(path):
+                  continue
+              config = tomllib.load(open(path, "rb"))
+              replaced = [name for name, source in config.get("source", {}).items()
+                          if isinstance(source, dict) and "replace-with" in source]
+              if replaced or "patch" in config or "paths" in config:
+                  print(f"{path} replaces, patches or overrides a source")
+                  sys.exit(1)
+          PY
+          # Fails when Cargo.lock is out of date with the manifests.
+          cargo metadata --locked --format-version 1 > /dev/null
+          python3 - <<'PY'
+          import sys, tomllib
+          lock = tomllib.load(open("Cargo.lock", "rb"))
+          allowed = ("git+https://github.com/storytold/", "git+https://github.com/Ideademic/")
+          bad = sorted({p["source"] for p in lock.get("package", [])
+                        if p.get("source", "").startswith("git+")
+                        and not p["source"].startswith(allowed)})
+          if bad:
+              print("Git dependencies outside github.com/storytold and github.com/Ideademic:", *bad, sep="\n")
+              sys.exit(1)
+          PY
+
+  version:
+    name: version
+    needs: git-sources
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      date: ${{ steps.v.outputs.date }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: v
+        name: Resolve version
+        uses: ./.github/actions/resolve-version
+        with:
+          input-version: ${{ inputs.version }}
+          app-title: NoteCraft
+
+  macos:
+    name: macOS universal
+    needs: [version]
+    runs-on: macos-15
+    timeout-minutes: 120
+    environment: release
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
+      VERSION: ${{ needs.version.outputs.version }}
+      INPUT_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Export the app's build variables
+        # NOTECRAFT_VERSION, _BUILD_DATE and _BUILD_SHA (the prefix packaging/env.sh reads).
+        uses: ./.github/actions/export-app-build-env
+        with:
+          app-name: notecraft
+          version: ${{ needs.version.outputs.version }}
+          date: ${{ needs.version.outputs.date }}
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: release-macos-universal
+      - name: Apply version override
+        if: inputs.version != ''
+        run: cargo xtask version set "$VERSION"
+      - name: Note missing signing secrets
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ] || [ -z "$APPLE_ID" ]; then
+            echo "::warning::No Apple signing/notarization secrets: the macOS DMG is ad-hoc signed and not notarized (Gatekeeper will warn)."
+          fi
+      - name: Import signing certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: packaging/macos/import-cert.sh
+      - name: Build, sign, notarize
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: packaging/macos/package.sh --arch universal
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-macos
+          path: dist/release/*
+          if-no-files-found: error
+      - name: Remove temporary keychain
+        if: always()
+        run: |
+          if [ -n "${MACOS_KEYCHAIN:-}" ]; then security delete-keychain "$MACOS_KEYCHAIN" || true; fi
+
+  windows:
+    name: Windows ${{ matrix.arch }}
+    needs: [version]
+    runs-on: windows-latest
+    timeout-minutes: 90
+    environment: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64, target: x86_64-pc-windows-msvc }
+          - { arch: x86, target: i686-pc-windows-msvc }
+          - { arch: arm64, target: aarch64-pc-windows-msvc }
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
+      VERSION: ${{ needs.version.outputs.version }}
+      INPUT_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Export the app's build variables
+        uses: ./.github/actions/export-app-build-env
+        with:
+          app-name: notecraft
+          version: ${{ needs.version.outputs.version }}
+          date: ${{ needs.version.outputs.date }}
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: release-windows-${{ matrix.arch }}
+      - name: Apply version override
+        if: inputs.version != ''
+        shell: bash
+        run: cargo xtask version set "$VERSION"
+      - name: Install WiX
+        uses: ./.github/actions/install-wix
+        with:
+          wix-version: ${{ env.WIX_VERSION }}
+      # sign.ps1 signs with a PFX (WINDOWS_CERTIFICATE) or Azure Trusted Signing (AZURE_*), and
+      # otherwise warns and leaves the files unsigned.
+      - name: Build, sign, package
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          AZURE_CERT_PROFILE: ${{ secrets.AZURE_CERT_PROFILE }}
+        run: ./packaging/windows/package.ps1 -Arch ${{ matrix.arch }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-windows-${{ matrix.arch }}
+          path: dist/release/*
+          if-no-files-found: error
+
+  linux:
+    name: Linux ${{ matrix.arch }}
+    needs: [version]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    # LINUX_SIGNING_KEY (optional) lives in the release environment.
+    environment: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-22.04, deb: amd64 }
+          - { arch: aarch64, runner: ubuntu-22.04-arm, deb: arm64 }
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
+      VERSION: ${{ needs.version.outputs.version }}
+      INPUT_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Export the app's build variables
+        uses: ./.github/actions/export-app-build-env
+        with:
+          app-name: notecraft
+          version: ${{ needs.version.outputs.version }}
+          date: ${{ needs.version.outputs.date }}
+      - uses: ./.github/actions/install-linux-deps
+        with:
+          deb-arch: ${{ matrix.deb }}
+          nfpm-version: ${{ env.NFPM_VERSION }}
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: release-linux-${{ matrix.arch }}
+      - name: Apply version override
+        if: inputs.version != ''
+        run: cargo xtask version set "$VERSION"
+      - name: Build and package (AppImage, deb, rpm, tar.gz)
+        run: packaging/linux/package.sh
+      - name: Import the Linux signing key
+        id: linux_signing
+        uses: ./.github/actions/import-signing-key
+        with:
+          key: ${{ secrets.LINUX_SIGNING_KEY }}
+      - name: Sign the RPM packages
+        if: steps.linux_signing.outputs.enabled == 'true'
+        uses: ./.github/actions/sign-rpms
+        with:
+          path: dist/release
+      - name: Check the packages
+        run: |
+          dpkg-deb --info dist/release/*.deb || true
+          dpkg-deb --contents dist/release/*.deb | grep -E 'usr/bin/|metainfo|applications|mime' || true
+          for appimage in dist/release/*.AppImage; do
+            if [ -f "$appimage" ]; then
+              chmod +x "$appimage"
+              APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --version || true
+            fi
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-linux-${{ matrix.arch }}
+          path: dist/release/*
+          if-no-files-found: error
+
+  flatpak:
+    name: Flatpak ${{ matrix.arch }}
+    needs: [version, linux]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Export the app's build variables
+        uses: ./.github/actions/export-app-build-env
+        with:
+          app-name: notecraft
+          version: ${{ needs.version.outputs.version }}
+          date: ${{ needs.version.outputs.date }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-linux-${{ matrix.arch }}
+          path: dist/linux
+      - name: Install flatpak-builder
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder elfutils librsvg2-common
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      # Repackages the Linux job's tarball as a single-file bundle (no GHCR/OCI publishing).
+      - name: Build the Flatpak bundle
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: packaging/linux/flatpak-bundle.sh "dist/linux/notecraft-${VERSION}-linux-${ARCH}.tar.gz"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-flatpak-${{ matrix.arch }}
+          path: dist/release/*.flatpak
+          if-no-files-found: error
+
+  arch:
+    name: Arch Linux ${{ matrix.arch }}
+    needs: [version, linux]
+    # Both on x86_64: makepkg only repackages the prebuilt tarball (in an archlinux container).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-linux-${{ matrix.arch }}
+          path: dist/linux
+      - uses: ./.github/actions/arch-package
+        with:
+          tarball: dist/linux/notecraft-${{ needs.version.outputs.version }}-linux-${{ matrix.arch }}.tar.gz
+          arch: ${{ matrix.arch }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-arch-${{ matrix.arch }}
+          path: dist/release/*.pkg.tar.zst
+          if-no-files-found: error
+
+  freebsd:
+    name: FreeBSD ${{ matrix.arch }}
+    needs: [version]
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        # The guest is always x86_64 (KVM-accelerated); aarch64 is cross-compiled inside it.
+        arch: [x86_64, aarch64]
+    env:
+      CARGO_HOME: /var/tmp/craft-cargo
+      CARGO_TARGET_DIR: /var/tmp/craft-target
+      CARGO_BUILD_JOBS: 4
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
+      VERSION: ${{ needs.version.outputs.version }}
+      INPUT_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Export the app's build variables
+        id: app-env
+        uses: ./.github/actions/export-app-build-env
+        with:
+          app-name: notecraft
+          version: ${{ needs.version.outputs.version }}
+          date: ${{ needs.version.outputs.date }}
+      - name: Start the FreeBSD VM
+        uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1.5.9
+        with:
+          release: "15.1"
+          usesh: true
+          cpu: 4
+          mem: 12288
+          copyback: false
+          envs: "CARGO_HOME CARGO_TARGET_DIR CARGO_INCREMENTAL CARGO_BUILD_JOBS VERSION INPUT_VERSION ${{ steps.app-env.outputs.names }}"
+          prepare: |
+            # Keep rustup/proxies outside the Cargo data cache.
+            unset CARGO_HOME CARGO_TARGET_DIR
+            if [ "${{ matrix.arch }}" = aarch64 ]; then
+              # The host compiler and the aarch64 standard library come from the amd64 and
+              # aarch64 lang/rust packages, which must be the same build: use the quarterly branch.
+              mkdir -p /usr/local/etc/pkg/repos
+              printf 'FreeBSD-ports: { url: "https://pkg.FreeBSD.org/${ABI}/quarterly" }\n' > /usr/local/etc/pkg/repos/FreeBSD.conf
+              pkg update -f -q
+            fi
+            pkg install -y bash git curl pkgconf cmake python3 libxkbcommon wayland libX11 libXcursor libXrandr libXi libxcb mesa-libs vulkan-loader gtk3 fontconfig freetype2 alsa-lib
+            # aarch64-unknown-freebsd is a tier-3 Rust target without rustup toolchains: use
+            # FreeBSD's lang/rust package for it.
+            if [ "${{ matrix.arch }}" = aarch64 ]; then
+              pkg install -y rust
+            else
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+            fi
+      # Same as the step in freebsd.yml.
+      - name: Set up the aarch64 cross toolchain
+        if: matrix.arch == 'aarch64'
+        shell: freebsd {0}
+        run: |
+          set -eu
+          # Stable Rust, no -Zbuild-std: the aarch64 standard library is copied from FreeBSD's
+          # aarch64 lang/rust package, and C code links with base clang and lld against an
+          # arm64 sysroot (base.txz plus the libraries the prepare step installs).
+          target=aarch64-unknown-freebsd
+          X=/var/tmp/craft-cross
+          S=$X/sysroot
+          mkdir -p "$X/db" "$X/cache" "$S"
+          release=$(freebsd-version -u | sed 's/-p[0-9]*$//')
+          P="-o ABI=FreeBSD:${release%%.*}:aarch64 -o OSVERSION=$(uname -U) -o PKG_DBDIR=$X/db -o PKG_CACHEDIR=$X/cache -o IGNORE_OSVERSION=yes"
+          pkg $P update -q
+          host=$(pkg query %v rust)
+          cross=$(pkg $P rquery %v rust)
+          if [ "$host" != "$cross" ]; then
+            echo "error: lang/rust is $host for amd64 but $cross for aarch64; the standard library must match the compiler" >&2
+            exit 1
+          fi
+          pkg $P fetch -y -q rust
+          tar -xf "$X/cache/rust-$cross.pkg" -C "$X" --include "*usr/local/lib/rustlib/$target/*"
+          cp -R "$X/usr/local/lib/rustlib/$target" /usr/local/lib/rustlib/
+          base=https://download.freebsd.org/releases/arm64/aarch64/$release
+          fetch -q -o "$X/MANIFEST" "$base/MANIFEST"
+          fetch -q -o "$X/base.txz" "$base/base.txz"
+          if [ "$(awk '$1 == "base.txz" { print $2 }' "$X/MANIFEST")" != "$(sha256 -q "$X/base.txz")" ]; then
+            echo "error: arm64 base.txz does not match its MANIFEST" >&2
+            exit 1
+          fi
+          tar -xf "$X/base.txz" -C "$S" ./lib ./usr/lib ./usr/include ./usr/libdata
+          pkg $P fetch -y -q -d libxkbcommon wayland libX11 libXcursor libXrandr libXi libxcb mesa-libs vulkan-loader gtk3 fontconfig freetype2 alsa-lib
+          for p in "$X"/cache/*.pkg; do
+            [ ! -L "$p" ] || continue
+            case "$p" in */rust-*) continue ;; esac
+            tar -xf "$p" -C "$S" --exclude '+*'
+          done
+          for tool in cc c++; do
+            printf '#!/bin/sh\nexec %s --target=%s%s --sysroot=%s -fuse-ld=lld -I%s/usr/local/include -L%s/usr/local/lib -Wl,-rpath-link,%s/usr/local/lib "$@"\n' \
+              "$tool" "$target" "${release%%-*}" "$S" "$S" "$S" "$S" > "$X/$tool"
+            chmod +x "$X/$tool"
+          done
+          cat > "$X/env" <<EOF
+          export CARGO_BUILD_TARGET=$target
+          export CARGO_TARGET_AARCH64_UNKNOWN_FREEBSD_LINKER=$X/cc
+          export CC_aarch64_unknown_freebsd=$X/cc CXX_aarch64_unknown_freebsd=$X/c++ AR_aarch64_unknown_freebsd=/usr/bin/ar
+          export PKG_CONFIG_ALLOW_CROSS=1 PKG_CONFIG_SYSROOT_DIR=$S PKG_CONFIG_LIBDIR=$S/usr/local/libdata/pkgconfig:$S/usr/libdata/pkgconfig
+          EOF
+          rustc --print target-libdir --target "$target"
+      - name: Build and package
+        shell: freebsd {0}
+        run: |
+          set -eu
+          # Only rustup writes this; the lang/rust package installs into /usr/local/bin.
+          [ ! -f "$HOME/.cargo/env" ] || . "$HOME/.cargo/env"
+          git config --global --add safe.directory "*"
+          # Before the cross environment: xtask has to run on the guest.
+          if [ -n "$INPUT_VERSION" ]; then cargo xtask version set "$VERSION"; fi
+          [ ! -f /var/tmp/craft-cross/env ] || . /var/tmp/craft-cross/env
+          bash packaging/freebsd/package.sh
+          # The guest is x86_64 either way: the archive must carry the target's name.
+          found=
+          for archive in dist/release/*-freebsd-*.tar.gz; do
+            [ -f "$archive" ] || continue
+            case "$archive" in
+              *-freebsd-${{ matrix.arch }}.tar.gz) found=1 ;;
+              *) echo "error: $archive is not a FreeBSD ${{ matrix.arch }} archive" >&2; exit 1 ;;
+            esac
+          done
+          if [ -z "$found" ]; then
+            echo "error: no FreeBSD ${{ matrix.arch }} archive was produced" >&2
+            exit 1
+          fi
+      - name: Copy release archives from the VM
+        run: |
+          mkdir -p dist/release
+          rsync -a --timeout=1800 --rsync-path='env PATH=/usr/local/bin:/usr/bin:/bin rsync' \
+            -e 'ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=60 -o ConnectTimeout=120' \
+            "freebsd:$GITHUB_WORKSPACE/dist/release/" dist/release/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-freebsd-${{ matrix.arch }}
+          path: dist/release/*-freebsd-*.tar.gz
+          if-no-files-found: error
+
+  web:
+    name: Web (wasm)
+    needs: [version]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
+      VERSION: ${{ needs.version.outputs.version }}
+      INPUT_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Export the app's build variables
+        uses: ./.github/actions/export-app-build-env
+        with:
+          app-name: notecraft
+          version: ${{ needs.version.outputs.version }}
+          date: ${{ needs.version.outputs.date }}
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: release-web
+      - uses: ./.github/actions/install-trunk
+        with:
+          trunk-version: ${{ env.TRUNK_VERSION }}
+      - name: Apply version override
+        if: inputs.version != ''
+        run: cargo xtask version set "$VERSION"
+      - name: Build and zip
+        run: packaging/web/package.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-web
+          path: dist/release/*
+          if-no-files-found: error
+
+  linux-riscv64:
+    name: Linux riscv64
+    needs: [version]
+    # Not 22.04 like the other Linux jobs: jammy's riscv64 ports and amd64 archive drift apart, so
+    # the cross dependencies don't install there.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    environment: release
+    env:
+      # Built on 24.04: the deb and rpm declare glibc 2.39 (packaging/linux/nfpm.yaml).
+      GLIBC_FLOOR: "2.39"
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
+      VERSION: ${{ needs.version.outputs.version }}
+      INPUT_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Export the app's build variables
+        uses: ./.github/actions/export-app-build-env
+        with:
+          app-name: notecraft
+          version: ${{ needs.version.outputs.version }}
+          date: ${{ needs.version.outputs.date }}
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+          targets: riscv64gc-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: release-linux-riscv64
+      - name: Apply version override
+        if: inputs.version != ''
+        run: cargo xtask version set "$VERSION"
+      - uses: ./.github/actions/install-riscv64-cross
+      - name: Install nfpm (SHA256-verified)
+        uses: ./.github/actions/install-nfpm
+        with:
+          nfpm-version: ${{ env.NFPM_VERSION }}
+          deb-arch: amd64
+      - name: Build and package (deb, rpm, tar.gz)
+        env:
+          CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER: riscv64-linux-gnu-gcc
+          PKG_CONFIG_SYSROOT_DIR: /
+          PKG_CONFIG_PATH: /usr/lib/riscv64-linux-gnu/pkgconfig:/usr/share/pkgconfig
+          PKG_CONFIG_ALLOW_CROSS: "1"
+          CROSS_ARCH: riscv64
+          CROSS_TARGET: riscv64gc-unknown-linux-gnu
+          CROSS_COMPILE: riscv64-linux-gnu-
+          EMULATOR: qemu-riscv64
+          QEMU_LD_PREFIX: /usr/riscv64-linux-gnu
+        run: packaging/linux/package.sh --formats "deb rpm tar"
+      - name: Import the Linux signing key
+        id: linux_signing
+        uses: ./.github/actions/import-signing-key
+        with:
+          key: ${{ secrets.LINUX_SIGNING_KEY }}
+      - name: Sign the RPM packages
+        if: steps.linux_signing.outputs.enabled == 'true'
+        uses: ./.github/actions/sign-rpms
+        with:
+          path: dist/release
+      - name: Check the packages
+        run: |
+          dpkg-deb --info dist/release/*-linux-riscv64.deb 2>/dev/null || true
+          dpkg-deb --contents dist/release/*-linux-riscv64.deb 2>/dev/null | grep -E 'usr/bin/|metainfo|applications' || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-linux-riscv64
+          path: dist/release/*
+          if-no-files-found: error
+
+  release:
+    name: Draft GitHub Release
+    if: "!cancelled() && !contains(needs.*.result, 'failure')"
+    needs: [version, macos, windows, linux, linux-riscv64, flatpak, arch, freebsd, web]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release
+    # Only this job writes: it creates or updates the draft release.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/draft-release
+        with:
+          version: ${{ needs.version.outputs.version }}
+          app-title: NoteCraft
+          prerelease: ${{ needs.version.outputs.prerelease }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          signing-key: ${{ secrets.LINUX_SIGNING_KEY }}

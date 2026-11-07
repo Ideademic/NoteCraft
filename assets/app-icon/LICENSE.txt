@@ -1,0 +1,13 @@
+NoteCraft app icon (notecraft.svg and every file derived from it in this directory:
+notecraft-1024.png, notecraft-macos-512.png, notecraft.icns, notecraft.ico, hicolor/).
+
+Original work written for this project by Ideademic and NoteCraft contributors (hand-written SVG
+geometry). No third-party material, and nothing taken from Microsoft OneNote or any other
+product's artwork. Licensed like the rest of NoteCraft, under either of
+
+  * Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0)
+  * MIT license (https://opensource.org/licenses/MIT)
+
+at your option.
+
+Regenerate the derived files with packaging/icons.sh.

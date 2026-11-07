@@ -1,3 +1,6 @@
+mod commands;
+mod lifecycle;
+
 use std::collections::HashSet;
 
 use notecraft_doc::{Guid, Notebook, Paragraph, RuleLines};
@@ -36,26 +39,35 @@ fn hostile_params_never_panic() {
         json!({"id": "nope", "x": "a", "y": null, "points": [[1e40, "x"], {"x": 1}], "paragraphs": [{"runs": 5}], "index": -1}),
         json!({"id": Guid::new().to_string(), "x": f64::MAX, "y": -1e300, "index": u64::MAX, "name": "\u{0}\u{1}", "color": "#zzz", "points": [], "rule": "x"}),
         json!({"points": [[0, 0, 7], [1, 1]], "tool": "highlighter", "width": 1e30, "title": "x".repeat(5000)}),
+        json!({"outline": Guid::new().to_string(), "start": {"para": u64::MAX, "char": -5}, "end": [1e300, "x"], "text": "a\nb\r\n", "style": {"size": "big", "color": 7}}),
+        json!({"bytesBase64": "!!!not base64", "name": "../../etc/passwd", "path": "/definitely/not/here.png", "dpi": -1, "format": "%Q%", "what": "never"}),
+        json!({"bytesBase64": "JVBERi0xLjcKZ2FyYmFnZQ==", "name": "x.pdf", "scope": "notebook", "query": "", "limit": 0, "radius": 1e9}),
+        json!({"ids": ["x", 1], "dx": f64::NAN, "dy": 1, "color": "#fff", "paras": [9, -1], "para": 3, "start": 1e9, "end": 2, "unit": "word", "count": 1e12}),
+        json!({"at": {"para": 0, "char": 999999}, "backward": false, "location": "\u{0}", "positioned": "yes", "checked": 2, "value": "no"}),
     ];
     for spec in registry().all() {
         // A notebook.open path that doesn't exist is fine to try; skip nothing.
+        // `Session::run` turns a panic into this error; seeing it means a command panicked.
+        let panicked = |r: &Result<crate::CmdOutput, CmdError>| matches!(r, Err(CmdError::Failed(m)) if m.starts_with("internal error"));
         for params in &junk {
             let mut s = Session::new_default();
-            let _ = s.run(spec.id, params);
+            let r = s.run(spec.id, params);
+            assert!(!panicked(&r), "{} panicked with {params}", spec.id);
             s.normalize_location();
         }
         let mut empty = Session::empty();
         for params in &junk {
-            let _ = empty.run(spec.id, params);
+            let r = empty.run(spec.id, params);
+            assert!(!panicked(&r), "{} panicked with {params} on an empty session", spec.id);
         }
     }
 }
 
 #[test]
-fn unknown_and_unimplemented_report_errors() {
+fn unknown_and_bad_params_report_errors() {
     let mut s = Session::new_default();
     assert!(matches!(s.run("no.such", &Value::Null), Err(CmdError::Unknown(_))));
-    assert_eq!(s.run(ids::FORMAT_BOLD, &json!({})), Err(CmdError::NotImplemented(ids::FORMAT_BOLD)));
+    assert!(matches!(s.run(ids::FORMAT_BOLD, &json!({})), Err(CmdError::Params(_))));
     assert!(!s.can_undo());
     assert!(matches!(s.run(ids::EDIT_UNDO, &Value::Null), Err(CmdError::Disabled(_))));
 }

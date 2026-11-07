@@ -1,0 +1,135 @@
+{
+  "id": "notecraft",
+  "name": "NoteCraft",
+  "upgradeCode": "79DC70F1-3E62-4E00-BFE4-34294348C03E",
+  "sources": [
+    "notecraft.wxs"
+  ],
+  "icon": "assets/app-icon/notecraft.ico",
+  "localization": [],
+  "extensions": [
+    "UI",
+    "Util"
+  ],
+  "payloads": [
+    "notecraft-cli.exe",
+    "notecraft.exe"
+  ],
+  "registry": [
+    [
+      "-1",
+      "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\notecraft.exe",
+      "",
+      "[#NotecraftExe]"
+    ],
+    [
+      "-1",
+      "Software\\RegisteredApplications",
+      "NoteCraft",
+      "Software\\NoteCraft\\Capabilities"
+    ],
+    [
+      "-1",
+      "Software\\NoteCraft\\Capabilities",
+      "ApplicationName",
+      "NoteCraft"
+    ],
+    [
+      "-1",
+      "Software\\NoteCraft\\Capabilities",
+      "ApplicationDescription",
+      "Notebooks, sections, pages and ink; opens OneNote files."
+    ],
+    [
+      "-1",
+      "Software\\NoteCraft\\Capabilities",
+      "ApplicationIcon",
+      "\"[#NotecraftExe]\",0"
+    ],
+    [
+      "-1",
+      "Software\\Classes\\Applications\\notecraft.exe",
+      "FriendlyAppName",
+      "NoteCraft"
+    ],
+    [
+      "-1",
+      "Software\\Classes\\Applications\\notecraft.exe\\shell\\open\\command",
+      "",
+      "\"[#NotecraftExe]\" \"%1\""
+    ],
+    [
+      "-1",
+      "Software\\Classes\\NoteCraft.Section\\shell\\open\\command",
+      "",
+      "\"[#NotecraftExe]\" \"%1\""
+    ],
+    [
+      "-1",
+      "Software\\Classes\\.one\\OpenWithProgids",
+      "NoteCraft.Section",
+      ""
+    ],
+    [
+      "-1",
+      "Software\\Classes\\Applications\\notecraft.exe\\SupportedTypes",
+      ".one",
+      ""
+    ],
+    [
+      "-1",
+      "Software\\NoteCraft\\Capabilities\\FileAssociations",
+      ".one",
+      "NoteCraft.Section"
+    ],
+    [
+      "-1",
+      "Software\\Classes\\NoteCraft.Notebook\\shell\\open\\command",
+      "",
+      "\"[#NotecraftExe]\" \"%1\""
+    ],
+    [
+      "-1",
+      "Software\\Classes\\.onetoc2\\OpenWithProgids",
+      "NoteCraft.Notebook",
+      ""
+    ],
+    [
+      "-1",
+      "Software\\Classes\\Applications\\notecraft.exe\\SupportedTypes",
+      ".onetoc2",
+      ""
+    ],
+    [
+      "-1",
+      "Software\\NoteCraft\\Capabilities\\FileAssociations",
+      ".onetoc2",
+      "NoteCraft.Notebook"
+    ],
+    [
+      "-1",
+      "Software\\Classes\\NoteCraft.Package\\shell\\open\\command",
+      "",
+      "\"[#NotecraftExe]\" \"%1\""
+    ],
+    [
+      "-1",
+      "Software\\Classes\\.onepkg\\OpenWithProgids",
+      "NoteCraft.Package",
+      ""
+    ],
+    [
+      "-1",
+      "Software\\Classes\\Applications\\notecraft.exe\\SupportedTypes",
+      ".onepkg",
+      ""
+    ],
+    [
+      "-1",
+      "Software\\NoteCraft\\Capabilities\\FileAssociations",
+      ".onepkg",
+      "NoteCraft.Package"
+    ]
+  ],
+  "mode": "dualScope"
+}

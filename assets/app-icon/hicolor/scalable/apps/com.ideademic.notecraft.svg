@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- NoteCraft app icon (original artwork drawn by hand for this repository; MIT OR Apache-2.0).
+       A spiral-bound notebook page with three section tabs, a title, handwriting and a pen nib.
+       Exactly three colours: NoteCraft purple #c44df0, paper #efe9dc, ink #0b0b0c. -->
+  <rect width="512" height="512" rx="112" fill="#c44df0"/>
+  <g transform="rotate(-6 256 256)">
+    <!-- section tabs on the right edge (drawn first so the page covers their roots) -->
+    <g fill="#c44df0" stroke="#0b0b0c" stroke-width="14" stroke-linejoin="round">
+      <path d="M340 112 H386 Q402 112 402 128 V152 Q402 168 386 168 H340 Z"/>
+      <path d="M340 236 H386 Q402 236 402 252 V276 Q402 292 386 292 H340 Z"/>
+    </g>
+    <path d="M340 174 H392 Q408 174 408 190 V214 Q408 230 392 230 H340 Z" fill="#efe9dc" stroke="#0b0b0c" stroke-width="14" stroke-linejoin="round"/>
+    <!-- the page -->
+    <path d="M154 92 H362 V420 H154 Z" fill="#efe9dc" stroke="#0b0b0c" stroke-width="14" stroke-linejoin="round"/>
+    <!-- spiral rings over the left edge, each through a punched hole -->
+    <g fill="#0b0b0c">
+      <circle cx="180" cy="132" r="9"/>
+      <circle cx="180" cy="196" r="9"/>
+      <circle cx="180" cy="260" r="9"/>
+      <circle cx="180" cy="324" r="9"/>
+      <circle cx="180" cy="388" r="9"/>
+    </g>
+    <g fill="none" stroke="#0b0b0c" stroke-width="14" stroke-linecap="round">
+      <path d="M180 132 C160 112 124 114 124 132 C124 146 140 150 154 146"/>
+      <path d="M180 196 C160 176 124 178 124 196 C124 210 140 214 154 210"/>
+      <path d="M180 260 C160 240 124 242 124 260 C124 274 140 278 154 274"/>
+      <path d="M180 324 C160 304 124 306 124 324 C124 338 140 342 154 338"/>
+      <path d="M180 388 C160 368 124 370 124 388 C124 402 140 406 154 402"/>
+    </g>
+    <!-- page title, handwriting and a rule line -->
+    <g fill="none" stroke="#0b0b0c" stroke-width="14" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="214" y1="150" x2="312" y2="150"/>
+      <path d="M212 240 C228 240 240 228 238 214 C236 200 220 202 222 218 C224 234 236 242 248 240 C264 240 276 228 274 214 C272 200 256 202 258 218 C260 234 272 242 284 240 C300 240 312 228 310 214 C308 200 292 202 294 218 C296 234 308 242 320 240 C328 239 330 234 332 230"/>
+      <line x1="214" y1="296" x2="322" y2="296"/>
+    </g>
+  </g>
+  <path d="M300 410 L418 292 L446 320 L328 438 L292 446 Z" fill="#0b0b0c"/>
+  <path d="M418 292 L436 274 L464 302 L446 320 Z" fill="#efe9dc" stroke="#0b0b0c" stroke-width="8"/>
+</svg>

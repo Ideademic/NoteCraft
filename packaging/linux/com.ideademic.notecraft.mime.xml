@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- OneNote 2010+ files. application/onenote is the IANA-registered type (also known to
+     freedesktop shared-mime-info on recent distributions); application/msonenote is the alias
+     some systems use. Declared here too so the globs work on systems whose shared-mime-info
+     doesn't know the type yet; a package file adds to, and never replaces, the system database. -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/onenote">
+    <comment>OneNote notebook file</comment>
+    <alias type="application/msonenote"/>
+    <generic-icon name="x-office-document"/>
+    <glob pattern="*.one"/>
+    <glob pattern="*.onetoc2"/>
+    <glob pattern="*.onepkg"/>
+  </mime-type>
+</mime-info>

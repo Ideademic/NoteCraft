@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 notecraft-geom = { workspace = true }
 notecraft-doc = { workspace = true }
+notecraft-formats = { workspace = true }
 craft-pdf = { workspace = true }
 image = { workspace = true }
 thiserror = { workspace = true }

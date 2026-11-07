@@ -1,0 +1,29 @@
+name: "Install Linux Build and Packaging Dependencies"
+description: "Installs Linux system dependencies, libraries, and nfpm packaging tool on Ubuntu runners"
+
+inputs:
+  deb-arch:
+    description: "Debian architecture for nfpm package (e.g. amd64 or arm64)"
+    required: false
+    default: "amd64"
+  nfpm-version:
+    description: "Version of nfpm to install"
+    required: false
+    default: "2.48.0"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install build and packaging tools
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev \
+          libasound2-dev pkg-config \
+          desktop-file-utils appstream python3-yaml zsync
+
+    - uses: ./.github/actions/install-nfpm
+      with:
+        nfpm-version: ${{ inputs.nfpm-version }}
+        deb-arch: ${{ inputs.deb-arch }}

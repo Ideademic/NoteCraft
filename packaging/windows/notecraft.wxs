@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <?ifndef HasCraftFontLicences ?>
+  <?define HasCraftFontLicences=0 ?>
+  <?endif?>
+  <!-- UpgradeCode and component GUIDs are NoteCraft's own (generated for this repository); never
+       reuse another app's, and never change them, or upgrades install side by side. -->
+  <Package Name="NoteCraft" Manufacturer="Ideademic" Version="$(var.Version)" UpgradeCode="79DC70F1-3E62-4E00-BFE4-34294348C03E" Scope="perUserOrMachine" Compressed="yes" Language="1033">
+    <SummaryInformation Description="NoteCraft notebook" Manufacturer="Ideademic" />
+    <?include $(sys.SOURCEFILEDIR)install-policy.wxi?>
+    <!-- Same-version upgrades let successive pre-releases of one X.Y.Z replace each other
+         (MSI versions are numeric, so 1.2.3-rc.1 and 1.2.3-rc.2 are both 1.2.3). -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer version of NoteCraft is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Icon Id="NotecraftIcon.ico" SourceFile="$(var.IconPath)" />
+    <Property Id="ARPPRODUCTICON" Value="NotecraftIcon.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/Ideademic/NoteCraft" />
+    <Property Id="ARPURLUPDATEINFO" Value="https://github.com/Ideademic/NoteCraft/releases" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/Ideademic/NoteCraft/issues" />
+
+    <!-- Installer UI: WixUI_Minimal is welcome + license, progress, then a finish page so people
+         can see the install worked. Its dialogs and bitmaps are WiX's own (WixToolset.UI.wixext);
+         package.ps1 builds the license RTF from LICENSE-MIT and LICENSE-APACHE. The finish page
+         offers to launch NoteCraft (ticked by default) through WixShellExec
+         (WixToolset.Util.wixext); silent installs (/qn) never show it. -->
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch NoteCraft" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <Property Id="WixShellExecTarget" Value="[#NotecraftExe]" />
+    <CustomAction Id="LaunchNotecraft" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixShellExec" Impersonate="yes" Return="ignore" />
+    <UI>
+      <ui:WixUI Id="WixUI_Minimal" />
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchNotecraft" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
+    </UI>
+
+    <!-- Per machine: Program Files\Ideademic\NoteCraft. Per user (the default, see
+         install-policy.wxi): %LOCALAPPDATA%\Programs\Ideademic\NoteCraft. -->
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="CraftSuiteFolder" Name="Ideademic">
+        <Directory Id="INSTALLFOLDER" Name="NoteCraft" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <Feature Id="Main" Title="NoteCraft" Level="1">
+      <ComponentGroupRef Id="AppNotices" />
+      <?if $(var.HasCraftFontLicences) = 1 ?>
+      <ComponentGroupRef Id="CraftFontLicences" />
+      <?endif?>
+      <ComponentGroupRef Id="NotecraftFiles" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <ComponentGroup Id="AppNotices" Directory="INSTALLFOLDER">
+      <Files Include="$(var.AppNoticesDir)\**" />
+    </ComponentGroup>
+    <?if $(var.HasCraftFontLicences) = 1 ?>
+    <ComponentGroup Id="CraftFontLicences" Directory="INSTALLFOLDER">
+      <Files Include="$(var.DocsDir)\**" />
+    </ComponentGroup>
+    <?endif?>
+    <ComponentGroup Id="NotecraftFiles" Directory="INSTALLFOLDER">
+      <Component Id="NotecraftApp" Guid="E62C88B9-34B4-4563-A333-8BB27BCDD8DB">
+        <File Id="NotecraftExe" Source="$(var.BinDir)\notecraft.exe" KeyPath="yes">
+          <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="NoteCraft" Description="NoteCraft notebook" WorkingDirectory="INSTALLFOLDER" Advertise="yes" Icon="NotecraftIcon.ico" IconIndex="0" />
+        </File>
+
+        <RegistryValue Root="HKMU" Key="Software\Microsoft\Windows\CurrentVersion\App Paths\notecraft.exe" Value="[#NotecraftExe]" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\NoteCraft" Name="InstallDir" Value="[INSTALLFOLDER]" Type="string" />
+      </Component>
+
+      <!-- File associations. Each OneNote file type gets a NoteCraft ProgId (name, icon, open
+           command) and is listed under the extension's OpenWithProgids, so NoteCraft shows in
+           Explorer's "Open with", and in NoteCraft's Capabilities (RegisteredApplications), so it
+           appears in Settings › Default apps, where the user can make it the default. Nothing here
+           sets an extension's default (Alternate rank): the installer never takes .one, .onetoc2
+           or .onepkg over from Microsoft OneNote or another app. Removed again on uninstall. -->
+      <Component Id="NotecraftFileTypes" Guid="E9A9B260-4004-4666-9E39-CBA4C14228A2">
+        <RegistryValue Root="HKMU" Key="Software\RegisteredApplications" Name="NoteCraft" Value="Software\NoteCraft\Capabilities" Type="string" KeyPath="yes" />
+        <RegistryValue Root="HKMU" Key="Software\NoteCraft\Capabilities" Name="ApplicationName" Value="NoteCraft" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\NoteCraft\Capabilities" Name="ApplicationDescription" Value="Notebooks, sections, pages and ink; opens OneNote files." Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\NoteCraft\Capabilities" Name="ApplicationIcon" Value="&quot;[#NotecraftExe]&quot;,0" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\Applications\notecraft.exe" Name="FriendlyAppName" Value="NoteCraft" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\Applications\notecraft.exe\shell\open\command" Value="&quot;[#NotecraftExe]&quot; &quot;%1&quot;" Type="string" />
+
+        <ProgId Id="NoteCraft.Section" Description="OneNote Section" Icon="NotecraftExe" IconIndex="0" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\NoteCraft.Section\shell\open\command" Value="&quot;[#NotecraftExe]&quot; &quot;%1&quot;" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\.one\OpenWithProgids" Name="NoteCraft.Section" Value="" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\Applications\notecraft.exe\SupportedTypes" Name=".one" Value="" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\NoteCraft\Capabilities\FileAssociations" Name=".one" Value="NoteCraft.Section" Type="string" />
+
+        <ProgId Id="NoteCraft.Notebook" Description="OneNote Notebook" Icon="NotecraftExe" IconIndex="0" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\NoteCraft.Notebook\shell\open\command" Value="&quot;[#NotecraftExe]&quot; &quot;%1&quot;" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\.onetoc2\OpenWithProgids" Name="NoteCraft.Notebook" Value="" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\Applications\notecraft.exe\SupportedTypes" Name=".onetoc2" Value="" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\NoteCraft\Capabilities\FileAssociations" Name=".onetoc2" Value="NoteCraft.Notebook" Type="string" />
+
+        <ProgId Id="NoteCraft.Package" Description="OneNote Package" Icon="NotecraftExe" IconIndex="0" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\NoteCraft.Package\shell\open\command" Value="&quot;[#NotecraftExe]&quot; &quot;%1&quot;" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\.onepkg\OpenWithProgids" Name="NoteCraft.Package" Value="" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\Applications\notecraft.exe\SupportedTypes" Name=".onepkg" Value="" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\NoteCraft\Capabilities\FileAssociations" Name=".onepkg" Value="NoteCraft.Package" Type="string" />
+      </Component>
+
+      <Component Id="NotecraftCli">
+        <File Id="NotecraftCliExe" Source="$(var.BinDir)\notecraft-cli.exe" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>

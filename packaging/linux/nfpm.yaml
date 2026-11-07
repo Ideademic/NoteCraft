@@ -1,0 +1,88 @@
+# .deb and .rpm packages (nfpm: https://nfpm.goreleaser.com). Run by package.sh, which stages
+# the file tree, substitutes its path for ${STAGE} and the build host's glibc for ${GLIBC_FLOOR}
+# (nfpm doesn't expand env vars in `src` or dependency lists) and exports VERSION and NFPM_ARCH.
+#
+#   nfpm package -f packaging/linux/nfpm.yaml -p deb -t dist/release/
+name: notecraft
+arch: ${NFPM_ARCH}
+platform: linux
+version: ${VERSION}
+# semver: 0.2.0-rc.1 becomes 0.2.0~rc.1 in deb/rpm, so pre-releases sort before the release.
+version_schema: semver
+release: 1
+section: editors
+priority: optional
+maintainer: ${NOTECRAFT_MAINTAINER}
+vendor: Ideademic
+homepage: https://github.com/Ideademic/NoteCraft
+license: MIT OR Apache-2.0
+description: |-
+  Open-source, native notebook in the spirit of OneNote 2016/2019 for desktop.
+  Notebooks, section groups, sections and pages; note containers with rich text,
+  lists and To Do tags; pen, pencil and highlighter ink with pressure; pictures
+  and PDF printouts. Stores notebooks as .one/.onetoc2 and imports and exports
+  .onepkg. Includes notecraft-cli, a headless converter and command runner.
+
+# The binaries link only glibc and libgcc_s directly. Windowing (X11/Wayland, xkbcommon) and the
+# GPU (Vulkan, EGL/GL) are loaded at runtime, so they are dependencies/recommendations here
+# rather than ELF NEEDED entries.
+overrides:
+  deb:
+    depends:
+      - libc6 (>= ${GLIBC_FLOOR})
+      - libgcc-s1
+      - libxkbcommon0
+      - libvulkan1 | libegl1
+    recommends:
+      - libwayland-client0
+      - libx11-6
+      - libx11-xcb1
+      - libxcursor1
+      - libxi6
+      - libxrandr2
+      - mesa-vulkan-drivers
+      - xdg-desktop-portal
+  rpm:
+    # Library sonames rather than package names, so the same requirements resolve on Fedora/RHEL
+    # and openSUSE (which has no libxkbcommon, vulkan-loader or libglvnd-egl package).
+    depends:
+      - libc.so.6()(64bit)
+      - libm.so.6(GLIBC_${GLIBC_FLOOR})(64bit)
+      - libgcc_s.so.1()(64bit)
+      - libxkbcommon.so.0()(64bit)
+      - (libvulkan.so.1()(64bit) or libEGL.so.1()(64bit))
+    recommends:
+      - libwayland-client
+      - libX11
+      - libXcursor
+      - libXi
+      - libXrandr
+      - mesa-vulkan-drivers
+      - xdg-desktop-portal
+
+contents:
+  - src: ${STAGE}/usr/bin/notecraft
+    dst: /usr/bin/notecraft
+    file_info: { mode: 0755 }
+  - src: ${STAGE}/usr/bin/notecraft-cli
+    dst: /usr/bin/notecraft-cli
+    file_info: { mode: 0755 }
+  # Named one by one rather than as a tree of /usr/share: a tree would also own shared directories
+  # such as /usr/share/mime, which openSUSE's filesystem package owns with other modes, and RPM
+  # refuses to install a package that conflicts with it.
+  - src: ${STAGE}/usr/share/applications/com.ideademic.notecraft.desktop
+    dst: /usr/share/applications/com.ideademic.notecraft.desktop
+  - src: ${STAGE}/usr/share/mime/packages/com.ideademic.notecraft.xml
+    dst: /usr/share/mime/packages/com.ideademic.notecraft.xml
+  - src: ${STAGE}/usr/share/metainfo/com.ideademic.notecraft.metainfo.xml
+    dst: /usr/share/metainfo/com.ideademic.notecraft.metainfo.xml
+  - src: ${STAGE}/usr/share/icons/hicolor/
+    dst: /usr/share/icons/hicolor/
+    type: tree
+  - src: ${STAGE}/usr/share/doc/notecraft/
+    dst: /usr/share/doc/notecraft/
+    type: tree
+
+scripts:
+  postinstall: packaging/linux/postinst.sh
+  postremove: packaging/linux/postinst.sh

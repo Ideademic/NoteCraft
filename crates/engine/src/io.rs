@@ -2,15 +2,34 @@
 //! [`Storage`].
 //!
 //! OneNote has no Save button: changes are saved automatically ([`crate::Session::tick`]). The
-//! desktop saves each notebook back where it came from ([`FolderStorage`]); the web keeps files
-//! in memory and hands them to the browser ([`MemoryStorage`]).
+//! desktop saves each notebook back where it came from ([`FolderStorage`]: one safe save per
+//! changed section, `.bak` of files NoteCraft didn't write, deleted sections to the recycle
+//! bin); the web keeps files in memory and hands them to the browser ([`MemoryStorage`]).
+//!
+//! Also here: crash [`recovery`] snapshots, the [`recent`] notebooks list, and
+//! [`Session::to_blob`](crate::Session::to_blob) for keeping a whole session in browser storage.
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod folder;
+pub mod layout;
+pub mod recent;
+pub mod recovery;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod safe_save;
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 
 use notecraft_doc::{Guid, Notebook, Section, SectionEntry};
+use serde::{Deserialize, Serialize};
+
+pub use layout::Layout;
 
 use crate::Session;
+
+/// The folder inside a notebook where deleted sections' files go (OneNote's own name for it,
+/// so readers skip it).
+pub const RECYCLE_BIN: &str = "OneNote_RecycleBin";
 
 /// Errors opening or saving.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -30,7 +49,8 @@ pub enum IoError {
 }
 
 /// Where an open notebook lives.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "path", rename_all = "camelCase")]
 pub enum Origin {
     /// Not saved anywhere yet (a new notebook; the web's scratch notebook).
     Scratch,
@@ -68,6 +88,32 @@ impl FileKind {
     }
 }
 
+/// One notebook to save: what [`Session::save_dirty`] hands a [`Storage`].
+#[derive(Clone, Copy)]
+pub struct SaveJob<'a> {
+    pub notebook: &'a Notebook,
+    pub origin: &'a Origin,
+    /// Sections changed since they were last saved.
+    pub dirty_sections: &'a HashSet<Guid>,
+    /// The table of contents (names, colours, order) changed.
+    pub toc_dirty: bool,
+    /// Where each section was saved last time (from opening, or the previous save); `None`
+    /// before the first save.
+    pub previous: Option<&'a Layout>,
+}
+
+/// What a save did.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SaveOutcome {
+    /// The notebook's new origin when the save moved it (a scratch notebook saved for the first
+    /// time).
+    pub origin: Option<Origin>,
+    /// Where each section is now, for the next save's [`SaveJob::previous`].
+    pub layout: Option<Layout>,
+    /// Sections whose original file (not written by NoteCraft) was kept as `<file>.bak` now.
+    pub backed_up: Vec<Guid>,
+}
+
 /// Saves notebooks. Implementations: [`FolderStorage`] (desktop), [`MemoryStorage`] (web,
 /// tests).
 pub trait Storage {
@@ -76,6 +122,13 @@ pub trait Storage {
     /// `toc_dirty`; sections no longer in the notebook are removed from storage). Returns the
     /// notebook's new origin when the save moved it (a scratch notebook saved for the first time).
     fn save(&mut self, notebook: &Notebook, origin: &Origin, dirty_sections: &HashSet<Guid>, toc_dirty: bool) -> Result<Option<Origin>, IoError>;
+
+    /// The save [`Session::save_dirty`] calls: like [`Storage::save`], also told where each
+    /// section was saved before, and reporting backups. The default calls `save`.
+    fn save_notebook(&mut self, job: &SaveJob<'_>) -> Result<SaveOutcome, IoError> {
+        let origin = self.save(job.notebook, job.origin, job.dirty_sections, job.toc_dirty)?;
+        Ok(SaveOutcome { origin, ..SaveOutcome::default() })
+    }
 }
 
 /// Opens a file or folder by kind: a folder or `.onetoc2` as its notebook, a `.onepkg`, or a
@@ -117,10 +170,17 @@ pub fn origin_of(path: &std::path::Path) -> Origin {
 /// Opens file bytes by the file name's extension (`.one` or `.onepkg`; a `.onetoc2` alone has
 /// no sections, so it needs its folder).
 pub fn open_bytes(name: &str, bytes: &[u8]) -> Result<Notebook, IoError> {
+    if name.to_ascii_lowercase().ends_with(".json") {
+        // A notebook saved by `MemoryStorage` as JSON, or `notecraft-cli convert … x.json`.
+        let nb: Notebook = serde_json::from_slice(bytes).map_err(|e| IoError::Io(format!("not a NoteCraft notebook: {e}")))?;
+        return Ok(recovery::sanitize(nb));
+    }
     match FileKind::from_name(name) {
         Some(FileKind::Section) => {
-            let mut section = notecraft_one::read_section(bytes)?;
-            section.source.file_name = Some(name.rsplit(['/', '\\']).next().unwrap_or(name).to_owned());
+            let file_name = name.rsplit(['/', '\\']).next().unwrap_or(name);
+            let stem = file_name.rsplit_once('.').map_or(file_name, |(stem, _)| stem);
+            let mut section = notecraft_one::read_section_named(bytes, stem)?;
+            section.source.file_name = Some(file_name.to_owned());
             Ok(wrap_section(section))
         }
         Some(FileKind::Package) => Ok(notecraft_onepkg::read(bytes)?),
@@ -136,6 +196,20 @@ pub fn wrap_section(section: Section) -> Notebook {
     nb
 }
 
+/// Where the sections of a notebook just opened from `origin` are on disk, so the first save
+/// knows which files it replaces. `None` for packages and scratch notebooks.
+pub fn initial_layout(nb: &Notebook, origin: &Origin) -> Option<Layout> {
+    match origin {
+        Origin::Folder(_) => Some(layout::plan(nb, None, None).0),
+        Origin::SectionFile(path) => {
+            let name = path.file_name().map(|n| n.to_string_lossy().into_owned())?;
+            let pin = nb.first_section().map(|s| s.id);
+            Some(layout::plan(nb, None, pin.map(|id| (id, name.as_str()))).0)
+        }
+        Origin::Scratch | Origin::Package(_) => None,
+    }
+}
+
 /// Saves every dirty notebook through the session's storage; see [`Session::save_dirty`].
 pub fn save_dirty(session: &mut Session) -> Result<usize, IoError> {
     let Some(mut storage) = session.storage.take() else { return Ok(0) };
@@ -149,15 +223,16 @@ pub fn save_dirty(session: &mut Session) -> Result<usize, IoError> {
         let Some(nb) = session.notebook(id) else { continue };
         let sections: HashSet<Guid> = nb.all_sections().iter().map(|s| s.id).filter(|s| session.dirty.contains(s)).collect();
         let origin = session.origins.get(&id).cloned().unwrap_or(Origin::Scratch);
-        match storage.save(nb, &origin, &sections, session.dirty_tocs.contains(&id)) {
-            Ok(new_origin) => {
-                if let Some(o) = new_origin {
-                    session.origins.insert(id, o);
-                }
-                for s in &sections {
-                    session.dirty.remove(s);
-                }
-                session.dirty_tocs.remove(&id);
+        let job = SaveJob {
+            notebook: nb,
+            origin: &origin,
+            dirty_sections: &sections,
+            toc_dirty: session.dirty_tocs.contains(&id),
+            previous: session.layouts.get(&id),
+        };
+        match storage.save_notebook(&job) {
+            Ok(out) => {
+                session.after_save(id, &sections, out);
                 saved += 1;
             }
             Err(e) => {
@@ -176,43 +251,97 @@ pub fn save_dirty(session: &mut Session) -> Result<usize, IoError> {
     }
 }
 
+impl Session {
+    /// Records a successful save of notebook `id`.
+    fn after_save(&mut self, id: Guid, sections: &HashSet<Guid>, out: SaveOutcome) {
+        if let Some(o) = out.origin {
+            if let Origin::Folder(dir) = &o
+                && let Some(nb) = self.notebook(id)
+            {
+                let name = nb.name.clone();
+                self.recent.add(dir.clone(), name);
+            }
+            self.origins.insert(id, o);
+        }
+        if let Some(l) = out.layout {
+            self.layouts.insert(id, l);
+        }
+        for s in sections {
+            self.dirty.remove(s);
+        }
+        self.dirty_tocs.remove(&id);
+        let fresh: Vec<Guid> = out.backed_up.iter().copied().filter(|s| self.warned_unsupported.insert(*s)).collect();
+        let warn: Vec<String> = fresh
+            .iter()
+            .filter_map(|s| self.notebook(id).and_then(|nb| nb.section(*s)))
+            .filter(|s| s.source.unsupported_content)
+            .map(|s| format!("\u{201c}{}\u{201d} has content NoteCraft can't edit yet; a backup of the original file was kept (.bak).", s.name))
+            .collect();
+        self.notices.extend(warn);
+    }
+}
+
 /// Desktop storage: each notebook goes back to its folder, package or section file; scratch
 /// notebooks get a folder under [`FolderStorage::root`] (`Documents/NoteCraft Notebooks`).
+///
+/// Each section is written with a safe save (a temporary file renamed over the old one). A file
+/// NoteCraft didn't write is kept as `<file>.bak` the first time it is replaced. A deleted
+/// section's file goes into the notebook's [`RECYCLE_BIN`] folder.
 #[cfg(not(target_arch = "wasm32"))]
 pub struct FolderStorage {
     pub root: PathBuf,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-impl Storage for FolderStorage {
-    fn save(&mut self, notebook: &Notebook, origin: &Origin, _dirty: &HashSet<Guid>, _toc_dirty: bool) -> Result<Option<Origin>, IoError> {
-        match origin {
-            Origin::Folder(dir) => {
-                notecraft_one::write_notebook_dir(notebook, dir)?;
-                Ok(None)
-            }
-            Origin::Scratch => {
-                let dir = self.root.join(notecraft_one::safe_file_stem(&notebook.name));
-                notecraft_one::write_notebook_dir(notebook, &dir)?;
-                Ok(Some(Origin::Folder(dir)))
-            }
-            Origin::Package(_) | Origin::SectionFile(_) => Err(IoError::NotImplemented("saving to a package or a single section file")),
-        }
+impl FolderStorage {
+    pub fn new(root: impl Into<PathBuf>) -> FolderStorage {
+        FolderStorage { root: root.into() }
     }
 }
 
-/// In-memory storage (web, tests): the latest bytes of each saved notebook as a `.onepkg`, by
-/// file name. `on_write` lets the web app persist them (browser storage, a download).
+#[cfg(not(target_arch = "wasm32"))]
+impl Storage for FolderStorage {
+    fn save(&mut self, notebook: &Notebook, origin: &Origin, dirty: &HashSet<Guid>, toc_dirty: bool) -> Result<Option<Origin>, IoError> {
+        let job = SaveJob { notebook, origin, dirty_sections: dirty, toc_dirty, previous: None };
+        Ok(self.save_notebook(&job)?.origin)
+    }
+
+    fn save_notebook(&mut self, job: &SaveJob<'_>) -> Result<SaveOutcome, IoError> {
+        folder::save(job, &self.root, &folder::Codec::one())
+    }
+}
+
+/// The default folder for new notebooks inside the user's documents folder.
+pub fn default_notebook_root(documents: &std::path::Path) -> PathBuf {
+    documents.join("NoteCraft Notebooks")
+}
+
+/// How [`MemoryStorage`] encodes a notebook.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MemoryFormat {
+    /// `<name>.onepkg`, like OneNote's export.
+    #[default]
+    Onepkg,
+    /// `<name>.json`: the model as JSON (lossless, readable by any NoteCraft).
+    Json,
+}
+
+/// In-memory storage (web, tests): the latest bytes of each saved notebook, by file name.
+/// `on_write` lets the web app persist them (browser storage, a download).
 #[derive(Default)]
 pub struct MemoryStorage {
     pub files: BTreeMap<String, Vec<u8>>,
     pub on_write: Option<Box<dyn FnMut(&str, &[u8])>>,
+    pub format: MemoryFormat,
 }
 
 impl Storage for MemoryStorage {
     fn save(&mut self, notebook: &Notebook, _origin: &Origin, _dirty: &HashSet<Guid>, _toc_dirty: bool) -> Result<Option<Origin>, IoError> {
-        let bytes = notecraft_onepkg::write(notebook)?;
-        let name = format!("{}.onepkg", notecraft_one::safe_file_stem(&notebook.name));
+        let stem = notecraft_one::safe_file_stem(&notebook.name);
+        let (name, bytes) = match self.format {
+            MemoryFormat::Onepkg => (format!("{stem}.onepkg"), notecraft_onepkg::write(notebook)?),
+            MemoryFormat::Json => (format!("{stem}.json"), serde_json::to_vec(notebook).map_err(|e| IoError::Io(e.to_string()))?),
+        };
         if let Some(hook) = self.on_write.as_mut() {
             hook(&name, &bytes);
         }
