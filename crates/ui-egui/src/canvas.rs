@@ -19,6 +19,7 @@ pub mod ink;
 pub mod layout;
 pub mod page;
 pub mod pointer;
+pub mod shape;
 pub mod style;
 pub mod text;
 pub mod view;
@@ -28,6 +29,7 @@ mod tests;
 
 use egui::{Pos2, Sense};
 use notecraft_doc::{Color, Guid, InkTool, Point};
+pub use notecraft_engine::cmd::shapes::ShapeKind;
 use notecraft_engine::{CmdError, CmdOutput, Session, TextPos};
 use serde_json::{Value, json};
 
@@ -52,6 +54,8 @@ pub enum Tool {
     Eraser,
     /// Lasso select ink.
     Lasso,
+    /// Draw › Shapes: drag to insert this shape.
+    Shape(ShapeKind),
 }
 
 impl Tool {
@@ -240,8 +244,6 @@ pub struct CanvasState {
     pub page: Option<Guid>,
     /// Scroll offset of the page within the canvas, logical pixels.
     pub scroll: egui::Vec2,
-    /// Draw › Ink to Shape: each new stroke is passed to `draw.inkToShape`.
-    pub ink_to_shape: bool,
     /// View › Hide Page Title (the shell copies `UiState::hide_page_title` here).
     pub hide_title: bool,
     /// Minutes east of UTC for the date and time under the title (the host sets it; 0 = UTC).
@@ -277,7 +279,6 @@ impl Default for CanvasState {
             editing: None,
             page: None,
             scroll: egui::Vec2::ZERO,
-            ink_to_shape: false,
             hide_title: false,
             utc_offset_minutes: 0,
             eraser_radius: notecraft_engine::cmd::draw::ERASER_RADIUS,
@@ -413,6 +414,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut CanvasState, session: &mut Session, t
         ink::paint_layer(&painter, state, pg, tokens, &v, true);
         text::paint_outlines(&painter, state, pg, tokens, &v, &lay, &resp);
         ink::paint_layer(&painter, state, pg, tokens, &v, false);
+        shape::paint_preview(&painter, state, pg, tokens, &v);
         images::paint_selection(&painter, state, pg, tokens, &v);
     }
     ink::paint_overlay(&painter, state, session, tokens, &v, &resp);

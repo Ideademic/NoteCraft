@@ -12,7 +12,8 @@ Status words: **done**, **partial**, **planned**.
 |---|---|---|
 | Notebooks, section groups, sections, pages, subpages | done | Create, rename, reorder, colour, delete; page list with subpages |
 | Note containers | done | Click anywhere and type; rich text, paragraph styles, bullets and numbering, To Do tags (Important / Question tags from files are shown and kept, not yet applied from the ribbon) |
-| Ink | done | Pen, pencil, highlighter with pressure; stroke eraser; lasso select; ink to shape |
+| Ink | done | Pen, pencil, highlighter with pressure; stroke eraser; lasso select; Ink to Shape mode |
+| Shapes | done | Draw › Shapes: lines, arrows, basic shapes and graph axes, stored as ink |
 | Search | done | Page titles and text across open notebooks |
 | Pictures and file printouts | done | Insert pictures; insert a PDF as page pictures and ink over it |
 | Page setup | done | Page colour, rule lines and grids |
@@ -39,7 +40,7 @@ Status words: **done**, **partial**, **planned**.
 - Important, Question and more note tags from the ribbon, and a tags summary.
 - Page templates, page versions, recycle bin.
 - Linked pages (`[[wiki links]]`) and links to paragraphs.
-- Shape and straight-line tools, a ruler, Insert Space.
+- A ruler, Insert Space; filled shapes.
 - Better handwriting: smoothing, pressure curves, stroke-part erasing everywhere.
 
 ### App

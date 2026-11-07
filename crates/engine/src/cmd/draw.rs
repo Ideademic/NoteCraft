@@ -1,16 +1,29 @@
 //! Ink (Draw tab): draw a stroke; the stroke eraser; lasso select, move, delete and recolour
-//! the selection ([`Session::ink_selection`]); Ink to Shape.
+//! the selection ([`Session::ink_selection`]); Ink to Shape; insert a shape.
 //!
 //! The lasso selection belongs to the current page and is not undoable (like a text
 //! selection); commands that change selected ink are.
+//!
+//! **Ink to Shape** is a mode, as in OneNote: `draw.inkToShape` turns it on or off
+//! ([`Session::ink_to_shape`]); while it is on, `draw.stroke` redraws a stroke that looks like a
+//! shape ([`super::ink_shape`]) in the same undo step, and joins a line and an arrowhead drawn
+//! one after the other into one arrow. Highlighter strokes are never converted. Given `ids`, or
+//! with ink lasso-selected, `draw.inkToShape` converts those strokes instead; it never converts
+//! the whole page by itself.
+//!
+//! **Shapes** (`draw.shape`) are ink too: the polylines of [`super::shapes::shape_strokes`],
+//! selected once inserted.
 
 use notecraft_doc::ink::{MAX_INK_PER_PAGE, MAX_WIDTH, MIN_WIDTH};
 use notecraft_doc::{Guid, InkPoint, InkStroke, InkTool, Point};
 use serde_json::{Value, json};
 
+use super::ink_shape::{self, InkShape};
+use super::shapes::{self, ShapeKind};
 use super::{has_page, target_page};
 use crate::ids::{
-    DRAW_DELETE_SELECTION, DRAW_ERASE_AT, DRAW_ERASE_STROKE, DRAW_INK_TO_SHAPE, DRAW_LASSO_SELECT, DRAW_MOVE_SELECTION, DRAW_RECOLOR, DRAW_STROKE,
+    DRAW_DELETE_SELECTION, DRAW_ERASE_AT, DRAW_ERASE_STROKE, DRAW_INK_TO_SHAPE, DRAW_LASSO_SELECT, DRAW_MOVE_SELECTION, DRAW_RECOLOR, DRAW_SHAPE,
+    DRAW_STROKE,
 };
 use crate::{CmdError, CmdOutput, CmdResult, CommandSpec, Session, p};
 
@@ -27,7 +40,7 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new(DRAW_STROKE, "Draw", stroke)
             .when(has_page)
-            .params(r##"{"points": [[x, y, pressure?]] | [{"x","y","pressure"?}], "tool"?: "pen"|"pencil"|"highlighter", "color"?: "#rrggbb", "width"?: number, "page"?: guid} -> {"id": guid}"##),
+            .params(r##"{"points": [[x, y, pressure?]] | [{"x","y","pressure"?}], "tool"?: "pen"|"pencil"|"highlighter", "color"?: "#rrggbb", "width"?: number, "page"?: guid} -> {"id": guid, "shape": null|"line"|"arrow"|"rectangle"|"square"|"ellipse"|"circle"|"triangle"|"polygon"}"##),
         CommandSpec::new(DRAW_ERASE_STROKE, "Erase Stroke", erase_stroke).when(has_page).params(r##"{"id"?: guid, "ids"?: [guid], "page"?: guid}"##),
         CommandSpec::new(DRAW_ERASE_AT, "Eraser", erase_at).when(has_page).params(
             r##"{"x": number, "y": number} | {"points": [[x, y]]} (an eraser drag), "radius"?: number (default 6), "mergeKey"?: string, "page"?: guid} -> {"erased": [guid]}"##,
@@ -43,9 +56,12 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new(DRAW_RECOLOR, "Ink Color", recolor)
             .when(has_page)
             .params(r##"{"color"?: "#rrggbb", "width"?: number, "ids"?: [guid] (default: the selection)}"##),
-        CommandSpec::new(DRAW_INK_TO_SHAPE, "Ink to Shape", ink_to_shape)
-            .when(has_page)
-            .params(r##"{"ids"?: [guid] (default: the selection, else every stroke on the page), "page"?: guid} -> {"converted": number, "kept": number}"##),
+        CommandSpec::new(DRAW_INK_TO_SHAPE, "Ink to Shape", ink_to_shape).params(
+            r##"{"value"?: bool, "ids"?: [guid], "page"?: guid} -> {"value": bool} | {"converted": number, "kept": number, "shapes": [string]} (value: set the mode; ids or a lasso selection: convert those; else toggle the mode)"##,
+        ),
+        CommandSpec::new(DRAW_SHAPE, "Shapes", shape).when(has_page).params(
+            r##"{"kind": "line"|"arrow"|"doubleArrow"|"rectangle"|"roundedRectangle"|"ellipse"|"triangle"|"rightTriangle"|"parallelogram"|"trapezoid"|"diamond"|"pentagon"|"hexagon"|"axes2"|"axes2Arrows"|"axes3", "x": number, "y": number, "w": number, "h": number, "constrain"?: bool, "color"?: "#rrggbb", "width"?: number, "page"?: guid} -> {"ids": [guid]}"##,
+        ),
     ]
 }
 
@@ -90,14 +106,49 @@ fn stroke(s: &mut Session, params: &Value) -> CmdResult {
     if st.points.is_empty() {
         return Err(CmdError::Params("a stroke needs at least one point".into()));
     }
+    let convert = s.ink_to_shape && st.tool != InkTool::Highlighter;
     let page = target_page(s, params)?;
     if page.ink.len() >= MAX_INK_PER_PAGE {
         return Err(CmdError::Failed("this page holds as much ink as it can".into()));
     }
     let id = st.id;
     page.ink.push(st);
+    let (id, shape) = if convert { convert_new_stroke(page, id) } else { (id, None) };
     page.touch();
-    Ok(CmdOutput::value(json!({"id": id})))
+    Ok(CmdOutput::value(json!({"id": id, "shape": shape})))
+}
+
+/// Ink to Shape on the stroke `id` just added (the last on `page`): with the stroke before it, a
+/// line and an arrowhead become one arrow (the earlier stroke keeps its id, the new one goes);
+/// else the stroke is redrawn as the shape it looks like. Returns the stroke's id and what it
+/// became.
+fn convert_new_stroke(page: &mut notecraft_doc::Page, id: Guid) -> (Guid, Option<&'static str>) {
+    let n = page.ink.len();
+    let new_pts = page.ink.last().map(|st| ink_shape::xy(&st.points)).unwrap_or_default();
+    let prev = n.checked_sub(2).and_then(|i| page.ink.get(i)).filter(|p| p.tool != InkTool::Highlighter).map(|p| (p.id, ink_shape::xy(&p.points)));
+    if let Some((prev_id, prev_pts)) = prev {
+        let (new_parts, prev_parts) = (ink_shape::arrow_parts(&new_pts), ink_shape::arrow_parts(&prev_pts));
+        // The line drawn first and the head now, or the head first and the line now.
+        let paired = ink_shape::pair_parts(&prev_parts, &new_parts)
+            .map(|a| (a, prev_id, id))
+            .or_else(|| ink_shape::pair_parts(&new_parts, &prev_parts).map(|a| (a, id, prev_id)));
+        if let Some((arrow, keep, gone)) = paired {
+            if let Some(st) = page.ink.iter_mut().find(|st| st.id == keep) {
+                st.points = ink_shape::redraw(&st.points, &arrow);
+            }
+            page.ink.retain(|st| st.id != gone);
+            return (keep, Some(arrow.name()));
+        }
+    }
+    match ink_shape::recognise(&new_pts) {
+        Some(shape) => {
+            if let Some(st) = page.ink.last_mut() {
+                st.points = ink_shape::redraw(&st.points, &shape);
+            }
+            (id, Some(shape.name()))
+        }
+        None => (id, None),
+    }
 }
 
 fn erase_stroke(s: &mut Session, params: &Value) -> CmdResult {
@@ -269,28 +320,85 @@ fn recolor(s: &mut Session, params: &Value) -> CmdResult {
     Ok(CmdOutput::ok())
 }
 
-/// Redraws recognisable strokes as clean shapes (same id, colour, width and tool).
+/// Ink to Shape: `value` turns the mode on or off. Otherwise, with `ids` or a lasso selection,
+/// redraws those strokes that look like shapes (same id, colour, width and tool; highlighters
+/// stay as drawn) and says so when none does; with neither, toggles the mode. A mode change is
+/// not an undo step.
 fn ink_to_shape(s: &mut Session, params: &Value) -> CmdResult {
+    if let Some(on) = p::bool(params, "value") {
+        s.ink_to_shape = on;
+        return Ok(CmdOutput::query(json!({"value": on})));
+    }
     let ids = match guid_list(params, "ids")? {
-        Some(ids) => Some(ids),
-        None if !s.ink_selection.is_empty() => Some(s.ink_selection.clone()),
-        None => None,
+        Some(ids) => ids,
+        None if !s.ink_selection.is_empty() && s.current_page().is_some() => s.ink_selection.clone(),
+        None => {
+            s.ink_to_shape = !s.ink_to_shape;
+            return Ok(CmdOutput::query(json!({"value": s.ink_to_shape})));
+        }
     };
     let page = target_page(s, params)?;
-    let (mut converted, mut kept) = (0usize, 0usize);
-    for st in page.ink.iter_mut().filter(|st| ids.as_ref().is_none_or(|ids| ids.contains(&st.id))) {
-        match super::ink_shape::recognize(&st.points) {
+    let (mut converted, mut kept, mut names) = (0usize, 0usize, Vec::new());
+    for st in page.ink.iter_mut().filter(|st| ids.contains(&st.id)) {
+        let found: Option<InkShape> = if st.tool == InkTool::Highlighter { None } else { ink_shape::recognise(&ink_shape::xy(&st.points)) };
+        match found {
             Some(shape) => {
-                st.points = super::ink_shape::outline_points(shape);
+                st.points = ink_shape::redraw(&st.points, &shape);
+                names.push(shape.name());
                 converted += 1;
             }
             None => kept += 1,
         }
     }
-    let out = json!({"converted": converted, "kept": kept});
+    let out = json!({"converted": converted, "kept": kept, "shapes": names});
     if converted == 0 {
+        s.notices.push(if kept == 0 {
+            "There is no ink to turn into shapes.".to_owned()
+        } else {
+            "No shapes were recognised in the selected ink.".to_owned()
+        });
         return Ok(CmdOutput::query(out));
     }
     page.touch();
     Ok(CmdOutput::value(out))
+}
+
+/// Inserts a shape as ink strokes (pen, the given colour and width) in one undo step and selects
+/// them (on the current page).
+fn shape(s: &mut Session, params: &Value) -> CmdResult {
+    let name = p::req_str(params, "kind")?;
+    let kind = ShapeKind::parse(name).ok_or_else(|| CmdError::Params(format!("unknown shape `{}`", name.chars().take(24).collect::<String>())))?;
+    let rect = [p::req_f32(params, "x")?, p::req_f32(params, "y")?, p::req_f32(params, "w")?, p::req_f32(params, "h")?];
+    let strokes = shapes::shape_strokes(kind, rect, p::bool(params, "constrain").unwrap_or(false));
+    if strokes.is_empty() {
+        return Err(CmdError::Params("the shape is too small".into()));
+    }
+    let color = p::color(params, "color")?;
+    let width = p::f32(params, "width");
+    let on_current = match p::guid(params, "page")? {
+        Some(id) => s.current.page == Some(id),
+        None => true,
+    };
+    let page = target_page(s, params)?;
+    if page.ink.len().saturating_add(strokes.len()) > MAX_INK_PER_PAGE {
+        return Err(CmdError::Failed("this page holds as much ink as it can".into()));
+    }
+    let mut ids = Vec::with_capacity(strokes.len());
+    for pts in strokes {
+        let mut st = InkStroke::new(InkTool::Pen, pts.into_iter().map(|[x, y]| InkPoint::new(x, y, 1.0)).collect());
+        if let Some(c) = color {
+            st.color = c;
+        }
+        if let Some(w) = width {
+            st.width = w;
+        }
+        let st = st.sanitized();
+        ids.push(st.id);
+        page.ink.push(st);
+    }
+    page.touch();
+    if on_current {
+        s.ink_selection = ids.clone();
+    }
+    Ok(CmdOutput::value(json!({"ids": ids, "kind": kind.name()})))
 }

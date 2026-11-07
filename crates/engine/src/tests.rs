@@ -45,6 +45,9 @@ fn hostile_params_never_panic() {
         json!({"bytesBase64": "JVBERi0xLjcKZ2FyYmFnZQ==", "name": "x.pdf", "scope": "notebook", "query": "", "limit": 0, "radius": 1e9}),
         json!({"ids": ["x", 1], "dx": f64::NAN, "dy": 1, "color": "#fff", "paras": [9, -1], "para": 3, "start": 1e9, "end": 2, "unit": "word", "count": 1e12}),
         json!({"at": {"para": 0, "char": 999999}, "backward": false, "location": "\u{0}", "positioned": "yes", "checked": 2, "value": "no"}),
+        json!({"kind": "axes3", "x": 1e30, "y": -1e30, "w": f64::MAX, "h": -1e300, "constrain": true, "width": -5, "color": "#00ff00"}),
+        json!({"kind": "\u{0}ellipse", "x": 0, "y": 0, "w": 10, "h": 10, "constrain": "yes", "value": 1}),
+        json!({"kind": 7, "x": "a", "w": null, "ids": [], "value": true}),
     ];
     for spec in registry().all() {
         // A notebook.open path that doesn't exist is fine to try; skip nothing.

@@ -57,7 +57,27 @@ its text (all runs joined). Text and formatting commands take:
 
 `draw.lassoSelect` sets `Session::ink_selection` (stroke ids on the current page; cleared when
 the page changes or on undo). `draw.moveSelection`, `draw.deleteSelection`, `draw.recolor` and
-`draw.inkToShape` act on it (the last two also take `ids`).
+`draw.inkToShape` act on it (the last two also take `ids`). `draw.shape` selects the strokes it
+inserts.
+
+## Ink to Shape and shapes
+
+- **Ink to Shape is a mode** (`Session::ink_to_shape()`, the ribbon's checked toggle).
+  `draw.inkToShape {"value": bool}` sets it; `{}` toggles it, except that with `ids` or a lasso
+  selection it converts those strokes instead. It never converts the whole page by itself.
+- While the mode is on, `draw.stroke` redraws a stroke that looks like a line, arrow, rectangle
+  (square), ellipse (circle), triangle or polygon of up to 8 corners as a clean polyline, in the
+  same undo step, keeping its id, colour, width and tool (and its mean pressure). A line followed
+  by an arrowhead at one of its ends (or the head first) becomes one arrow. Highlighter strokes and
+  strokes smaller than 20 pt (handwriting) are never converted. The result says what the stroke
+  became (`"shape"`).
+- Converting `ids` or the selection reports `{converted, kept, shapes}`; when nothing is
+  recognised it changes nothing and adds a notice to `Session::notices`.
+- **Shapes are ink**: `draw.shape` adds one or more pen strokes (polylines; arrowheads and graph
+  axes are separate strokes) in one undo step, so they save to `.one` / `.onepkg` like any ink.
+  `x`, `y` is where the drag started and `w`, `h` how far it went (may be negative): lines and
+  arrows run from start to end, other shapes fill the box. `constrain` (Shift) makes the box square
+  or snaps a line to 45°. Sides are clamped to 5000 pt.
 
 ## Commands
 
@@ -148,14 +168,15 @@ the page changes or on undo). `draw.moveSelection`, `draw.deleteSelection`, `dra
 
 | id | shortcut | undo | params | effect / output |
 |---|---|---|---|---|
-| `draw.stroke` |  | yes | `{"points": [[x, y, pressure?]] \| [{"x","y","pressure"?}], "tool"?: "pen"\|"pencil"\|"highlighter", "color"?: "#rrggbb", "width"?: number, "page"?: guid} -> {"id": guid}` | Adds an ink stroke (page points; pressure 0–1). → `{id}` |
+| `draw.stroke` |  | yes | `{"points": [[x, y, pressure?]] \| [{"x","y","pressure"?}], "tool"?: "pen"\|"pencil"\|"highlighter", "color"?: "#rrggbb", "width"?: number, "page"?: guid} -> {"id": guid, "shape": string\|null}` | Adds an ink stroke (page points; pressure 0–1). With Ink to Shape on, a stroke that looks like a shape is redrawn as it (`shape` says which). → `{id, shape}` |
 | `draw.eraseStroke` |  | yes | `{"id"?: guid, "ids"?: [guid], "page"?: guid}` | Removes strokes by id. |
 | `draw.eraseAt` |  | yes | `{"x": number, "y": number} \| {"points": [[x, y]]} (an eraser drag), "radius"?: number (default 6), "mergeKey"?: string, "page"?: guid} -> {"erased": [guid]}` | Stroke eraser: removes every stroke within `radius` of the point or of the drag path (sampled every radius/2). Pass the same `mergeKey` during one drag for one undo step. → `{erased}` |
 | `draw.lassoSelect` |  | — | `{"points": [[x, y]] (the lasso polygon; fewer than 3 points clears) \| "ids": [guid] \| "all": true, "add"?: bool} -> {"ids": [guid]}` | Sets `Session::ink_selection` (current page): strokes with at least half their points inside the polygon, or `ids`, or `all`; `add` extends it. Not undoable. → `{ids}` |
 | `draw.moveSelection` |  | yes | `{"dx": number, "dy": number, "mergeKey"?: string}` | Moves the selected strokes by (dx, dy). Same `mergeKey` during a drag = one undo step. |
 | `draw.deleteSelection` |  | yes | `{}` | Deletes the selected strokes. |
 | `draw.recolor` |  | yes | `{"color"?: "#rrggbb", "width"?: number, "ids"?: [guid] (default: the selection)}` | Sets colour and/or width (clamped 0.1–100) of the selected strokes (or `ids`). |
-| `draw.inkToShape` |  | yes | `{"ids"?: [guid] (default: the selection, else every stroke on the page), "page"?: guid} -> {"converted": number, "kept": number}` | Redraws strokes recognised as a line, rectangle, ellipse or triangle as clean shapes (same id, colour, width, tool). → `{converted, kept}` |
+| `draw.inkToShape` |  | yes (converting) | `{"value"?: bool, "ids"?: [guid], "page"?: guid} -> {"value": bool} \| {"converted": number, "kept": number, "shapes": [string]}` | `value` sets the Ink to Shape mode; with `ids` or a lasso selection converts those strokes (a notice when none is recognised); else toggles the mode. Mode changes are not undo steps. |
+| `draw.shape` |  | yes | `{"kind": "line"\|"arrow"\|"doubleArrow"\|"rectangle"\|"roundedRectangle"\|"ellipse"\|"triangle"\|"rightTriangle"\|"parallelogram"\|"trapezoid"\|"diamond"\|"pentagon"\|"hexagon"\|"axes2"\|"axes2Arrows"\|"axes3", "x": number, "y": number, "w": number, "h": number, "constrain"?: bool, "color"?: "#rrggbb", "width"?: number, "page"?: guid} -> {"ids": [guid], "kind": string}` | Inserts a shape as pen strokes (one undo step) and selects them. → `{ids, kind}` |
 
 ### View
 

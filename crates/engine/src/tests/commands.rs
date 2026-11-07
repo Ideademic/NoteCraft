@@ -282,13 +282,122 @@ fn ink_editing() {
     assert_eq!(s.ink_selection.len(), 2);
     s.run(ids::DRAW_LASSO_SELECT, &json!({"points": []})).unwrap();
     assert!(s.ink_selection.is_empty());
-    // Ink to Shape: a wobbly rectangle becomes five clean corners; a straight line stays two points.
-    let rect = crate::cmd::ink_shape::tests::poly(&[(100.0, 100.0), (300.0, 100.0), (300.0, 200.0), (100.0, 200.0)], 30);
-    let pts: Vec<Value> = rect.iter().map(|p| json!([p.x, p.y, p.pressure])).collect();
+    // Ink to Shape on explicit ids: a wobbly rectangle becomes five clean corners.
+    let rect = crate::cmd::ink_shape::tests::hand(&crate::cmd::ink_shape::tests::rect_corners(200.0, 150.0, 200.0, 100.0, 4.0, 0), 0.8, 1);
+    let pts: Vec<Value> = rect.iter().map(|p| json!([p[0], p[1], 0.7])).collect();
     let r = stroke(&mut s, Value::Array(pts));
     let out = s.run(ids::DRAW_INK_TO_SHAPE, &json!({"ids": [r.to_string()]})).unwrap();
-    assert_eq!(out.value, json!({"converted": 1, "kept": 0}));
+    assert_eq!(out.value, json!({"converted": 1, "kept": 0, "shapes": ["rectangle"]}));
     assert_eq!(s.current_page().unwrap().stroke(r).unwrap().points.len(), 5);
+}
+
+/// Points as `draw.stroke` takes them, with pressure.
+fn pts_json(pts: &[[f32; 2]], pressure: impl Fn(usize) -> f32) -> Value {
+    Value::Array(pts.iter().enumerate().map(|(i, p)| json!([p[0], p[1], pressure(i)])).collect())
+}
+
+#[test]
+fn ink_to_shape_is_a_mode_for_new_strokes() {
+    use crate::cmd::ink_shape::tests::{hand, rect_corners};
+    let mut s = Session::new_default();
+    s.run(ids::PAGE_NEW, &json!({})).unwrap();
+    let rough = hand(&rect_corners(200.0, 200.0, 180.0, 100.0, 7.0, 0), 0.9, 3);
+    // Off: strokes stay as drawn.
+    assert!(!s.ink_to_shape());
+    let raw = stroke(&mut s, pts_json(&rough, |_| 0.5));
+    assert_eq!(s.current_page().unwrap().stroke(raw).unwrap().points.len(), rough.len());
+    // Turning it on is not an undo step and touches no notebook.
+    let depth = s.undo_depth();
+    let out = s.run(ids::DRAW_INK_TO_SHAPE, &json!({})).unwrap();
+    assert_eq!(out.value, json!({"value": true}));
+    assert!(!out.changed && s.ink_to_shape() && s.undo_depth() == depth);
+    // On: a rough tilted rectangle with varying pressure becomes a clean one, in one undo step.
+    let out = s.run(ids::DRAW_STROKE, &json!({"points": pts_json(&rough, |i| 0.3 + (i % 10) as f32 * 0.05), "color": "#1f5fbf"})).unwrap();
+    assert_eq!(out.value["shape"], json!("rectangle"));
+    let id = gid(&out.value, "id");
+    let st = s.current_page().unwrap().stroke(id).unwrap().clone();
+    assert_eq!(st.points.len(), 5);
+    assert_eq!(st.points.first().map(|p| p.pos()), st.points.last().map(|p| p.pos()), "closed");
+    assert_eq!(st.color, Color::rgb(0x1f, 0x5f, 0xbf));
+    assert_eq!(s.undo_depth(), depth + 1);
+    assert!(s.undo());
+    assert!(s.current_page().unwrap().stroke(id).is_none(), "one undo step takes the whole stroke");
+    assert!(s.ink_to_shape(), "undo doesn't change the mode");
+    // Highlighters are never converted; handwriting isn't either.
+    let hl = gid(&s.run(ids::DRAW_STROKE, &json!({"points": pts_json(&rough, |_| 0.5), "tool": "highlighter"})).unwrap().value, "id");
+    assert_eq!(s.current_page().unwrap().stroke(hl).unwrap().points.len(), rough.len());
+    let o: Vec<[f32; 2]> =
+        (0..=40).map(|i| i as f32 / 40.0 * std::f32::consts::TAU).map(|a| [300.0 + 5.0 * a.cos(), 400.0 + 6.0 * a.sin()]).collect();
+    let out = s.run(ids::DRAW_STROKE, &json!({"points": pts_json(&o, |_| 0.5)})).unwrap();
+    assert_eq!(out.value["shape"], Value::Null);
+    // A line, then an arrowhead at its end: one arrow (the line's stroke), the head stroke gone.
+    let n = s.current_page().unwrap().ink.len();
+    let line = gid(&s.run(ids::DRAW_STROKE, &json!({"points": [[100, 500], [180, 501], [260, 500]]})).unwrap().value, "id");
+    let out = s.run(ids::DRAW_STROKE, &json!({"points": [[240, 490], [260, 500], [240, 510]]})).unwrap();
+    assert_eq!(out.value["shape"], json!("arrow"));
+    assert_eq!(gid(&out.value, "id"), line);
+    assert_eq!(s.current_page().unwrap().ink.len(), n + 1);
+    // Off again.
+    assert_eq!(s.run(ids::DRAW_INK_TO_SHAPE, &json!({"value": false})).unwrap().value, json!({"value": false}));
+    assert!(!s.ink_to_shape());
+    // With a lasso selection it converts the selection (and leaves the mode alone).
+    s.run(ids::DRAW_LASSO_SELECT, &json!({"ids": [raw.to_string(), hl.to_string()]})).unwrap();
+    let out = s.run(ids::DRAW_INK_TO_SHAPE, &json!({})).unwrap();
+    assert_eq!(out.value["converted"], json!(1));
+    assert_eq!(out.value["kept"], json!(1), "the highlighter stays");
+    assert!(!s.ink_to_shape());
+    assert_eq!(s.current_page().unwrap().stroke(raw).unwrap().points.len(), 5);
+    // Nothing recognised: a notice, no change, no undo step.
+    let squiggle = stroke(&mut s, json!([[10, 10], [20, 30], [30, 10], [40, 30], [50, 10]]));
+    s.run(ids::DRAW_LASSO_SELECT, &json!({"ids": [squiggle.to_string()]})).unwrap();
+    let (depth, notices) = (s.undo_depth(), s.notices.len());
+    let out = s.run(ids::DRAW_INK_TO_SHAPE, &json!({})).unwrap();
+    assert!(!out.changed && out.value["converted"] == json!(0));
+    assert_eq!(s.undo_depth(), depth);
+    assert_eq!(s.notices.len(), notices + 1);
+    // The mode can be set without a page.
+    let mut empty = Session::empty();
+    assert_eq!(empty.run(ids::DRAW_INK_TO_SHAPE, &json!({})).unwrap().value, json!({"value": true}));
+}
+
+#[test]
+fn shapes_insert_as_selected_ink_in_one_undo_step() {
+    let mut s = Session::new_default();
+    s.run(ids::PAGE_NEW, &json!({})).unwrap();
+    let depth = s.undo_depth();
+    let out = s.run(ids::DRAW_SHAPE, &json!({"kind": "ellipse", "x": 100, "y": 100, "w": 120, "h": 60, "color": "#c42b1c", "width": 2})).unwrap();
+    let ids_out: Vec<Guid> = out.value["ids"].as_array().unwrap().iter().map(|v| Guid::parse(v.as_str().unwrap()).unwrap()).collect();
+    assert_eq!(ids_out.len(), 1);
+    assert_eq!(s.ink_selection, ids_out, "the new shape is selected");
+    let st = s.current_page().unwrap().stroke(ids_out[0]).unwrap().clone();
+    assert_eq!((st.color, st.width, st.tool), (Color::rgb(0xc4, 0x2b, 0x1c), 2.0, InkTool::Pen));
+    let b = st.bbox().unwrap();
+    assert!((b.x - 100.0).abs() < 0.01 && (b.w - 120.0).abs() < 0.01 && (b.h - 60.0).abs() < 0.01, "{b:?}");
+    // Shift: a circle; an arrow is two strokes; the 3-D axes six.
+    let out = s.run(ids::DRAW_SHAPE, &json!({"kind": "ellipse", "x": 300, "y": 100, "w": 120, "h": 60, "constrain": true})).unwrap();
+    let c = gid(&json!({"id": out.value["ids"][0]}), "id");
+    let b = s.current_page().unwrap().stroke(c).unwrap().bbox().unwrap();
+    assert!((b.w - b.h).abs() < 0.01);
+    assert_eq!(
+        s.run(ids::DRAW_SHAPE, &json!({"kind": "arrow", "x": 0, "y": 300, "w": 200, "h": 0})).unwrap().value["ids"].as_array().unwrap().len(),
+        2
+    );
+    assert_eq!(
+        s.run(ids::DRAW_SHAPE, &json!({"kind": "axes3", "x": 0, "y": 400, "w": 200, "h": 150})).unwrap().value["ids"].as_array().unwrap().len(),
+        6
+    );
+    assert_eq!(s.undo_depth(), depth + 4, "one step per shape");
+    assert!(s.undo());
+    assert_eq!(s.current_page().unwrap().ink.len(), 4, "the axes go in one undo");
+    // Bad input.
+    assert!(matches!(s.run(ids::DRAW_SHAPE, &json!({"kind": "blob", "x": 0, "y": 0, "w": 10, "h": 10})), Err(CmdError::Params(_))));
+    assert!(matches!(s.run(ids::DRAW_SHAPE, &json!({"kind": "line", "x": 0, "y": 0, "w": 0.1, "h": 0})), Err(CmdError::Params(_))));
+    assert!(matches!(s.run(ids::DRAW_SHAPE, &json!({"kind": "line", "x": 0, "y": 0})), Err(CmdError::Params(_))));
+    // Huge boxes are clamped.
+    let out = s.run(ids::DRAW_SHAPE, &json!({"kind": "rectangle", "x": 0, "y": 0, "w": 1e20, "h": -1e20})).unwrap();
+    let r = gid(&json!({"id": out.value["ids"][0]}), "id");
+    let b = s.current_page().unwrap().stroke(r).unwrap().bbox().unwrap();
+    assert!(b.w <= crate::cmd::shapes::MAX_SHAPE_SIZE + 0.01 && b.h <= crate::cmd::shapes::MAX_SHAPE_SIZE + 0.01);
 }
 
 #[test]
@@ -378,6 +487,7 @@ fn undo_redo_round_trips() {
         (ids::DRAW_ERASE_AT, |_| json!({"x": 240, "y": 116})),
         (ids::DRAW_RECOLOR, |_| json!({"color": "#00ff00", "ids": []})),
         (ids::DRAW_INK_TO_SHAPE, |_| json!({})),
+        (ids::DRAW_SHAPE, |_| json!({"kind": "hexagon", "x": 40, "y": 300, "w": 120, "h": 80})),
     ];
     for (id, params) in cases {
         let (mut s, o) = session_with("abc\ndef");
@@ -413,6 +523,7 @@ fn hostile_params_with_real_ids_never_panic() {
         json!({"bytesBase64": STANDARD.encode(tiny_pdf().get(..60).unwrap()), "name": "cut.pdf", "dpi": 1e30, "x": 1e30, "y": f64::MIN}),
         json!({"bytesBase64": STANDARD.encode(b"%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj"), "name": "x.pdf"}),
         json!({"scope": "section", "query": "\u{feff}", "limit": u64::MAX, "format": "%", "what": "time", "utcOffsetMinutes": f64::NAN}),
+        json!({"kind": "doubleArrow", "x": 1e30, "y": f64::MIN, "w": 1e30, "h": -1e30, "constrain": true, "value": false}),
     ];
     for spec in registry().all() {
         for j in &junk {

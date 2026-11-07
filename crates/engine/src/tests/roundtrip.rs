@@ -192,6 +192,28 @@ fn onepkg_export_and_import_keep_everything() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+#[test]
+fn shapes_and_ink_to_shape_round_trip_through_one_files() {
+    let mut s = Session::new_default();
+    s.run(ids::SECTION_NEW, &json!({"name": "Shapes"})).unwrap();
+    s.run(ids::PAGE_RENAME, &json!({"title": "Shapes"})).unwrap();
+    for (i, kind) in crate::cmd::shapes::ShapeKind::ALL.iter().enumerate() {
+        let (x, y) = (40.0 + (i % 4) as f32 * 130.0, 120.0 + (i / 4) as f32 * 110.0);
+        s.run(ids::DRAW_SHAPE, &json!({"kind": kind.name(), "x": x, "y": y, "w": 100, "h": 80, "color": "#1f5fbf", "width": 1.5})).unwrap();
+    }
+    s.run(ids::DRAW_INK_TO_SHAPE, &json!({"value": true})).unwrap();
+    let rough = crate::cmd::ink_shape::tests::hand(&crate::cmd::ink_shape::tests::rect_corners(300.0, 640.0, 160.0, 80.0, 6.0, 0), 0.8, 9);
+    let pts: Vec<Value> = rough.iter().enumerate().map(|(i, p)| json!([p[0], p[1], 0.4 + (i % 7) as f32 * 0.05])).collect();
+    assert_eq!(s.run(ids::DRAW_STROKE, &json!({"points": pts})).unwrap().value["shape"], json!("rectangle"));
+    let section = s.current_section().unwrap().clone();
+    let strokes = section.pages[0].ink.len();
+    assert!(strokes > 16);
+    let bytes = notecraft_one::write_section(&section).unwrap();
+    let back = notecraft_one::read_section(&bytes).unwrap();
+    assert_eq!(back.pages[0].ink.len(), strokes);
+    assert_eq!(normalize(back), normalize(section));
+}
+
 /// Every corpus file reads (or fails cleanly) without panicking, and what reads also survives
 /// being saved again as a NoteCraft notebook folder and a `.onepkg`, and exported as text.
 #[test]

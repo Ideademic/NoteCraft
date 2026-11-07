@@ -1,17 +1,18 @@
 //! Draw: Tools (Type, Lasso Select, Eraser, Pen, Pencil, Highlighter and a gallery of preset
-//! pens), Colour & Thickness, Convert (Ink to Shape, Ink to Text), Edit (Insert Space, Delete,
-//! Arrange, Rotate).
+//! pens), Shapes (a gallery of lines, shapes and graph axes, as in OneNote 2016), Colour &
+//! Thickness, Convert (Ink to Shape, Ink to Text), Edit (Insert Space, Delete, Arrange, Rotate).
 //!
 //! The tools only set [`crate::canvas::CanvasState`]: `set_tool` and the pen styles in `pens`;
-//! the canvas draws with them. Delete and recolour act on the lasso selection through engine
-//! commands.
+//! the canvas draws with them (a shape tile picks [`Tool::Shape`]). Ink to Shape is a mode in the
+//! session (`draw.inkToShape`), shown as a checked toggle. Delete and recolour act on the lasso
+//! selection through engine commands.
 
 use egui::{Color32, Rect, Sense, Shape, Stroke, Ui, pos2, vec2};
 use notecraft_doc::{Color, InkTool};
 use notecraft_engine::ids;
 use serde_json::json;
 
-use crate::canvas::{PenStyle, Tool};
+use crate::canvas::{PenStyle, ShapeKind, Tool};
 use crate::icons::{self, Icon};
 use crate::theme::{RADIUS_SMALL, color32, model_color};
 use crate::widgets::{self, Btn, CONTENT_H, color};
@@ -72,6 +73,7 @@ fn ink_target(app: &NoteApp) -> InkTool {
 pub fn show(ui: &mut Ui, app: &mut NoteApp) {
     widgets::group(ui, app, tl!("Tools"), Icon::Pen, tools);
     widgets::group(ui, app, tl!("Pens"), Icon::ColorThickness, pens_gallery);
+    widgets::group(ui, app, tl!("Shapes"), Icon::Shapes, shapes_gallery);
     widgets::group(ui, app, tl!("Color"), Icon::ColorThickness, |ui, app| {
         let b = Btn::new(Icon::ColorThickness, tl!("Color &\nThickness"))
             .tip(tl!("Color & Thickness"))
@@ -81,10 +83,11 @@ pub fn show(ui: &mut Ui, app: &mut NoteApp) {
     widgets::group(ui, app, tl!("Convert"), Icon::InkToShape, |ui, app| {
         let b = Btn::new(Icon::InkToShape, tl!("Ink to\nShape"))
             .tip(tl!("Ink to Shape"))
-            .help(tl!("Turn drawn shapes into neat ones as you draw."))
-            .for_command(app, "draw.inkToShape");
+            .help(tl!("Turn drawn shapes into neat ones as you draw. With ink selected, converts the selection."))
+            .for_command(app, ids::DRAW_INK_TO_SHAPE)
+            .checked(ink_to_shape_on(app));
         if widgets::big(ui, app, b) {
-            app.act("draw.inkToShape", json!({}));
+            app.act(ids::DRAW_INK_TO_SHAPE, json!({}));
         }
         let b = Btn::new(Icon::InkToText, tl!("Ink to\nText"))
             .tip(tl!("Ink to Text"))
@@ -144,6 +147,94 @@ fn pens_gallery(ui: &mut Ui, app: &mut NoteApp) {
         if resp.on_hover_text(name).clicked() || keyed {
             use_preset(app, *p);
         }
+    }
+}
+
+/// Columns of the Shapes gallery (three rows fill the group).
+const SHAPE_COLS: usize = 6;
+
+fn shapes_gallery(ui: &mut Ui, app: &mut NoteApp) {
+    let t = app.tokens.clone();
+    let rows = ShapeKind::ALL.len().div_ceil(SHAPE_COLS);
+    let tile = vec2(26.0, ((CONTENT_H - 4.0) / rows as f32).floor());
+    let (outer, _) = ui.allocate_exact_size(vec2(tile.x * SHAPE_COLS as f32 + 4.0, CONTENT_H - 2.0), Sense::hover());
+    ui.painter().rect(outer, RADIUS_SMALL, t.canvas, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+    shape_tiles(ui, app, outer.min + vec2(2.0, 2.0), SHAPE_COLS, tile, "shape_tile");
+}
+
+/// The shape tiles in a grid of `cols` from `origin`; a tile picks its shape tool. Returns
+/// whether one was picked.
+fn shape_tiles(ui: &mut Ui, app: &mut NoteApp, origin: egui::Pos2, cols: usize, tile: egui::Vec2, salt: &str) -> bool {
+    let t = app.tokens.clone();
+    let mut picked = false;
+    for (i, kind) in ShapeKind::ALL.into_iter().enumerate() {
+        let (cx, cy) = (i % cols.max(1), i / cols.max(1));
+        let r = Rect::from_min_size(origin + vec2(tile.x * cx as f32, tile.y * cy as f32), tile);
+        let resp = ui.interact(r, ui.scope_id().with((salt, i)), Sense::click());
+        let name = shape_label(kind);
+        let current = app.canvas.tool == Tool::Shape(kind);
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, current, name));
+        widgets::bg(ui, r.shrink(1.0), &resp, current, true, &t);
+        let inset = vec2((tile.x * 0.23).round(), (tile.y * 0.24).round());
+        paint_shape_tile(ui, r.shrink2(inset), kind, t.icon);
+        let keyed = app.ui.keytips.control(r);
+        if resp.on_hover_text(name).clicked() || keyed {
+            app.canvas.set_tool(Tool::Shape(kind));
+            picked = true;
+        }
+    }
+    picked
+}
+
+/// Columns of the Shapes drop-down.
+const MENU_COLS: usize = 4;
+
+/// The body of a Shapes drop-down (the simplified ribbon's): the shape tiles, larger; choosing
+/// one picks its shape tool and closes the menu.
+pub fn shapes_menu(ui: &mut Ui, app: &mut NoteApp) {
+    widgets::menu_heading(ui, tl!("Shapes"));
+    let tile = vec2(34.0, 30.0);
+    let rows = ShapeKind::ALL.len().div_ceil(MENU_COLS);
+    let (outer, _) = ui.allocate_exact_size(vec2(tile.x * MENU_COLS as f32, tile.y * rows as f32), Sense::hover());
+    if shape_tiles(ui, app, outer.min, MENU_COLS, tile, "shape_menu_tile") {
+        ui.close();
+    }
+}
+
+/// Whether Ink to Shape is on (the engine's mode; the toggle's checked state).
+pub fn ink_to_shape_on(app: &NoteApp) -> bool {
+    app.session.ink_to_shape()
+}
+
+/// A shape's gallery tile: the shape itself, from the same geometry `draw.shape` inserts (lines
+/// run from the bottom left to the top right).
+fn paint_shape_tile(ui: &Ui, r: Rect, kind: ShapeKind, color: Color32) {
+    let rect = if kind.is_line() { [r.min.x, r.max.y, r.width(), -r.height()] } else { [r.min.x, r.min.y, r.width(), r.height()] };
+    for st in notecraft_engine::cmd::shapes::shape_strokes(kind, rect, false) {
+        let pts: Vec<egui::Pos2> = st.into_iter().map(|[x, y]| pos2(x, y)).collect();
+        ui.painter().add(Shape::line(pts, Stroke::new(1.2, color)));
+    }
+}
+
+/// A shape's name in the gallery.
+pub fn shape_label(kind: ShapeKind) -> &'static str {
+    match kind {
+        ShapeKind::Line => tl!("Line"),
+        ShapeKind::Arrow => tl!("Arrow"),
+        ShapeKind::DoubleArrow => tl!("Double Arrow"),
+        ShapeKind::Rectangle => tl!("Rectangle"),
+        ShapeKind::RoundedRectangle => tl!("Rounded Rectangle"),
+        ShapeKind::Ellipse => tl!("Ellipse"),
+        ShapeKind::Triangle => tl!("Triangle"),
+        ShapeKind::RightTriangle => tl!("Right Triangle"),
+        ShapeKind::Parallelogram => tl!("Parallelogram"),
+        ShapeKind::Trapezoid => tl!("Trapezoid"),
+        ShapeKind::Diamond => tl!("Diamond"),
+        ShapeKind::Pentagon => tl!("Pentagon"),
+        ShapeKind::Hexagon => tl!("Hexagon"),
+        ShapeKind::Axes2 => tl!("Graph: X-Y Axes"),
+        ShapeKind::Axes2Arrows => tl!("Graph: Coordinate Plane"),
+        ShapeKind::Axes3 => tl!("Graph: 3-D Axes"),
     }
 }
 
@@ -268,6 +359,19 @@ mod tests {
         }
         for w in PEN_WIDTHS.iter().chain(&HIGHLIGHTER_WIDTHS) {
             assert!(*w >= notecraft_doc::ink::MIN_WIDTH && *w <= notecraft_doc::ink::MAX_WIDTH);
+        }
+    }
+
+    #[test]
+    fn every_shape_has_a_label_and_draws_in_its_tile() {
+        let r = Rect::from_min_size(pos2(10.0, 10.0), vec2(14.0, 11.0));
+        for kind in ShapeKind::ALL {
+            assert!(!shape_label(kind).is_empty());
+            let rect = if kind.is_line() { [r.min.x, r.max.y, r.width(), -r.height()] } else { [r.min.x, r.min.y, r.width(), r.height()] };
+            let strokes = notecraft_engine::cmd::shapes::shape_strokes(kind, rect, false);
+            assert!(!strokes.is_empty(), "{kind:?}");
+            // Arrowheads may poke a little past the tile's inner box, never past the tile.
+            assert!(strokes.iter().flatten().all(|[x, y]| r.expand(6.0).contains(pos2(*x, *y))), "{kind:?}");
         }
     }
 }

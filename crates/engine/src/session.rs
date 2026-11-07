@@ -40,6 +40,9 @@ pub struct Session {
     pub dirty_tocs: HashSet<Guid>,
     /// Ink strokes on the current page selected by the lasso.
     pub ink_selection: Vec<Guid>,
+    /// Draw › Ink to Shape is on: `draw.stroke` redraws strokes that look like shapes
+    /// ([`Session::ink_to_shape`]; set with `draw.inkToShape`).
+    pub(crate) ink_to_shape: bool,
     /// Saves notebooks ([`Session::save_dirty`], autosave). `None`: nothing is saved (tests,
     /// the CLI).
     pub storage: Option<Box<dyn Storage>>,
@@ -87,6 +90,7 @@ impl Session {
             dirty: HashSet::new(),
             dirty_tocs: HashSet::new(),
             ink_selection: Vec::new(),
+            ink_to_shape: false,
             storage: None,
             notices: Vec::new(),
             revision: 0,
@@ -177,6 +181,11 @@ impl Session {
                 Ok(out)
             }
         }
+    }
+
+    /// Whether Draw › Ink to Shape is on (the ribbon shows it as a checked toggle).
+    pub fn ink_to_shape(&self) -> bool {
+        self.ink_to_shape
     }
 
     /// The command's [`crate::CommandSpec::enabled`] (false for unknown ids).
