@@ -2486,6 +2486,7 @@ dependencies = [
  "notecraft-formats",
  "notecraft-one",
  "notecraft-onepkg",
+ "notecraft-onestore",
  "serde_json",
 ]
 
@@ -2616,8 +2617,12 @@ dependencies = [
  "egui",
  "js-sys",
  "log",
+ "notecraft-doc",
  "notecraft-engine",
+ "notecraft-one",
+ "notecraft-onepkg",
  "notecraft-ui-egui",
+ "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",

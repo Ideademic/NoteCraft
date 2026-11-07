@@ -506,7 +506,12 @@ pub fn selection_params(app: &NoteApp, extra: Value) -> Value {
         Value::Object(m) => m,
         _ => serde_json::Map::new(),
     };
-    if let Some(id) = app.canvas.editing {
+    if let Some(Value::Object(sel)) = crate::canvas::selection_params(&app.canvas) {
+        // The caret's container and range: {outline, start, end, page}.
+        for (k, val) in sel {
+            v.entry(k).or_insert(val);
+        }
+    } else if let Some(id) = app.canvas.editing {
         v.entry("outline").or_insert_with(|| serde_json::json!(id));
     }
     if let Some(page) = app.session.current.page {

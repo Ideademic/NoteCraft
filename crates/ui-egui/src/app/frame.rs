@@ -86,6 +86,7 @@ pub fn show(app: &mut NoteApp, ui: &mut Ui) {
         app.canvas_rect = Some(ui.available_rect_before_wrap());
         let mut tokens = app.tokens.clone();
         tokens.canvas = band;
+        app.canvas.hide_title = app.ui.hide_page_title;
         canvas::show(ui, &mut app.canvas, &mut app.session, &tokens, &app.services);
     });
     finish(app, ui);

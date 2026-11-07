@@ -1,32 +1,245 @@
-//! Note containers: rich text layout, the caret, typing (phase 2, canvas agent). For now it
-//! paints the title and each outline's plain text.
+//! Painting note containers: the selection, list markers (drawn in code), tags (To Do box, star,
+//! question mark, drawn in code), the rich text, and — while a container is hovered, edited or
+//! selected — its thin frame with the grip bar on top (drag to move) and the resize arrow at the
+//! grip's right end (drag to change the width). Then the caret.
 
-use egui::{Align2, FontId, Painter, Pos2, Stroke, pos2, vec2};
-use notecraft_doc::page::TITLE_ORIGIN;
-use notecraft_doc::{ElementKind, Page};
+use egui::epaint::{CornerRadius, PathShape};
+use egui::text::CCursor;
+use egui::{Align2, Color32, FontId, Painter, Pos2, Rect, Shape, Stroke, StrokeKind, pos2, vec2};
+use notecraft_doc::{Page, Tag};
 
-use crate::theme::Tokens;
+use super::layout::{OutlineLayout, PageLayout};
+use super::style::{Ink, MARKER_W, Marker};
+use super::view::View;
+use super::{CanvasState, pointer};
+use crate::theme::{Tokens, mix};
 
-/// The title line, its rule and the created date/time under it.
-pub(crate) fn paint_title(painter: &Painter, page: &Page, origin: Pos2, zoom: f32, tokens: &Tokens) {
-    let at = origin + vec2(TITLE_ORIGIN.x, TITLE_ORIGIN.y) * zoom;
-    painter.text(at, Align2::LEFT_TOP, page.title.as_str(), FontId::proportional(20.0 * zoom), tokens.page_text);
-    let rule_y = at.y + 30.0 * zoom;
-    painter.line_segment([pos2(at.x, rule_y), pos2(at.x + 360.0 * zoom, rule_y)], Stroke::new(1.0, tokens.title_rule));
-    let when = page.created.format("%A, %d %B %Y   %H:%M").to_string();
-    painter.text(pos2(at.x, rule_y + 4.0 * zoom), Align2::LEFT_TOP, when, FontId::proportional(10.0 * zoom), tokens.text_dim);
+/// Space between the text and the frame, pixels.
+pub const FRAME_PAD_X: f32 = 7.0;
+pub const FRAME_PAD_Y: f32 = 4.0;
+/// Height of the grip bar above the frame, pixels.
+pub const GRIP_H: f32 = 9.0;
+
+/// A container's frame, its grip bar and the resize handle at the grip's right end (screen).
+pub fn frame_rects(o: &OutlineLayout, v: &View) -> (Rect, Rect, Rect) {
+    let text = o.rect(v);
+    let frame =
+        Rect::from_min_max(pos2(text.left() - FRAME_PAD_X, text.top() - FRAME_PAD_Y), pos2(text.right() + FRAME_PAD_X, text.bottom() + FRAME_PAD_Y));
+    let grip = Rect::from_min_max(pos2(frame.left(), frame.top() - GRIP_H), pos2(frame.right(), frame.top()));
+    let resize = Rect::from_min_max(pos2(grip.right() - 16.0, grip.top()), pos2(grip.right() + 2.0, grip.bottom()));
+    (frame, grip, resize)
 }
 
-/// Each outline's paragraphs as plain lines (placeholder for the rich text editor).
-pub(crate) fn paint_outlines(painter: &Painter, page: &Page, origin: Pos2, zoom: f32, tokens: &Tokens) {
-    for el in &page.elements {
-        if let ElementKind::Outline(o) = &el.kind {
-            let mut y = origin.y + o.pos.y * zoom;
-            for p in &o.paragraphs {
-                let size = p.style.font_size() * zoom;
-                painter.text(pos2(origin.x + o.pos.x * zoom, y), Align2::LEFT_TOP, p.text(), FontId::proportional(size), tokens.page_text);
-                y += size * 1.5;
+/// Everything about the note containers on the page.
+pub fn paint_outlines(painter: &Painter, state: &CanvasState, page: &Page, tokens: &Tokens, v: &View, lay: &PageLayout, resp: &egui::Response) {
+    let ink = Ink::new(tokens, page.background.color);
+    let hover = resp.hover_pos().filter(|_| state.tool.types() && !pointer::is_dragging(state));
+    let hovered = hover.and_then(|p| {
+        lay.outlines.iter().rev().find(|o| {
+            let (f, g, _) = frame_rects(o, v);
+            f.contains(p) || g.contains(p)
+        })
+    });
+    let hovered_id = hovered.map(|o| o.id);
+    for o in &lay.outlines {
+        let r = o.rect(v);
+        if !r.expand(40.0).intersects(v.clip) {
+            continue;
+        }
+        let editing = state.caret.as_ref().filter(|c| c.outline == o.id);
+        if let Some(c) = editing
+            && !c.is_collapsed()
+        {
+            paint_selection(painter, o, v, c.range(), tokens.selection);
+        }
+        for (i, p) in o.paras.iter().enumerate() {
+            let Some(at) = o.galley_origin(v, i) else { continue };
+            if at.y > v.clip.bottom() + 4.0 || at.y + p.height < v.clip.top() - 4.0 {
+                continue;
+            }
+            paint_marker(painter, o, v, i, &ink);
+            paint_tag(painter, o, v, i, tokens);
+            painter.galley(at, p.galley.clone(), ink.text);
+            if let Some(b) = &p.bold {
+                painter.galley(at + vec2(p.bold_dx, 0.0), b.clone(), ink.text);
+                if p.size_px > 26.0 {
+                    painter.galley(at + vec2(p.bold_dx * 0.5, 0.0), b.clone(), ink.text);
+                }
             }
         }
+        let selected = state.selection.elements.contains(&o.id);
+        let dragging = pointer::dragged_element(state) == Some(o.id);
+        if editing.is_some() || hovered_id == Some(o.id) || selected || dragging {
+            paint_frame(painter, o, v, tokens, &ink, editing.is_some() || selected || dragging);
+        }
+        if let Some(c) = editing
+            && let Some(cr) = o.caret_rect(v, c.head)
+        {
+            paint_caret(painter, cr, &ink, v);
+        }
+    }
+    if let Some(p) = &state.pending {
+        let at = v.to_screen(p.at);
+        let h = painter.ctx().fonts_mut(|f| f.row_height(&FontId::proportional(super::style::px(11.0, v.scale))));
+        paint_caret(painter, Rect::from_min_size(at, vec2(0.0, h)), &ink, v);
+    }
+}
+
+fn paint_caret(painter: &Painter, r: Rect, ink: &Ink, v: &View) {
+    let w = (v.scale * 1.1).clamp(1.0, 3.0);
+    let x = r.left().round() + 0.5;
+    painter.line_segment([pos2(x, r.top()), pos2(x, r.bottom())], Stroke::new(w, ink.text));
+}
+
+/// The selection behind the text, row by row.
+pub fn paint_selection(
+    painter: &Painter,
+    o: &OutlineLayout,
+    v: &View,
+    (a, b): (notecraft_engine::TextPos, notecraft_engine::TextPos),
+    fill: Color32,
+) {
+    for i in a.para..=b.para {
+        let Some(p) = o.paras.get(i) else { break };
+        let Some(origin) = o.galley_origin(v, i) else { break };
+        let s = if i == a.para { a.char } else { 0 };
+        let e = if i == b.para { b.char } else { p.chars };
+        let mut base = 0usize;
+        for row in &p.galley.rows {
+            let n = row.char_count_including_newline().0;
+            let (rs, re) = (s.max(base), e.min(base + row.char_count_excluding_newline().0));
+            if rs < re || (rs == re && i != b.para && re == base + n && s <= re) {
+                for xr in row.x_ranges(egui::text::CharIndex(rs - base)..egui::text::CharIndex(re - base)) {
+                    let mut rr =
+                        Rect::from_min_max(pos2(row.pos.x + xr.min, row.min_y()), pos2(row.pos.x + xr.max, row.max_y())).translate(origin.to_vec2());
+                    if i != b.para && re >= base + row.char_count_excluding_newline().0 {
+                        // The paragraph break is selected too.
+                        rr.max.x += p.size_px * 0.3;
+                    }
+                    painter.rect_filled(rr, 0.0, fill);
+                }
+            }
+            base += n;
+        }
+        if p.chars == 0 && i != b.para {
+            let cr = p.galley.pos_from_cursor(CCursor::new(0)).translate(origin.to_vec2());
+            painter.rect_filled(Rect::from_min_size(cr.min, vec2(p.size_px * 0.3, cr.height())), 0.0, fill);
+        }
+    }
+}
+
+fn marker_color(o: &OutlineLayout, i: usize, ink: &Ink) -> Color32 {
+    // The marker takes the colour of the paragraph's first character.
+    o.paras.get(i).and_then(|p| p.galley.job.sections.first()).map_or(ink.text, |s| s.format.color)
+}
+
+fn paint_marker(painter: &Painter, o: &OutlineLayout, v: &View, i: usize, ink: &Ink) {
+    let Some(p) = o.paras.get(i) else { return };
+    let Some(m) = &p.marker else { return };
+    let top = v.to_screen(o.pos);
+    let (a, b) = p.first_row();
+    let cy = top.y + (a + b) / 2.0;
+    let color = marker_color(o, i, ink);
+    match m {
+        Marker::Bullet(level) => {
+            let r = (p.size_px * 0.15).clamp(1.5, 12.0);
+            let c = pos2(top.x + p.marker_x + MARKER_W * v.scale * 0.4, cy);
+            match level % 3 {
+                0 => {
+                    painter.circle_filled(c, r, color);
+                }
+                1 => {
+                    painter.circle_stroke(c, r - 0.5, Stroke::new((r * 0.35).max(1.0), color));
+                }
+                _ => {
+                    painter.rect_filled(Rect::from_center_size(c, vec2(r * 1.7, r * 1.7)), 0.0, color);
+                }
+            }
+        }
+        Marker::Number(label) => {
+            let font = p.galley.job.sections.first().map_or_else(|| FontId::proportional(p.size_px), |s| s.format.font_id.clone());
+            let x = top.x + p.text_x - v.len(4.0);
+            let row_top = top.y + a;
+            painter.text(pos2(x, row_top + (b - a) / 2.0), Align2::RIGHT_CENTER, label, font, color);
+        }
+    }
+}
+
+/// The To Do box (ticked in the accent colour), the Important star and the Question mark.
+fn paint_tag(painter: &Painter, o: &OutlineLayout, v: &View, i: usize, tokens: &Tokens) {
+    let Some(p) = o.paras.get(i) else { return };
+    let Some(tag) = p.tag else { return };
+    let top = v.to_screen(o.pos);
+    let (a, b) = p.first_row();
+    let side = (p.size_px * 0.85).clamp(6.0, 60.0);
+    let c = pos2(top.x + p.tag_x + super::style::TAG_W * v.scale / 2.0, top.y + (a + b) / 2.0);
+    match tag {
+        Tag::ToDo { checked } => {
+            let r = Rect::from_center_size(c, vec2(side, side));
+            let border = if tokens.dark { Color32::from_rgb(0x9A, 0xA8, 0xC0) } else { Color32::from_rgb(0x6B, 0x7A, 0x96) };
+            let fill = if tokens.dark { Color32::from_rgb(0x30, 0x30, 0x34) } else { Color32::WHITE };
+            painter.rect(r, CornerRadius::same(1), fill, Stroke::new(1.0, border), StrokeKind::Inside);
+            if checked {
+                let s = side;
+                let pts = vec![
+                    pos2(r.left() + s * 0.2, r.top() + s * 0.52),
+                    pos2(r.left() + s * 0.42, r.top() + s * 0.74),
+                    pos2(r.left() + s * 0.84, r.top() + s * 0.2),
+                ];
+                painter.add(Shape::Path(PathShape::line(pts, Stroke::new((s * 0.15).max(1.5), tokens.accent))));
+            }
+        }
+        Tag::Important => {
+            let outer = side * 0.6;
+            let inner = outer * 0.45;
+            let pts: Vec<Pos2> = (0..10)
+                .map(|k| {
+                    let ang = std::f32::consts::PI * (k as f32) / 5.0 - std::f32::consts::FRAC_PI_2;
+                    let rad = if k % 2 == 0 { outer } else { inner };
+                    pos2(c.x + rad * ang.cos(), c.y + rad * ang.sin())
+                })
+                .collect();
+            let gold = Color32::from_rgb(0xF2, 0xB7, 0x05);
+            // A star isn't convex: draw it as five triangles around the centre plus the core.
+            for k in 0..5 {
+                let (Some(tip), Some(l), Some(rr)) = (pts.get(k * 2), pts.get((k * 2 + 9) % 10), pts.get(k * 2 + 1)) else { continue };
+                painter.add(Shape::convex_polygon(vec![*l, *tip, *rr], gold, Stroke::NONE));
+            }
+            let core: Vec<Pos2> = (0..5).filter_map(|k| pts.get(k * 2 + 1).copied()).collect();
+            painter.add(Shape::convex_polygon(core, gold, Stroke::NONE));
+            let mut outline = pts.clone();
+            if let Some(f) = pts.first() {
+                outline.push(*f);
+            }
+            painter.add(Shape::line(outline, Stroke::new(1.0, mix(gold, Color32::BLACK, 0.3))));
+        }
+        Tag::Question => {
+            let r = side * 0.55;
+            painter.circle_filled(c, r, Color32::from_rgb(0x7A, 0x4F, 0xC9));
+            painter.text(c + vec2(0.0, r * 0.05), Align2::CENTER_CENTER, "?", FontId::proportional(r * 1.6), Color32::WHITE);
+        }
+    }
+}
+
+fn paint_frame(painter: &Painter, o: &OutlineLayout, v: &View, tokens: &Tokens, ink: &Ink, strong: bool) {
+    let (frame, grip, resize) = frame_rects(o, v);
+    let line = if ink.dark { mix(ink.paper, ink.text, 0.35) } else { tokens.container_border };
+    painter.rect_stroke(frame, 0.0, Stroke::new(1.0, line), StrokeKind::Inside);
+    let grip_fill = if strong { mix(ink.paper, line, 0.55) } else { mix(ink.paper, line, 0.35) };
+    painter.rect(grip, 0.0, grip_fill, Stroke::new(1.0, line), StrokeKind::Inside);
+    // The grip's dots in the middle.
+    let dot = mix(grip_fill, ink.text, 0.45);
+    let cy = grip.center().y;
+    for k in -3..=3 {
+        painter.circle_filled(pos2(grip.center().x + k as f32 * 4.0, cy), 0.9, dot);
+    }
+    // The width arrow at the right end.
+    let rc = resize.center();
+    let s = Stroke::new(1.0, dot);
+    painter.line_segment([pos2(rc.x - 5.0, rc.y), pos2(rc.x + 5.0, rc.y)], s);
+    for dir in [-1.0f32, 1.0] {
+        let tip = pos2(rc.x + dir * 5.0, rc.y);
+        painter.line_segment([tip, pos2(tip.x - dir * 2.5, rc.y - 2.5)], s);
+        painter.line_segment([tip, pos2(tip.x - dir * 2.5, rc.y + 2.5)], s);
     }
 }
