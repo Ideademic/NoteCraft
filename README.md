@@ -73,7 +73,7 @@
 
 ## What works today
 
-Version 0.1.0:
+Version 0.1.1 (see [CHANGELOG.md](CHANGELOG.md)):
 
 | Area | Highlights |
 |---|---|
@@ -86,7 +86,7 @@ Version 0.1.0:
 | **Files** | `.one` sections and `.onetoc2` notebooks as the native format (a notebook is a folder; OneNote 2010–2016 desktop files; OneDrive-packaged files are refused); `.onepkg` import and export; HTML, Markdown and plain-text export |
 | **Saving** | No Save button: changes autosave; crash recovery |
 | **Search** | Page titles and text across every open notebook |
-| **Looks** | Light and dark mode; a flat, purple ribbon interface |
+| **Looks** | Light and dark mode; a flat, purple ribbon, Classic or Simplified (single row), with Full-screen mode, Show tabs only and Always show ribbon |
 | **Everywhere** | Desktop on macOS, Windows, Linux and FreeBSD; the browser via WebAssembly; a command-line tool |
 
 The honest picture, area by area, is in [ROADMAP.md](ROADMAP.md).
