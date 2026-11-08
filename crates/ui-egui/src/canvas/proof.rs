@@ -10,6 +10,7 @@ use egui::text::CharIndex;
 use egui::{Color32, Painter, Pos2, Stroke, pos2};
 use notecraft_engine::Session;
 use notecraft_engine::proof;
+use notecraft_engine::text::{CellRef, Frame};
 
 use super::CanvasState;
 use super::layout::{OutlineLayout, PageLayout};
@@ -37,28 +38,38 @@ pub fn paint(ctx: &egui::Context, painter: &Painter, state: &mut CanvasState, se
             continue;
         }
         let Some(model) = page.outline(o.id) else { continue };
-        for (i, pl) in o.paras.iter().enumerate() {
-            let Some(at) = o.galley_origin(v, i) else { continue };
-            if at.y > v.clip.bottom() || at.y + pl.height < v.clip.top() {
-                continue;
+        // The container's own paragraphs, then each table's cells.
+        let mut flows: Vec<(Frame, &OutlineLayout)> = vec![(Frame::Top, o)];
+        for t in &o.tables {
+            for (r, row) in t.cells.iter().enumerate() {
+                flows.extend(row.iter().enumerate().map(|(c, cl)| (Frame::Cell(CellRef::new(t.block, r, c)), cl)));
             }
-            let Some(para) = model.paragraphs.get(i) else { continue };
-            let text = para.text();
-            if text.trim().is_empty() {
-                continue;
-            }
-            let Some(found) = proof::lookup(&text, session.proof.lang_of(para)) else {
-                waiting = true;
-                continue;
-            };
-            let found = if session.proof.has_ignored() { session.proof.visible(&text, &found) } else { found.to_vec() };
-            for m in &found {
-                if typing_here(state, o, i, m.end) {
+        }
+        for (frame, fl) in flows {
+            let Some(flow) = notecraft_engine::text::flow(model, frame) else { continue };
+            for (i, pl) in fl.paras.iter().enumerate() {
+                let Some(at) = fl.galley_origin(v, i) else { continue };
+                if pl.table || at.y > v.clip.bottom() || at.y + pl.height < v.clip.top() {
                     continue;
                 }
-                underline(painter, o, v, i, m.start, m.end, color);
-                if state.review.marks.len() < 2000 {
-                    state.review.marks.push((o.id, i, m.start, m.end));
+                let Some(para) = flow.para(i) else { continue };
+                let text = para.text();
+                if text.trim().is_empty() {
+                    continue;
+                }
+                let Some(found) = proof::lookup(&text, session.proof.lang_of(para)) else {
+                    waiting = true;
+                    continue;
+                };
+                let found = if session.proof.has_ignored() { session.proof.visible(&text, &found) } else { found.to_vec() };
+                for m in &found {
+                    if typing_here(state, o.id, frame, i, m.end) {
+                        continue;
+                    }
+                    underline(painter, fl, v, i, m.start, m.end, color);
+                    if state.review.marks.len() < 2000 {
+                        state.review.marks.push((o.id, frame, i, m.start, m.end));
+                    }
                 }
             }
         }
@@ -73,8 +84,8 @@ pub fn paint(ctx: &egui::Context, painter: &Painter, state: &mut CanvasState, se
 
 /// Whether the caret sits at the end of the word ending at `end` in paragraph `para` (still being
 /// typed).
-fn typing_here(state: &CanvasState, o: &OutlineLayout, para: usize, end: usize) -> bool {
-    state.caret.as_ref().is_some_and(|c| c.outline == o.id && c.is_collapsed() && c.head.para == para && c.head.char == end)
+fn typing_here(state: &CanvasState, outline: notecraft_doc::Guid, frame: Frame, para: usize, end: usize) -> bool {
+    state.caret.as_ref().is_some_and(|c| c.outline == outline && c.frame() == frame && c.is_collapsed() && c.head.para == para && c.head.char == end)
 }
 
 /// A wavy line under characters `a..b` of paragraph `i`, row by row.

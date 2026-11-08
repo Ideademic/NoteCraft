@@ -10,6 +10,7 @@ use chrono::{DateTime, Utc};
 use notecraft_geom::{Point, Rect, Size};
 use serde::{Deserialize, Serialize};
 
+use crate::table::Block;
 use crate::{Color, Guid, InkStroke};
 
 /// Deepest subpage level: 0 is a page, 1 and 2 are subpages.
@@ -204,15 +205,15 @@ impl Page {
         self.ink.iter_mut().find(|s| s.id == id)
     }
 
-    /// The page's text: title, then each outline's paragraphs (one per line), in element order.
-    /// For search and plain-text export.
+    /// The page's text: title, then each outline's blocks (a line per paragraph and per table
+    /// row, cells separated by tabs), in element order. For search and plain-text export.
     pub fn plain_text(&self) -> String {
         let mut out = self.title.clone();
         for e in &self.elements {
             if let ElementKind::Outline(o) = &e.kind {
-                for p in &o.paragraphs {
+                for b in &o.blocks {
                     out.push('\n');
-                    out.push_str(&p.text());
+                    out.push_str(&b.text());
                 }
             }
         }
@@ -268,7 +269,7 @@ impl PageElement {
     /// (the canvas measures real text); an embedded file is an icon-sized box.
     pub fn bounds(&self) -> Option<Rect> {
         match &self.kind {
-            ElementKind::Outline(o) => Some(Rect::new(o.pos.x, o.pos.y, o.width, o.paragraphs.len().max(1) as f32 * 18.0)),
+            ElementKind::Outline(o) => Some(Rect::new(o.pos.x, o.pos.y, o.display_width(), o.estimated_height())),
             ElementKind::Image(i) => Some(Rect::from_min_size(i.pos, i.size)),
             ElementKind::Printout(p) => Some(p.bounds()),
             ElementKind::EmbeddedFile { pos, .. } => Some(Rect::from_min_size(*pos, Size::new(160.0, 40.0))),
@@ -295,7 +296,7 @@ pub enum ElementKind {
         bytes: Arc<Vec<u8>>,
         pos: Point,
     },
-    /// Content NoteCraft doesn't edit (tables, equations, audio…), kept as read so it can be
+    /// Content NoteCraft doesn't edit (equations, audio…), kept as read so it can be
     /// written back: the MS-ONE JCID of its root object and the format crate's encoding of it.
     Opaque {
         jcid: u32,
@@ -304,30 +305,103 @@ pub enum ElementKind {
     },
 }
 
-/// A note container: positioned, fixed width, paragraphs flowing down.
+/// A note container: positioned, fixed width, blocks (paragraphs and tables) flowing down.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Outline {
     /// Top-left corner, points.
     pub pos: Point,
-    /// Width, points.
+    /// Width, points (a wider table widens the container on screen: [`Outline::display_width`]).
     pub width: f32,
-    pub paragraphs: Vec<Paragraph>,
+    /// Paragraphs and tables, top to bottom. JSON written before tables calls it `paragraphs`.
+    #[serde(alias = "paragraphs")]
+    pub blocks: Vec<Block>,
 }
 
 impl Outline {
     /// An outline at `pos` holding `text` (one paragraph per line).
     pub fn with_text(pos: Point, text: &str) -> Outline {
-        Outline { pos: pos.sanitized(), width: DEFAULT_OUTLINE_WIDTH, paragraphs: text.split('\n').map(Paragraph::plain).collect() }
+        Outline::with_paragraphs(pos, text.split('\n').map(Paragraph::plain).collect())
     }
 
-    /// Paragraph texts joined with newlines.
+    /// An outline at `pos` holding `paragraphs`.
+    pub fn with_paragraphs(pos: Point, paragraphs: Vec<Paragraph>) -> Outline {
+        Outline { pos: pos.sanitized(), width: DEFAULT_OUTLINE_WIDTH, blocks: paragraphs.into_iter().map(Block::Paragraph).collect() }
+    }
+
+    /// Block texts joined with newlines (a table gives a line per row, cells tab-separated).
     pub fn text(&self) -> String {
-        self.paragraphs.iter().map(Paragraph::text).collect::<Vec<_>>().join("\n")
+        self.blocks.iter().map(Block::text).collect::<Vec<_>>().join("\n")
     }
 
+    /// No text anywhere (a table of empty cells counts as empty only when it is the only
+    /// block: a container holding a table is never cleaned up as empty).
     pub fn is_empty(&self) -> bool {
-        self.paragraphs.iter().all(|p| p.text().is_empty())
+        self.blocks.iter().all(|b| b.as_paragraph().is_some_and(|p| p.text().is_empty()))
+    }
+
+    /// Every paragraph in reading order: the outline's own and each table cell's.
+    pub fn paragraphs(&self) -> impl Iterator<Item = &Paragraph> {
+        self.blocks.iter().flat_map(Block::paragraphs)
+    }
+
+    /// Every paragraph, mutably, in reading order.
+    pub fn paragraphs_mut(&mut self) -> impl Iterator<Item = &mut Paragraph> {
+        self.blocks.iter_mut().flat_map(Block::paragraphs_mut)
+    }
+
+    /// The paragraph block at `i` (`None` for a table or past the end).
+    pub fn para(&self, i: usize) -> Option<&Paragraph> {
+        self.blocks.get(i).and_then(Block::as_paragraph)
+    }
+
+    pub fn para_mut(&mut self, i: usize) -> Option<&mut Paragraph> {
+        self.blocks.get_mut(i).and_then(Block::as_paragraph_mut)
+    }
+
+    /// The table block at `i`.
+    pub fn table(&self, i: usize) -> Option<&crate::Table> {
+        self.blocks.get(i).and_then(Block::as_table)
+    }
+
+    pub fn table_mut(&mut self, i: usize) -> Option<&mut crate::Table> {
+        self.blocks.get_mut(i).and_then(Block::as_table_mut)
+    }
+
+    /// Whether any block is a table.
+    pub fn has_tables(&self) -> bool {
+        self.blocks.iter().any(Block::is_table)
+    }
+
+    /// The width the container takes on the page: its own, or more when a table is wider.
+    pub fn display_width(&self) -> f32 {
+        let w = if self.width.is_finite() { self.width } else { DEFAULT_OUTLINE_WIDTH };
+        self.blocks.iter().filter_map(|b| b.as_table().map(|t| t.width() + f32::from(t.indent.min(MAX_INDENT)) * 18.0)).fold(w, f32::max)
+    }
+
+    /// A rough height (the canvas measures real text): 18 pt per line, table rows included.
+    pub fn estimated_height(&self) -> f32 {
+        let lines: usize = self
+            .blocks
+            .iter()
+            .map(|b| match b {
+                Block::Paragraph(_) => 1,
+                Block::Table { table } => table.rows.iter().map(|r| r.cells.iter().map(|c| c.paragraphs.len()).max().unwrap_or(1)).sum(),
+            })
+            .sum();
+        lines.max(1) as f32 * 18.0
+    }
+
+    /// Hostile-input bounds on every block: paragraphs sanitized, tables normalized, at most
+    /// [`MAX_PARAGRAPHS`] blocks.
+    pub fn sanitize(&mut self) {
+        self.blocks.truncate(MAX_PARAGRAPHS);
+        for b in &mut self.blocks {
+            match b {
+                Block::Paragraph(p) => p.indent = p.indent.min(MAX_INDENT),
+                Block::Table { table } => table.normalize(),
+            }
+        }
     }
 }
 

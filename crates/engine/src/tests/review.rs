@@ -46,7 +46,7 @@ fn spelling_is_found_suggested_and_fixed() {
     let out = s.run(ids::PROOF_APPLY, &json!({"outline": o, "para": 1, "start": 6, "end": 9, "text": "over", "word": "ovr"})).unwrap();
     assert_eq!(out.value["caret"], json!({"para": 1, "char": 10}));
     assert_eq!(text_of(&s, o), "The quick brwn fox\njumps over the dog, and the brwn cat");
-    let run = s.current_page().unwrap().outline(o).unwrap().paragraphs[1].runs.iter().find(|r| r.text.contains("over")).cloned().unwrap();
+    let run = s.current_page().unwrap().outline(o).unwrap().para(1).unwrap().runs.iter().find(|r| r.text.contains("over")).cloned().unwrap();
     assert!(run.bold, "the word keeps its formatting");
     // A stale fix is refused and changes nothing.
     assert!(matches!(
@@ -98,8 +98,8 @@ fn languages_per_paragraph() {
     // British English for the first paragraph.
     s.run(ids::PROOF_SET_LANGUAGE, &json!({"outline": o, "start": {"para": 0, "char": 0}, "lang": "en-GB"})).unwrap();
     let page = s.current_page().unwrap();
-    assert_eq!(page.outline(o).unwrap().paragraphs[0].lang.as_deref(), Some("en-GB"));
-    assert_eq!(page.outline(o).unwrap().paragraphs[1].lang, None);
+    assert_eq!(page.outline(o).unwrap().para(0).unwrap().lang.as_deref(), Some("en-GB"));
+    assert_eq!(page.outline(o).unwrap().para(1).unwrap().lang, None);
     assert!(!words(&mut s).contains(&"colour".to_owned()));
     // Don't check: no marks at all on the page.
     let out = s.run(ids::PROOF_SET_LANGUAGE, &json!({"lang": "zxx"})).unwrap();
@@ -107,9 +107,9 @@ fn languages_per_paragraph() {
     assert!(words(&mut s).is_empty());
     // Back to the default; an undo step each.
     s.run(ids::PROOF_SET_LANGUAGE, &json!({"lang": null})).unwrap();
-    assert_eq!(s.current_page().unwrap().outline(o).unwrap().paragraphs[0].lang, None);
+    assert_eq!(s.current_page().unwrap().outline(o).unwrap().para(0).unwrap().lang, None);
     s.undo();
-    assert_eq!(s.current_page().unwrap().outline(o).unwrap().paragraphs[0].lang.as_deref(), Some("zxx"));
+    assert_eq!(s.current_page().unwrap().outline(o).unwrap().para(0).unwrap().lang.as_deref(), Some("zxx"));
     assert!(matches!(s.run(ids::PROOF_SET_LANGUAGE, &json!({"lang": "!!"})), Err(CmdError::Params(_))));
     // The default language.
     s.run(ids::PROOF_SET_DEFAULT_LANGUAGE, &json!({"lang": "pl-PL"})).unwrap();
@@ -161,7 +161,7 @@ fn links_are_set_read_followed_and_removed() {
     // Remove the link around a caret.
     s.run(ids::LINK_REMOVE, &json!({"outline": o, "at": {"para": 0, "char": 8}})).unwrap();
     assert!(s.run(ids::LINK_GET, &json!({"outline": o, "at": {"para": 0, "char": 8}})).unwrap().value.is_null());
-    let runs = &s.current_page().unwrap().outline(o).unwrap().paragraphs[0].runs;
+    let runs = &s.current_page().unwrap().outline(o).unwrap().para(0).unwrap().runs;
     assert_eq!(runs.iter().filter(|r| r.link.is_some()).count(), 1, "the mail link stays");
 }
 
@@ -203,7 +203,7 @@ fn wiki_links_create_or_find_pages() {
     let created = gid(&out.value, "page");
     assert_eq!(s.current_section().unwrap().pages.len(), pages_before + 1);
     assert_eq!(s.current_section().unwrap().page(created).map(|p| p.title.as_str()), Some("Shopping list"));
-    let run = s.current_page().unwrap().outline(o).unwrap().paragraphs[0].runs.iter().find(|r| r.text == "Shopping list").cloned().unwrap();
+    let run = s.current_page().unwrap().outline(o).unwrap().para(0).unwrap().runs.iter().find(|r| r.text == "Shopping list").cloned().unwrap();
     let l = InternalLink::parse(run.link.as_deref().unwrap()).unwrap();
     assert_eq!((l.page, l.section), (Some(created), Some(sec)));
     // An existing page (any case) is linked, not made again; one undo step undoes it all.
@@ -259,7 +259,7 @@ fn links_and_languages_survive_a_one_round_trip() {
     let bytes = notecraft_one::write_section(&sec).unwrap();
     let back = notecraft_one::read_section(&bytes).unwrap();
     let page = back.page(s.current.page.unwrap()).unwrap();
-    let para = &page.outline(o).unwrap().paragraphs[0];
+    let para = &page.outline(o).unwrap().para(0).unwrap();
     assert_eq!(para.lang.as_deref(), Some("en-GB"));
     let links: Vec<&str> = para.runs.iter().filter_map(|r| r.link.as_deref()).collect();
     assert_eq!(links.len(), 2, "{:?}", para.runs);

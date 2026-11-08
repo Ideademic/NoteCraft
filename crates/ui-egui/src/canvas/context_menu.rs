@@ -34,8 +34,8 @@ pub struct CanvasReview {
     pub(crate) follow: Option<String>,
     /// After following a link to a paragraph: the caret goes there once its page shows.
     pub(crate) goto: Option<(Guid, usize)>,
-    /// The misspellings marked on screen last frame: (container, paragraph, start, end).
-    pub marks: Vec<(Guid, usize, usize, usize)>,
+    /// The misspellings marked on screen last frame: (container, flow, paragraph, start, end).
+    pub marks: Vec<(Guid, notecraft_engine::text::Frame, usize, usize, usize)>,
 }
 
 impl Default for CanvasReview {
@@ -114,10 +114,10 @@ fn target_at(state: &mut CanvasState, session: &mut Session, v: &View, lay: &Pag
         if !frame.contains(at) {
             continue;
         }
-        let pos = o.hit(v, at);
+        let (fr, pos) = o.hit_frame(v, at);
         let inside = state.caret.as_ref().is_some_and(|c| {
             let (a, b) = c.range();
-            c.outline == o.id && !c.is_collapsed() && a <= pos && pos <= b
+            c.outline == o.id && c.frame() == fr && !c.is_collapsed() && a <= pos && pos <= b
         });
         if !inside {
             if state.caret.as_ref().is_none_or(|c| c.outline != o.id) {
@@ -126,7 +126,7 @@ fn target_at(state: &mut CanvasState, session: &mut Session, v: &View, lay: &Pag
             state.pending = None;
             state.selection.elements.clear();
             let key = state.caret.as_ref().map(|c| c.merge_key.clone());
-            let mut c = TextCaret::at(o.id, pos);
+            let mut c = TextCaret { cell: fr.cell(), ..TextCaret::at(o.id, pos) };
             if let Some(k) = key {
                 c.merge_key = k;
             }
@@ -137,7 +137,7 @@ fn target_at(state: &mut CanvasState, session: &mut Session, v: &View, lay: &Pag
         let issue = state
             .review
             .spelling
-            .then(|| session.run(ids::PROOF_SUGGESTIONS, &json!({"outline": o.id, "at": pos.to_json(), "page": page})).ok())
+            .then(|| session.run(ids::PROOF_SUGGESTIONS, &json!({"outline": o.id, "cell": fr.to_json(), "at": pos.to_json(), "page": page})).ok())
             .flatten()
             .map(|out| out.value)
             .filter(|v| !v.is_null());

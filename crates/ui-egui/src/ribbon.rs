@@ -19,6 +19,7 @@ pub mod insert;
 pub mod paragraph;
 pub mod review;
 pub mod simplified;
+pub mod table;
 pub mod view;
 
 use egui::{Align2, Rect, Sense, Stroke, Ui, pos2, vec2};
@@ -46,6 +47,8 @@ pub enum RibbonTab {
     History,
     Review,
     View,
+    /// Table Tools › Layout: shown while the caret is in a table ([`table`]).
+    Table,
 }
 
 impl RibbonTab {
@@ -61,6 +64,7 @@ impl RibbonTab {
             RibbonTab::History => tl!("History"),
             RibbonTab::Review => tl!("Review"),
             RibbonTab::View => tl!("View"),
+            RibbonTab::Table => tl!("Table"),
         }
     }
 
@@ -74,7 +78,15 @@ impl RibbonTab {
             RibbonTab::History => "history",
             RibbonTab::Review => "review",
             RibbonTab::View => "view",
+            RibbonTab::Table => "table",
         }
+    }
+}
+
+/// The contextual Table tab goes when the caret leaves the table: back to Home.
+fn leave_table_tab(app: &mut NoteApp) {
+    if app.ui.ribbon_tab == RibbonTab::Table && !table::in_table(app) {
+        app.ui.ribbon_tab = RibbonTab::Home;
     }
 }
 
@@ -113,10 +125,16 @@ pub fn tab_strip(ui: &mut Ui, app: &mut NoteApp) {
     let t = app.tokens.clone();
     let full = ui.max_rect();
     ui.painter().rect_filled(full, 0.0, t.tab_strip);
+    leave_table_tab(app);
     // Empty band: right-click for the display options (registered first: the tabs keep theirs).
     let band = ui.interact(full, ui.scope_id().with("nc_tab_band"), Sense::click());
     let mut x = full.min.x + 6.0;
-    for tab in RibbonTab::ALL {
+    let contextual = table::in_table(app).then_some(RibbonTab::Table);
+    for tab in RibbonTab::ALL.into_iter().chain(contextual) {
+        if tab == RibbonTab::Table {
+            // A contextual tab: a gap before it and a line in the app colour over it.
+            x += 8.0;
+        }
         let label = tab.label();
         let w = text_width(ui.ctx(), label, regular(12.5)) + 26.0;
         let r = Rect::from_min_max(pos2(x, full.min.y + 2.0), pos2(x + w, full.max.y));
@@ -126,6 +144,10 @@ pub fn tab_strip(ui: &mut Ui, app: &mut NoteApp) {
         resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, active, label));
         app.ui.keytips.tab(r, crate::keytips::tab_letter(tab));
         let radius = egui::CornerRadius { nw: 2, ne: 2, sw: 0, se: 0 };
+        let resp = if tab == RibbonTab::Table { resp.on_hover_text(tl!("Table Tools: Layout")) } else { resp };
+        if tab == RibbonTab::Table {
+            ui.painter().rect_filled(Rect::from_min_max(r.min, pos2(r.max.x, r.min.y + 3.0)), 0.0, t.accent);
+        }
         if tab == RibbonTab::File {
             let fill = if resp.hovered() { t.title_pressed } else { t.file_tab };
             ui.painter().rect_filled(r, radius, fill);
@@ -163,6 +185,7 @@ pub fn body_visible(app: &NoteApp) -> bool {
 /// The selected tab's commands, in the chosen layout, with the display options arrow at the
 /// bottom-right corner.
 pub fn body(ui: &mut Ui, app: &mut NoteApp) {
+    leave_table_tab(app);
     let t = app.tokens.clone();
     let full = ui.max_rect();
     ui.painter().rect_filled(full, 0.0, t.ribbon);
@@ -202,6 +225,7 @@ fn classic(ui: &mut Ui, app: &mut NoteApp, full: Rect) {
                     RibbonTab::History => history::show(ui, app),
                     RibbonTab::Review => review::show(ui, app),
                     RibbonTab::View => view::show(ui, app),
+                    RibbonTab::Table => table::show(ui, app),
                 }
             });
         });

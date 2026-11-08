@@ -62,6 +62,16 @@ pub enum Extra {
     RecentEdits,
     /// A clock with a back arrow round it: the History group.
     History,
+    // The Table tab ([`super::table_tools`]).
+    SelectCell,
+    SelectRow,
+    SelectColumn,
+    SelectTable,
+    DeleteRows,
+    DeleteColumns,
+    SortAscending,
+    SortDescending,
+    ConvertToText,
 }
 
 impl Extra {
@@ -102,6 +112,15 @@ impl Extra {
         Extra::MarkRead,
         Extra::RecentEdits,
         Extra::History,
+        Extra::SelectCell,
+        Extra::SelectRow,
+        Extra::SelectColumn,
+        Extra::SelectTable,
+        Extra::DeleteRows,
+        Extra::DeleteColumns,
+        Extra::SortAscending,
+        Extra::SortDescending,
+        Extra::ConvertToText,
     ];
 }
 
@@ -113,7 +132,7 @@ pub fn paint_mode(painter: &egui::Painter, rect: egui::Rect, icon: Extra, ink: C
 }
 
 fn draw(p: &Pen<'_>, icon: Extra) {
-    let _ = draw_files(p, icon) || draw_tags_view(p, icon) || draw_more_tags(p, icon) || draw_history(p, icon);
+    let _ = draw_files(p, icon) || draw_tags_view(p, icon) || draw_more_tags(p, icon) || draw_history(p, icon) || super::table_tools::draw(p, icon);
 }
 
 /// The tags beyond To Do, Important and Question (original NoteCraft drawings).

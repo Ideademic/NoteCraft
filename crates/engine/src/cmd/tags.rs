@@ -31,7 +31,7 @@ fn summary(s: &mut Session, params: &Value) -> CmdResult {
             for page in sec.pages.iter().filter(|pg| sc.page.is_none_or(|id| id == pg.id)) {
                 for el in &page.elements {
                     let ElementKind::Outline(o) = &el.kind else { continue };
-                    for (pi, para) in o.paragraphs.iter().enumerate() {
+                    for (frame, pi, para) in crate::text::all_paragraphs(o) {
                         let Some(tag) = para.tag else { continue };
                         let checked = match tag {
                             Tag::ToDo { checked } => Some(checked),
@@ -45,14 +45,19 @@ fn summary(s: &mut Session, params: &Value) -> CmdResult {
                             break 'all;
                         }
                         let text: String = para.text().chars().take(MAX_TEXT).collect();
-                        items.push(json!({
+                        let mut item = json!({
                             "notebook": nb.id, "notebookName": nb.name,
                             "section": sec.id, "sectionName": sec.name,
                             "page": page.id, "pageTitle": page.title,
                             "outline": el.id, "para": pi,
                             "tag": tag.name(), "label": tag.label(), "checked": checked,
                             "text": text, "modified": page.modified.to_rfc3339(),
-                        }));
+                        });
+                        // A paragraph in a table cell names the cell.
+                        if let (Some(c), Value::Object(m)) = (frame.cell(), &mut item) {
+                            m.insert("cell".into(), c.to_json());
+                        }
+                        items.push(item);
                     }
                 }
             }

@@ -19,10 +19,12 @@ use crate::services::Services;
 /// The link under screen point `at`: its container and address. Only the link's own glyphs count
 /// (not the empty space after a line).
 pub fn link_at(session: &Session, lay: &PageLayout, v: &View, at: Pos2) -> Option<(Guid, String)> {
-    let o = super::layout::outline_at(lay, v, at, 0.0)?;
+    let outer = super::layout::outline_at(lay, v, at, 0.0)?;
     let page = session.current_page()?;
-    let model = page.outline(o.id)?;
-    let pos = o.hit(v, at);
+    let (frame, pos) = outer.hit_frame(v, at);
+    let model = notecraft_engine::text::flow(page.outline(outer.id)?, frame)?;
+    // In a table: the cell's layout.
+    let o = outer.frame(frame)?;
     let p = o.paras.get(pos.para)?;
     let origin = o.galley_origin(v, pos.para)?;
     let local = at - origin;
@@ -39,7 +41,7 @@ pub fn link_at(session: &Session, lay: &PageLayout, v: &View, at: Pos2) -> Optio
     } else {
         return None;
     };
-    let para = model.paragraphs.get(pos.para)?;
+    let para = model.para(pos.para)?;
     let mut seen = 0usize;
     for r in &para.runs {
         let n = r.text.chars().count();
@@ -158,7 +160,11 @@ pub fn after_insert(state: &mut CanvasState, session: &mut Session, typed: &str)
     }
     let Some(c) = state.caret.clone() else { return };
     let page = state.page;
-    let Ok(out) = session.run(ids::LINK_WIKI, &json!({"outline": c.outline, "at": c.head.to_json(), "page": page})) else { return };
+    let Ok(out) =
+        session.run(ids::LINK_WIKI, &json!({"outline": c.outline, "cell": c.cell.map(|x| x.to_json()), "at": c.head.to_json(), "page": page}))
+    else {
+        return;
+    };
     if let Some(pos) = out.value.get("caret").and_then(TextPos::from_json)
         && let Some(cc) = state.caret.as_mut()
     {

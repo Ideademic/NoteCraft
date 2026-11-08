@@ -31,8 +31,13 @@ follows the specs' MUSTs (see below), but OneNote may expect things the specs do
   shapes), Question (question shapes); task tags read as To Do.
 - Pictures (page-level and inside outlines, which become page-level pictures), with size and
   alt text; embedded files.
-- Tables: flattened to one read-only paragraph per row (cells separated by tabs); the section is
-  flagged `unsupported_content`.
+- Tables (jcidTableNode / TableRowNode / TableCellNode), read and written: RowCount, ColumnCount,
+  TableColumnWidths (a count byte, then a float per column in half-inches), TableColumnsLocked
+  (a count byte, then a bit per column), TableBordersVisible and CellShadingColor, with the cells'
+  outline elements as rich paragraphs. The array layouts were checked against the Tika samples.
+  NoteCraft's tables don't nest: a table inside a cell is flattened to a paragraph per row
+  (cells separated by tabs), and pictures inside cells are dropped; either flags
+  `unsupported_content`. CellShadingColor's id is from MS-ONE only (no sample uses it).
 - Ink (see below).
 - Anything else on a page is kept as `ElementKind::Opaque` (its objects captured and re-emitted
   on save) and flags `unsupported_content`.

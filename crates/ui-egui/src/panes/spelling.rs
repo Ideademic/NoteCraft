@@ -67,7 +67,12 @@ fn find(app: &mut NoteApp, pane: &mut SpellPane, select: bool) {
         pane.issue = None;
         return;
     };
-    let full = app.session.run(ids::PROOF_SUGGESTIONS, &json!({"outline": outline, "at": {"para": para, "char": start}})).ok().map(|o| o.value);
+    let cell = issue.get("cell").cloned().unwrap_or(Value::Null);
+    let full = app
+        .session
+        .run(ids::PROOF_SUGGESTIONS, &json!({"outline": outline, "cell": cell, "at": {"para": para, "char": start}}))
+        .ok()
+        .map(|o| o.value);
     pane.issue = full.filter(|v| !v.is_null()).or(Some(issue));
     // Select the word on the page, scrolled into view.
     if !select {
@@ -76,12 +81,18 @@ fn find(app: &mut NoteApp, pane: &mut SpellPane, select: bool) {
     let c = crate::canvas::TextCaret {
         anchor: TextPos::new(para, start),
         head: TextPos::new(para, end),
+        cell: cell_of(pane.issue.as_ref()),
         ..crate::canvas::TextCaret::at(outline, TextPos::new(para, end))
     };
     app.canvas.caret = Some(c);
     app.canvas.editing = Some(outline);
     app.canvas.selection.elements.clear();
     app.canvas.reveal_caret = true;
+}
+
+/// The table cell a misspelling is in.
+fn cell_of(issue: Option<&Value>) -> Option<notecraft_engine::text::CellRef> {
+    issue?.get("cell").and_then(notecraft_engine::text::CellRef::from_json)
 }
 
 fn num(v: &Value, k: &str) -> Option<usize> {
@@ -205,7 +216,7 @@ fn run(app: &mut NoteApp, pane: &mut SpellPane, a: Act) {
     };
     let word = issue.get("word").and_then(Value::as_str).unwrap_or_default().to_owned();
     let pick = suggestions(&issue).get(pane.choice).cloned();
-    let at = json!({"outline": issue.get("outline"), "para": issue.get("para"), "start": issue.get("start"), "end": issue.get("end"), "word": word});
+    let at = json!({"outline": issue.get("outline"), "cell": issue.get("cell"), "para": issue.get("para"), "start": issue.get("start"), "end": issue.get("end"), "word": word});
     match a {
         Act::Change => {
             if let (Some(text), Value::Object(mut m)) = (pick, at) {

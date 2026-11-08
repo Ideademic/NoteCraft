@@ -112,6 +112,16 @@ pub mod prop {
     pub const PAGE_MARGIN_ORIGIN_Y: u32 = 0x1400_1D10;
     pub const IS_BACKGROUND: u32 = 0x0800_1D13;
     pub const CACHED_TITLE_STRING_FROM_PAGE: u32 = 0x1C00_1D3C;
+    /// jcidTableNode ([MS-ONE] §2.2.27): rows, columns, borders, column widths (a count byte,
+    /// then a float per column in half-inches) and locked columns (a count byte, then one bit
+    /// per column).
+    pub const ROW_COUNT: u32 = 0x1400_1D57;
+    pub const COLUMN_COUNT: u32 = 0x1400_1D58;
+    pub const TABLE_BORDERS_VISIBLE: u32 = 0x0800_1D5E;
+    pub const TABLE_COLUMN_WIDTHS: u32 = 0x1C00_1D66;
+    pub const TABLE_COLUMNS_LOCKED: u32 = 0x1C00_1D7D;
+    /// jcidTableCellNode: the cell's background, a COLORREF.
+    pub const CELL_SHADING_COLOR: u32 = 0x1400_1E26;
     pub const STRUCTURE_ELEMENT_CHILD_NODES: u32 = 0x2400_1D5F;
     pub const CHILD_GRAPH_SPACE_ELEMENT_NODES: u32 = 0x2C00_1D63;
     pub const META_DATA_OBJECTS_ABOVE_GRAPH_SPACE: u32 = 0x2400_3442;

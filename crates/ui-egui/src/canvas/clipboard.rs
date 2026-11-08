@@ -54,11 +54,11 @@ fn same_text(a: &str, b: &str) -> bool {
     norm(a) == norm(b)
 }
 
-/// What a copy would take: the text selection, else the selected items and ink.
+/// What a copy would take: the text selection (in its table cell, or the selected cells), else
+/// the selected items and ink.
 fn copy_params(state: &CanvasState, session: &Session) -> Option<Value> {
-    if let Some(c) = state.caret.as_ref().filter(|c| !c.is_collapsed()) {
-        let (a, b) = c.range();
-        return Some(json!({"outline": c.outline, "start": a.to_json(), "end": b.to_json(), "page": state.page}));
+    if let Some(c) = state.caret.as_ref().filter(|c| !c.is_collapsed() || c.cells.is_some()) {
+        return Some(super::edit::range_params(state, c));
     }
     if state.caret.is_some() || state.pending.is_some() {
         return None;
@@ -95,6 +95,9 @@ pub fn copy(ctx: &egui::Context, state: &mut CanvasState, session: &mut Session,
             c.anchor = pos;
             c.head = pos;
         }
+        if let Some(c) = state.caret.as_mut() {
+            c.cells = None;
+        }
         state.selection.clear();
         session.break_undo_merge();
     }
@@ -103,7 +106,7 @@ pub fn copy(ctx: &egui::Context, state: &mut CanvasState, session: &mut Session,
 
 /// Puts a copy on the system clipboard: a lone picture as a picture, else HTML and text.
 fn to_system(ctx: &egui::Context, services: &Services, clip: &Clip, text: &str, html: &str) {
-    if clip.paragraphs.is_empty()
+    if clip.blocks.is_empty()
         && clip.ink.is_empty()
         && let [el] = clip.elements.as_slice()
         && let ElementKind::Image(img) = &el.kind
@@ -186,6 +189,9 @@ pub fn paste(
         params.insert("outline".into(), json!(c.outline));
         params.insert("start".into(), a.to_json());
         params.insert("end".into(), b.to_json());
+        if let Some(cell) = c.cell {
+            params.insert("cell".into(), cell.to_json());
+        }
     } else if let Some(p) = state.pending.take() {
         params.insert("x".into(), json!(p.at.x));
         params.insert("y".into(), json!(p.at.y));
@@ -205,7 +211,7 @@ fn flatten_outlines(clip: &mut Clip) {
     let mut keep = Vec::new();
     for el in std::mem::take(&mut clip.elements) {
         match el.kind {
-            ElementKind::Outline(o) => clip.paragraphs.extend(o.paragraphs),
+            ElementKind::Outline(o) => clip.blocks.extend(o.blocks),
             _ => keep.push(el),
         }
     }
@@ -219,7 +225,8 @@ fn land(state: &mut CanvasState, session: &Session, v: &Value) {
     let pasted: Vec<Guid> = super::pointer::ids_of(v);
     if let (Some(id), Some(pos)) = (outline, caret) {
         let key = state.caret.as_ref().filter(|c| c.outline == id).map_or_else(|| id.to_string(), |c| c.merge_key.clone());
-        state.caret = Some(TextCaret { merge_key: key, ..TextCaret::at(id, pos) });
+        let cell = v.get("cell").and_then(notecraft_engine::text::CellRef::from_json);
+        state.caret = Some(TextCaret { merge_key: key, cell, ..TextCaret::at(id, pos) });
         state.editing = Some(id);
         state.reveal_caret = true;
         state.selection.elements.clear();

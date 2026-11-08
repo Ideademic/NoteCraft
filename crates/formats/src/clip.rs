@@ -7,11 +7,16 @@
 //! that start paragraphs (p, div, li, headings, table rows, `<br>`) and lists. Everything else is
 //! read for its text; `<script>`, `<style>`, `<head>` and comments are skipped. Input is hostile:
 //! it is cut at [`MAX_HTML_BYTES`], nesting is bounded and so is the paragraph count.
+//!
+//! Tables: [`blocks_to_html`] writes NoteCraft tables as `<table>`, and [`from_html_blocks`] reads
+//! a simple `<table>` (rows of cells; spans are ignored, a table inside a cell is read as text)
+//! back as a table. [`from_html`] reads a table's cells as paragraphs.
 
 use std::fmt::Write as _;
 
 use notecraft_doc::page::MAX_INDENT;
-use notecraft_doc::{Color, ListKind, ParaStyle, Paragraph, Run};
+use notecraft_doc::table::DEFAULT_COL_WIDTH;
+use notecraft_doc::{Block, Cell, Color, ListKind, ParaStyle, Paragraph, Run, Table};
 
 use crate::html::{esc, run_html};
 
@@ -72,6 +77,37 @@ pub fn to_html(paragraphs: &[Paragraph]) -> String {
     out
 }
 
+/// An HTML fragment of `blocks`: paragraphs as [`to_html`] writes them, tables as `<table>`
+/// (each cell's paragraphs inside its `<td>`, shading as its background).
+pub fn blocks_to_html(blocks: &[Block]) -> String {
+    let mut out = String::new();
+    let mut run: Vec<Paragraph> = Vec::new();
+    for b in blocks {
+        match b {
+            Block::Paragraph(p) => run.push(p.clone()),
+            Block::Table { table } => {
+                out.push_str(&to_html(&run));
+                run.clear();
+                out.push_str("<table border=\"1\" style=\"border-collapse:collapse\">");
+                for row in &table.rows {
+                    out.push_str("<tr>");
+                    for (c, cell) in row.cells.iter().enumerate() {
+                        let mut css = format!("width:{}pt;vertical-align:top", table.col_width(c).round());
+                        if let Some(s) = cell.shading {
+                            let _ = write!(css, ";background-color:{}", s.to_hex());
+                        }
+                        let _ = write!(out, "<td style=\"{css}\">{}</td>", to_html(&cell.paragraphs));
+                    }
+                    out.push_str("</tr>");
+                }
+                out.push_str("</table>");
+            }
+        }
+    }
+    out.push_str(&to_html(&run));
+    out
+}
+
 /// A whole HTML document around a fragment (what the system clipboard gets).
 pub fn document(fragment: &str) -> String {
     format!("<html><head><meta charset=\"utf-8\"></head><body><!--StartFragment-->{fragment}<!--EndFragment--></body></html>")
@@ -116,6 +152,41 @@ struct Reader {
     style: ParaStyle,
     in_li: bool,
     pre: usize,
+    /// Read `<table>`s as tables ([`from_html_blocks`]).
+    keep_tables: bool,
+    /// The table being read.
+    table: Option<TableBuild>,
+    /// Tables read, with the paragraph index they go before.
+    tables: Vec<(usize, Table)>,
+}
+
+/// A `<table>` being read: its rows of cells' paragraphs.
+struct TableBuild {
+    /// Where it goes among the paragraphs.
+    at: usize,
+    rows: Vec<Vec<Vec<Paragraph>>>,
+    /// The open cell's first paragraph.
+    cell_from: Option<usize>,
+    /// Tables open inside this one (read as text).
+    nested: usize,
+}
+
+impl TableBuild {
+    /// The table: as many columns as the longest row, every cell its paragraphs.
+    fn finish(self) -> Option<Table> {
+        let rows: Vec<Vec<Vec<Paragraph>>> = self.rows.into_iter().filter(|r| !r.is_empty()).collect();
+        let cols = rows.iter().map(Vec::len).max()?;
+        let mut t = Table::new(rows.len(), cols, DEFAULT_COL_WIDTH);
+        for (r, row) in rows.into_iter().enumerate() {
+            for (c, paras) in row.into_iter().enumerate() {
+                if let Some(cell) = t.cell_mut(r, c) {
+                    *cell = Cell { paragraphs: paras, shading: None };
+                }
+            }
+        }
+        t.normalize();
+        Some(t)
+    }
 }
 
 impl Reader {
@@ -129,6 +200,61 @@ impl Reader {
             style: ParaStyle::Normal,
             in_li: false,
             pre: 0,
+            keep_tables: false,
+            table: None,
+            tables: Vec::new(),
+        }
+    }
+
+    /// Whether `name` opens or closes part of the table being read (not one nested in it).
+    fn table_part(&self, name: &str) -> bool {
+        self.keep_tables && matches!(name, "table" | "tr" | "td" | "th") && self.table.as_ref().is_none_or(|t| t.nested == 0 || name == "table")
+    }
+
+    fn open_table_part(&mut self, name: &str) {
+        self.break_para(false);
+        match (name, self.table.as_mut()) {
+            ("table", None) => self.table = Some(TableBuild { at: self.paras.len(), rows: Vec::new(), cell_from: None, nested: 0 }),
+            ("table", Some(t)) => t.nested += 1,
+            ("tr", Some(t)) => t.rows.push(Vec::new()),
+            (_, Some(t)) => {
+                if t.rows.is_empty() {
+                    t.rows.push(Vec::new());
+                }
+                t.cell_from = Some(self.paras.len());
+            }
+            _ => {}
+        }
+    }
+
+    fn close_table_part(&mut self, name: &str) {
+        self.break_para(false);
+        let Some(t) = self.table.as_mut() else { return };
+        match name {
+            "table" if t.nested > 0 => t.nested -= 1,
+            "table" => {
+                if let Some(from) = t.cell_from.take() {
+                    let paras: Vec<Paragraph> = self.paras.drain(from.min(self.paras.len())..).collect();
+                    if let Some(row) = t.rows.last_mut() {
+                        row.push(paras);
+                    }
+                }
+                if let Some(t) = self.table.take() {
+                    let at = t.at.min(self.paras.len());
+                    if let Some(table) = t.finish() {
+                        self.tables.push((at, table));
+                    }
+                }
+            }
+            "td" | "th" => {
+                if let Some(from) = t.cell_from.take() {
+                    let paras: Vec<Paragraph> = self.paras.drain(from.min(self.paras.len())..).collect();
+                    if let Some(row) = t.rows.last_mut() {
+                        row.push(paras);
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -257,6 +383,13 @@ impl Reader {
     }
 
     fn open(&mut self, name: &str, attrs: &str) {
+        if self.table_part(name) {
+            self.open_table_part(name);
+            if name == "th" && self.stack.len() < MAX_HTML_DEPTH {
+                self.stack.push(Open { name: name.to_owned(), fmt: Fmt { bold: Some(true), ..Fmt::default() } });
+            }
+            return;
+        }
         let block = is_block(name);
         if block {
             self.break_para(false);
@@ -321,6 +454,13 @@ impl Reader {
     }
 
     fn close(&mut self, name: &str) {
+        if self.table_part(name) {
+            self.close_table_part(name);
+            if let Some(i) = self.stack.iter().rposition(|o| o.name == name) {
+                self.stack.truncate(i);
+            }
+            return;
+        }
         if is_block(name) {
             self.break_para(false);
         }
@@ -352,6 +492,36 @@ impl Reader {
         while out.len() > 1 && out.last().is_some_and(|p| p.runs.iter().all(|r| r.text.is_empty())) {
             out.pop();
         }
+        out
+    }
+
+    /// The paragraphs with the tables read in their places.
+    fn finish_blocks(mut self) -> Vec<Block> {
+        // An unclosed table still counts.
+        if self.table.is_some() {
+            if let Some(t) = self.table.as_mut() {
+                t.nested = 0;
+            }
+            self.close_table_part("table");
+        }
+        let tables = std::mem::take(&mut self.tables);
+        let paras = if tables.is_empty() {
+            self.finish()
+        } else {
+            self.break_para(false);
+            self.paras
+        };
+        let mut out: Vec<Block> = Vec::with_capacity(paras.len() + tables.len());
+        let mut ts = tables.into_iter().peekable();
+        for (i, p) in paras.into_iter().enumerate() {
+            while ts.peek().is_some_and(|(at, _)| *at <= i) {
+                if let Some((_, t)) = ts.next() {
+                    out.push(Block::table(t));
+                }
+            }
+            out.push(Block::Paragraph(p));
+        }
+        out.extend(ts.map(|(_, t)| Block::table(t)));
         out
     }
 }
@@ -602,12 +772,22 @@ fn fragment(html: &str) -> &str {
 
 /// Paragraphs with their basic formatting from HTML another app put on the clipboard.
 pub fn from_html(html: &str) -> Vec<Paragraph> {
+    read(html, false).finish()
+}
+
+/// [`from_html`] with simple `<table>`s read as tables.
+pub fn from_html_blocks(html: &str) -> Vec<Block> {
+    read(html, true).finish_blocks()
+}
+
+fn read(html: &str, keep_tables: bool) -> Reader {
     let mut cut = html.len().min(MAX_HTML_BYTES);
     while !html.is_char_boundary(cut) {
         cut -= 1;
     }
     let src = fragment(html.get(..cut).unwrap_or(""));
     let mut r = Reader::new();
+    r.keep_tables = keep_tables;
     let mut rest = src;
     // Elements whose content isn't text.
     let mut skip: Option<String> = None;
@@ -669,7 +849,7 @@ pub fn from_html(html: &str) -> Vec<Paragraph> {
             }
         }
     }
-    r.finish()
+    r
 }
 
 #[cfg(test)]
@@ -719,18 +899,53 @@ mod tests {
     }
 
     #[test]
+    fn tables_read_and_write() {
+        let html = "<p>before</p><table><tr><th>Name</th><th>Qty</th></tr><tr><td>eggs <b>big</b></td><td><p>12</p><p>dozen</p></td></tr></table><p>after</p>";
+        let blocks = from_html_blocks(html);
+        assert_eq!(blocks.len(), 3, "{blocks:?}");
+        let t = blocks[1].as_table().unwrap();
+        assert_eq!((t.row_count(), t.col_count()), (2, 2));
+        assert_eq!(t.texts(), vec![vec!["Name", "Qty"], vec!["eggs big", "12 dozen"]]);
+        assert!(t.cell(0, 0).unwrap().paragraphs[0].runs[0].bold, "header cells are bold");
+        assert!(t.cell(1, 0).unwrap().paragraphs[0].runs.iter().any(|r| r.bold && r.text == "big"));
+        assert_eq!(blocks[2].text(), "after");
+        // Ragged rows, a nested table (as text), an unclosed table: never a panic.
+        let b = from_html_blocks("<table><tr><td>a</td></tr><tr><td>b</td><td><table><tr><td>x</td></tr></table></td></tr>");
+        let t = b.iter().find_map(Block::as_table).unwrap();
+        assert_eq!((t.row_count(), t.col_count()), (2, 2));
+        assert!(t.cell(1, 1).unwrap().text().contains('x'));
+        // Without tables: their cells are paragraphs, as before.
+        assert_eq!(texts(&from_html(html)).join("|"), "before|NameQty|eggs big|12|dozen|after");
+        // And written back out.
+        let out = blocks_to_html(&blocks);
+        assert!(out.contains("<table") && out.contains("<td style=\"width:72pt;vertical-align:top\"><p><strong>Name</strong></p></td>"), "{out}");
+        let again = from_html_blocks(&out);
+        assert_eq!(again.iter().find_map(Block::as_table).map(Table::texts), Some(t_texts(&blocks)));
+    }
+
+    fn t_texts(b: &[Block]) -> Vec<Vec<String>> {
+        b.iter().find_map(Block::as_table).map(Table::texts).unwrap_or_default()
+    }
+
+    #[test]
     fn hostile_html_never_panics() {
         let deep = "<b><i>".repeat(10_000) + "x";
         assert_eq!(texts(&from_html(&deep)), ["x"]);
         for junk in ["<", "<<<>>>", "&#xFFFFFFFFFF;", "&#99999999999999999999;", "<a href=", "<p", "</p></p></ul>", "<!--", "<b>é", "&", "<\u{e9}>"]
         {
             let _ = from_html(junk);
+            let _ = from_html_blocks(junk);
         }
         let many = "<p>x</p>".repeat(30_000);
         assert_eq!(from_html(&many).len(), MAX_HTML_PARAGRAPHS);
         let ul = "<ul><li>".repeat(200) + "x";
         let ps = from_html(&ul);
         assert!(ps.iter().all(|p| p.indent <= MAX_INDENT));
+        let tables = "<table><tr><td>".repeat(500) + "x" + &"</td></tr>".repeat(3) + &"<table><tr><td>y".repeat(100);
+        let _ = from_html_blocks(&tables);
+        let big = "<table>".to_owned() + &"<tr>".repeat(5000) + &"<td>x</td>".repeat(20_000);
+        let b = from_html_blocks(&big);
+        assert!(b.iter().filter_map(Block::as_table).all(|t| t.row_count() * t.col_count() <= notecraft_doc::table::MAX_TABLE_CELLS));
     }
 
     #[test]

@@ -45,10 +45,8 @@ fn templates(ui: &mut Ui, app: &mut NoteApp) {
 fn table(ui: &mut Ui, app: &mut NoteApp) {
     let b = Btn::new(Icon::Table, tl!("Table"))
         .enabled(app.session.current_page().is_some())
-        .help(tl!("Tables you make in NoteCraft are coming soon; tables in opened notebooks are kept."));
-    if widgets::small(ui, app, b) {
-        app.set_status(tl!("Tables are coming in a later version of NoteCraft."), false);
-    }
+        .help(tl!("Insert a table: pick its size, or choose Insert Table… for a bigger one."));
+    widgets::small_menu(ui, app, b, crate::ribbon::table::picker);
 }
 
 fn files(ui: &mut Ui, app: &mut NoteApp) {

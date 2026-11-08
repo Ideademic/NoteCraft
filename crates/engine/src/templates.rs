@@ -83,7 +83,7 @@ fn hint(text: &str) -> Paragraph {
 }
 
 fn outline(at: Point, width: f32, paragraphs: Vec<Paragraph>) -> PageElement {
-    PageElement::new(ElementKind::Outline(Outline { pos: at, width, paragraphs }))
+    PageElement::new(ElementKind::Outline(Outline { pos: at, width, blocks: paragraphs.into_iter().map(Into::into).collect() }))
 }
 
 fn page(title: &str, color: Option<Color>, rule: RuleLines, elements: Vec<PageElement>) -> Page {

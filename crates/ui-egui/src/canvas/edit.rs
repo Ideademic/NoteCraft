@@ -14,10 +14,14 @@
 //! (or back): undo takes back about a word or a phrase at a time, not a whole container.
 //!
 //! A container left empty is deleted when the caret leaves it, as in OneNote.
+//!
+//! In a table the caret is in one cell's paragraphs (`TextCaret::cell`, the commands' `cell`):
+//! Tab and Shift+Tab move between cells and the arrows cross them ([`super::table`]).
 
 use egui::text::CCursor;
 use egui::{Event, Key, Modifiers, Ui};
-use notecraft_doc::{Color, Guid, Run};
+use notecraft_doc::{Color, Guid};
+use notecraft_engine::text::{Flow, Frame};
 use notecraft_engine::{CmdError, CmdOutput, Session, TextPos, ids, text};
 use serde_json::{Value, json};
 
@@ -94,7 +98,7 @@ pub fn leave(state: &mut CanvasState, session: &mut Session, keep: Option<Guid>)
     let empty = page
         .and_then(|p| session.notebooks.iter().find_map(|n| n.find_page(p)))
         .and_then(|(_, p)| p.outline(c.outline))
-        .is_some_and(|o| o.is_empty() && o.paragraphs.iter().all(|p| p.tag.is_none() && p.list.is_none()));
+        .is_some_and(|o| o.is_empty() && o.paragraphs().all(|p| p.tag.is_none() && p.list.is_none()));
     if empty {
         run(state, session, ids::OUTLINE_DELETE, json!({"id": c.outline, "page": page, "mergeKey": c.merge_key}));
     }
@@ -105,10 +109,7 @@ pub fn leave(state: &mut CanvasState, session: &mut Session, keep: Option<Guid>)
 pub fn keep_caret_valid(state: &mut CanvasState, session: &Session) {
     let Some(c) = state.caret.as_mut() else { return };
     match session.current_page().and_then(|p| p.outline(c.outline)) {
-        Some(o) => {
-            c.anchor = text::clamp_ref(o, c.anchor);
-            c.head = text::clamp_ref(o, c.head);
-        }
+        Some(o) => super::table::normalize_caret(c, o),
         None => {
             state.caret = None;
             state.editing = None;
@@ -122,19 +123,36 @@ pub fn caret_visible(state: &mut CanvasState, v: &View, lay: &PageLayout, sheet:
         return;
     }
     let Some(c) = &state.caret else { return };
-    if let Some(r) = lay.outline(c.outline).and_then(|o| o.caret_rect(v, c.head)) {
+    if let Some(r) = lay.outline(c.outline).and_then(|o| o.frame_caret_rect(v, c.frame(), c.head)) {
         view::reveal(state, sheet, r);
     }
 }
 
-/// The selected text, paragraphs separated by newlines.
+/// The flow the caret is in.
+pub(crate) fn flow<'a>(session: &'a Session, c: &TextCaret) -> Option<&'a dyn Flow> {
+    text::flow(session.current_page()?.outline(c.outline)?, c.frame())
+}
+
+/// The selected text, paragraphs separated by newlines (a table's text as tab-separated rows).
 fn selected_text(state: &CanvasState, session: &Session) -> Option<String> {
+    if let Some(t) = super::table::selected_cells_text(state, session) {
+        return Some(t);
+    }
     let c = state.caret.as_ref().filter(|c| !c.is_collapsed())?;
-    let o = session.current_page()?.outline(c.outline)?;
+    let o = flow(session, c)?;
     let (a, b) = c.range();
     let mut out = String::new();
-    for i in a.para..=b.para.min(o.paragraphs.len().saturating_sub(1)) {
-        let t: Vec<char> = o.paragraphs.get(i).map(|p| p.text().chars().collect()).unwrap_or_default();
+    for i in a.para..=b.para.min(o.count().saturating_sub(1)) {
+        let t: Vec<char> = match (o.para(i), c.cell) {
+            (Some(p), _) => p.text().chars().collect(),
+            (None, None) => session
+                .current_page()
+                .and_then(|p| p.outline(c.outline))
+                .and_then(|ol| ol.table(i))
+                .map(|t| t.text().chars().collect())
+                .unwrap_or_default(),
+            (None, Some(_)) => Vec::new(),
+        };
         let s = if i == a.para { a.char.min(t.len()) } else { 0 };
         let e = if i == b.para { b.char.min(t.len()) } else { t.len() };
         if i > a.para {
@@ -145,10 +163,19 @@ fn selected_text(state: &CanvasState, session: &Session) -> Option<String> {
     Some(out)
 }
 
-/// The caret's range as command params (`at` when collapsed).
-fn range_params(state: &CanvasState, c: &TextCaret) -> Value {
+/// The caret's range as command params (in its cell, and the selected cells).
+pub(crate) fn range_params(state: &CanvasState, c: &TextCaret) -> Value {
     let (a, b) = c.range();
-    json!({"outline": c.outline, "start": a.to_json(), "end": b.to_json(), "page": state.page})
+    let mut v = json!({"outline": c.outline, "start": a.to_json(), "end": b.to_json(), "page": state.page});
+    if let Value::Object(m) = &mut v {
+        if let Some(cell) = c.cell {
+            m.insert("cell".into(), cell.to_json());
+        }
+        if let Some(cells) = c.cells {
+            m.insert("cells".into(), cells.to_json());
+        }
+    }
+    v
 }
 
 /// Creates the waiting container (typing started) and moves the caret into it.
@@ -166,11 +193,11 @@ fn ensure_outline(state: &mut CanvasState, session: &mut Session) -> Option<Text
 }
 
 /// The new caret a text command returned.
-fn caret_from(out: &CmdOutput) -> Option<TextPos> {
+pub(crate) fn caret_from(out: &CmdOutput) -> Option<TextPos> {
     out.value.get("caret").and_then(TextPos::from_json)
 }
 
-fn set_head(state: &mut CanvasState, pos: TextPos, extend: bool) {
+pub(crate) fn set_head(state: &mut CanvasState, pos: TextPos, extend: bool) {
     if let Some(c) = state.caret.as_mut() {
         c.head = pos;
         if !extend {
@@ -186,7 +213,13 @@ pub fn insert(state: &mut CanvasState, session: &mut Session, t: &str, now: f64)
     if t.is_empty() {
         return;
     }
-    let Some(c) = ensure_outline(state, session) else { return };
+    let Some(mut c) = ensure_outline(state, session) else { return };
+    if c.cells.take().is_some()
+        && let Some(cc) = state.caret.as_mut()
+    {
+        // Typing over selected cells types in the caret's cell.
+        cc.cells = None;
+    }
     let key = burst_key(state, &c.merge_key, 1, &t, now);
     let mut params = range_params(state, &c);
     if let Value::Object(m) = &mut params {
@@ -208,6 +241,9 @@ pub fn insert(state: &mut CanvasState, session: &mut Session, t: &str, now: f64)
 /// Deletes the selection, or a character/word back (`backward`) or forward.
 fn delete(state: &mut CanvasState, session: &mut Session, backward: bool, word: bool, now: f64) {
     let Some(c) = state.caret.clone() else { return };
+    if super::table::delete_cells(state, session) || super::table::delete_at_edge(state, session, backward) {
+        return;
+    }
     let key = burst_key(state, &c.merge_key, 2, "", now);
     let mut params = if c.is_collapsed() {
         json!({"outline": c.outline, "at": c.head.to_json(), "backward": backward, "unit": if word { "word" } else { "char" }, "page": state.page})
@@ -216,6 +252,9 @@ fn delete(state: &mut CanvasState, session: &mut Session, backward: bool, word: 
     };
     if let Value::Object(m) = &mut params {
         m.insert("mergeKey".into(), Value::String(key));
+        if let Some(cell) = c.cell {
+            m.insert("cell".into(), cell.to_json());
+        }
     }
     if let Some(out) = run(state, session, ids::TEXT_DELETE, params)
         && let Some(pos) = caret_from(&out)
@@ -224,7 +263,7 @@ fn delete(state: &mut CanvasState, session: &mut Session, backward: bool, word: 
     }
 }
 
-fn split(state: &mut CanvasState, session: &mut Session, now: f64) {
+pub(crate) fn split(state: &mut CanvasState, session: &mut Session, now: f64) {
     let Some(c) = ensure_outline(state, session) else { return };
     let key = burst_key(state, &c.merge_key, 1, "\n", now);
     let mut params = range_params(state, &c);
@@ -338,12 +377,7 @@ fn common<T: PartialEq>(mut it: impl Iterator<Item = T>) -> Option<T> {
 pub fn current_format(state: &CanvasState, session: &Session) -> Option<CurrentFormat> {
     let p = &state.pending_style;
     let mut f = if let Some(c) = &state.caret {
-        let o = session.current_page()?.outline(c.outline)?;
-        let (a, b) = c.range();
-        let runs: Vec<Run> =
-            if a == b { o.paragraphs.get(a.para).map(|pg| text::format_at(pg, a.char)).into_iter().collect() } else { text::runs_in(o, a, b) };
-        let last = b.para.min(o.paragraphs.len().saturating_sub(1));
-        let paras = o.paragraphs.get(a.para.min(last)..=last).unwrap_or_default();
+        let (runs, paras) = super::table::selection_formats(c, session)?;
         CurrentFormat {
             bold: common(runs.iter().map(|r| r.bold)),
             italic: common(runs.iter().map(|r| r.italic)),
@@ -355,7 +389,7 @@ pub fn current_format(state: &CanvasState, session: &Session) -> Option<CurrentF
             size: common(runs.iter().map(|r| r.size)),
             style: common(paras.iter().map(|pg| pg.style)),
             list: common(paras.iter().map(|pg| pg.list)),
-            list_style: common(paras.iter().map(notecraft_doc::Paragraph::marker_style)),
+            list_style: common(paras.iter().map(|p| p.marker_style())),
             align: common(paras.iter().map(|pg| pg.align)),
             tag: common(paras.iter().map(|pg| pg.tag)),
         }
@@ -394,28 +428,41 @@ pub fn current_format(state: &CanvasState, session: &Session) -> Option<CurrentF
 
 // --- Caret movement ----------------------------------------------------------------------
 
-fn para_len(session: &Session, outline: Guid, para: usize) -> usize {
-    session.current_page().and_then(|p| p.outline(outline)).and_then(|o| o.paragraphs.get(para)).map_or(0, text::para_len)
+/// Where the caret's flow is: the session, the container and the cell.
+#[derive(Clone, Copy)]
+struct At<'a> {
+    session: &'a Session,
+    outline: Guid,
+    frame: Frame,
 }
 
-fn para_count(session: &Session, outline: Guid) -> usize {
-    session.current_page().and_then(|p| p.outline(outline)).map_or(0, |o| o.paragraphs.len())
+impl At<'_> {
+    fn of<'a>(session: &'a Session, c: &TextCaret) -> At<'a> {
+        At { session, outline: c.outline, frame: c.frame() }
+    }
+
+    fn flow(&self) -> Option<&dyn Flow> {
+        text::flow(self.session.current_page()?.outline(self.outline)?, self.frame)
+    }
 }
 
-fn para_chars(session: &Session, outline: Guid, para: usize) -> Vec<char> {
-    session
-        .current_page()
-        .and_then(|p| p.outline(outline))
-        .and_then(|o| o.paragraphs.get(para))
-        .map(|p| p.text().chars().collect())
-        .unwrap_or_default()
+fn para_len(at: At<'_>, para: usize) -> usize {
+    at.flow().map_or(0, |f| text::len_at(f, para))
 }
 
-fn step_char(session: &Session, outline: Guid, pos: TextPos, forward: bool) -> TextPos {
+fn para_count(at: At<'_>) -> usize {
+    at.flow().map_or(0, |f| f.count())
+}
+
+fn para_chars(at: At<'_>, para: usize) -> Vec<char> {
+    at.flow().and_then(|f| f.para(para)).map(|p| p.text().chars().collect()).unwrap_or_default()
+}
+
+fn step_char(at: At<'_>, pos: TextPos, forward: bool) -> TextPos {
     if forward {
-        if pos.char < para_len(session, outline, pos.para) {
+        if pos.char < para_len(at, pos.para) {
             TextPos::new(pos.para, pos.char + 1)
-        } else if pos.para + 1 < para_count(session, outline) {
+        } else if pos.para + 1 < para_count(at) {
             TextPos::new(pos.para + 1, 0)
         } else {
             pos
@@ -423,19 +470,19 @@ fn step_char(session: &Session, outline: Guid, pos: TextPos, forward: bool) -> T
     } else if pos.char > 0 {
         TextPos::new(pos.para, pos.char - 1)
     } else if pos.para > 0 {
-        TextPos::new(pos.para - 1, para_len(session, outline, pos.para - 1))
+        TextPos::new(pos.para - 1, para_len(at, pos.para - 1))
     } else {
         pos
     }
 }
 
-fn step_word(session: &Session, outline: Guid, pos: TextPos, forward: bool) -> TextPos {
-    let chars = para_chars(session, outline, pos.para);
+fn step_word(at: At<'_>, pos: TextPos, forward: bool) -> TextPos {
+    let chars = para_chars(at, pos.para);
     let word = |c: Option<&char>| c.is_some_and(|c| c.is_alphanumeric() || *c == '_');
     let mut i = pos.char.min(chars.len());
     if forward {
         if i >= chars.len() {
-            return step_char(session, outline, pos, true);
+            return step_char(at, pos, true);
         }
         while i < chars.len() && word(chars.get(i)) {
             i += 1;
@@ -445,7 +492,7 @@ fn step_word(session: &Session, outline: Guid, pos: TextPos, forward: bool) -> T
         }
     } else {
         if i == 0 {
-            return step_char(session, outline, pos, false);
+            return step_char(at, pos, false);
         }
         while i > 0 && !word(chars.get(i - 1)) {
             i -= 1;
@@ -472,7 +519,7 @@ fn row_of(g: &egui::Galley, ch: usize) -> (usize, usize) {
 }
 
 /// The caret one line up or down at `goal_x` (pixels from the container's left).
-fn vertical(o: &OutlineLayout, pos: TextPos, goal_x: f32, down: bool) -> TextPos {
+pub(crate) fn vertical(o: &OutlineLayout, pos: TextPos, goal_x: f32, down: bool) -> TextPos {
     let Some(p) = o.paras.get(pos.para) else { return pos };
     let (row, _) = row_of(&p.galley, pos.char);
     let target = if down {
@@ -505,7 +552,7 @@ fn vertical(o: &OutlineLayout, pos: TextPos, goal_x: f32, down: bool) -> TextPos
     TextPos::new(para, q.chars)
 }
 
-fn caret_x(o: &OutlineLayout, pos: TextPos) -> f32 {
+pub(crate) fn caret_x(o: &OutlineLayout, pos: TextPos) -> f32 {
     o.paras.get(pos.para).map_or(0.0, |p| p.galley_x() + p.galley.pos_from_cursor(CCursor::new(pos.char)).left())
 }
 
@@ -658,7 +705,7 @@ fn type_keys(ui: &mut Ui, state: &mut CanvasState, session: &mut Session, servic
     // Where the IME's candidate window goes.
     if let Some(c) = &state.caret
         && let Some(o) = lay.outline(c.outline)
-        && let Some(cr) = o.caret_rect(v, c.head)
+        && let Some(cr) = o.frame_caret_rect(v, c.frame(), c.head)
     {
         let generation = {
             use std::hash::{Hash, Hasher};
@@ -672,7 +719,10 @@ fn type_keys(ui: &mut Ui, state: &mut CanvasState, session: &mut Session, servic
 }
 
 #[allow(clippy::too_many_arguments)]
-fn key_press(ui: &Ui, state: &mut CanvasState, session: &mut Session, lay: &PageLayout, _v: &View, key: Key, m: Modifiers, t_now: f64) {
+fn key_press(ui: &Ui, state: &mut CanvasState, session: &mut Session, lay: &PageLayout, v: &View, key: Key, m: Modifiers, t_now: f64) {
+    if super::table::key(state, session, lay, v, key, m) {
+        return;
+    }
     if let Some(params) = tag_shortcut(key, m) {
         let _ = format(state, session, ids::FORMAT_TAG, params);
         return;
@@ -684,7 +734,7 @@ fn key_press(ui: &Ui, state: &mut CanvasState, session: &mut Session, lay: &Page
                     state,
                     session,
                     cmd,
-                    json!({"outline": c.outline, "at": c.head.to_json(), "page": state.page, "utcOffsetMinutes": state.utc_offset_minutes}),
+                    json!({"outline": c.outline, "cell": c.cell.map(|x| x.to_json()), "at": c.head.to_json(), "page": state.page, "utcOffsetMinutes": state.utc_offset_minutes}),
                 )
                 && let Some(pos) = caret_from(&out)
             {
@@ -707,11 +757,19 @@ fn key_press(ui: &Ui, state: &mut CanvasState, session: &mut Session, lay: &Page
             return;
         }
         Key::A if cmd => {
-            if let Some(c) = state.caret.as_mut() {
-                let n = para_count(session, c.outline);
-                let last = n.saturating_sub(1);
-                c.anchor = TextPos::new(0, 0);
-                c.head = TextPos::new(last, para_len(session, c.outline, last));
+            if let Some(cc) = state.caret.clone() {
+                let at = At::of(session, &cc);
+                let last = para_count(at).saturating_sub(1);
+                let all = (TextPos::new(0, 0), TextPos::new(last, para_len(at, last)));
+                if let Some(c) = state.caret.as_mut() {
+                    if cc.cell.is_some() && cc.range() == all {
+                        // Again in a cell: the whole table.
+                        super::table::select_whole_table(c, session);
+                    } else {
+                        c.anchor = all.0;
+                        c.head = all.1;
+                    }
+                }
             }
             return;
         }
@@ -735,7 +793,7 @@ fn key_press(ui: &Ui, state: &mut CanvasState, session: &mut Session, lay: &Page
             return;
         }
         Key::Tab => {
-            if state.caret.is_some() {
+            if state.caret.is_some() && !super::table::tab_makes_table(state, session, m) {
                 let id = if m.shift { ids::FORMAT_OUTDENT } else { ids::FORMAT_INDENT };
                 let _ = format(state, session, id, json!({}));
             }
@@ -754,23 +812,24 @@ fn key_press(ui: &Ui, state: &mut CanvasState, session: &mut Session, lay: &Page
     let Some(c) = state.caret.clone() else { return };
     let word = m.alt || cmd;
     let extend = m.shift;
-    let o = lay.outline(c.outline);
+    let o = lay.outline(c.outline).and_then(|o| o.frame(c.frame()));
     let (a, b) = c.range();
+    let at = At::of(session, &c);
     let new = match key {
         Key::ArrowLeft if !extend && !c.is_collapsed() => a,
         Key::ArrowRight if !extend && !c.is_collapsed() => b,
         Key::ArrowLeft => {
             if word {
-                step_word(session, c.outline, c.head, false)
+                step_word(at, c.head, false)
             } else {
-                step_char(session, c.outline, c.head, false)
+                step_char(at, c.head, false)
             }
         }
         Key::ArrowRight => {
             if word {
-                step_word(session, c.outline, c.head, true)
+                step_word(at, c.head, true)
             } else {
-                step_char(session, c.outline, c.head, true)
+                step_char(at, c.head, true)
             }
         }
         Key::ArrowUp | Key::ArrowDown => {
@@ -780,13 +839,17 @@ fn key_press(ui: &Ui, state: &mut CanvasState, session: &mut Session, lay: &Page
             set_head(state, pos, extend);
             if let Some(cc) = state.caret.as_mut() {
                 cc.goal_x = Some(goal);
+                cc.cells = None;
+            }
+            if !extend {
+                super::table::enter_table(state, session, key == Key::ArrowDown);
             }
             return;
         }
         Key::Home if cmd => TextPos::new(0, 0),
         Key::End if cmd => {
-            let last = para_count(session, c.outline).saturating_sub(1);
-            TextPos::new(last, para_len(session, c.outline, last))
+            let last = para_count(at).saturating_sub(1);
+            TextPos::new(last, para_len(at, last))
         }
         Key::Home => o.map_or(TextPos::new(c.head.para, 0), |o| home_end(o, c.head, false)),
         Key::End => o.map_or(c.head, |o| home_end(o, c.head, true)),
@@ -797,6 +860,11 @@ fn key_press(ui: &Ui, state: &mut CanvasState, session: &mut Session, lay: &Page
     set_head(state, new, extend);
     if let Some(cc) = state.caret.as_mut() {
         cc.goal_x = None;
+        cc.cells = None;
+    }
+    // Onto a table's block: into its first or last cell.
+    if !extend {
+        super::table::enter_table(state, session, matches!(key, Key::ArrowRight | Key::ArrowDown | Key::End));
     }
 }
 
@@ -804,13 +872,17 @@ fn key_press(ui: &Ui, state: &mut CanvasState, session: &mut Session, lay: &Page
 /// into view (Tags Summary, find). Waits while the page isn't laid out yet.
 pub fn go_to_paragraph(ui: &Ui, state: &mut CanvasState, session: &mut Session, v: &View, lay: &PageLayout, sheet: egui::Rect, id: egui::Id) {
     let Some((outline, para)) = state.goto else { return };
-    let Some(o) = lay.outline(outline) else {
-        if session.current_page().and_then(|p| p.outline(outline)).is_none() {
+    let cell = state.goto_cell;
+    let frame = cell.map_or(Frame::Top, Frame::Cell);
+    let Some(o) = lay.outline(outline).and_then(|o| o.frame(frame)) else {
+        if session.current_page().and_then(|p| p.outline(outline)).and_then(|o| text::flow(o, frame)).is_none() {
             state.goto = None;
+            state.goto_cell = None;
         }
         return;
     };
     state.goto = None;
+    state.goto_cell = None;
     if state.caret.as_ref().is_none_or(|c| c.outline != outline) {
         leave(state, session, Some(outline));
     }
@@ -819,7 +891,7 @@ pub fn go_to_paragraph(ui: &Ui, state: &mut CanvasState, session: &mut Session, 
     session.break_undo_merge();
     state.selection.clear();
     state.pending = None;
-    state.caret = Some(TextCaret::at(outline, pos));
+    state.caret = Some(TextCaret { cell, ..TextCaret::at(outline, pos) });
     state.editing = Some(outline);
     if let Some(r) = o.caret_rect(v, pos) {
         view::reveal(state, sheet, r);

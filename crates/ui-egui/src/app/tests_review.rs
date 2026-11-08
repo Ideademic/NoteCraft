@@ -76,7 +76,7 @@ fn a_misspelled_word_is_underlined_and_the_menu_fixes_it() {
     let mut h = harness(app);
     h.run_steps(3);
     wait_for_marks(&mut h);
-    assert_eq!(h.state().canvas.review.marks, vec![(o, 0, 7, 10)]);
+    assert_eq!(h.state().canvas.review.marks, vec![(o, notecraft_engine::text::Frame::Top, 0, 7, 10)]);
     let p = spot(&h, o, 0, 8);
     click_at(&mut h, p, PointerButton::Secondary, Modifiers::NONE);
     let _ = h.get_by_label("Possible spelling mistake");
@@ -162,7 +162,7 @@ fn ctrl_k_links_text_and_ctrl_click_opens_it() {
     h.get_by_label("OK").click();
     h.run_steps(3);
     assert!(h.state().ui.review.link.is_none(), "{:?}", h.state().ui.review.link);
-    let runs = h.state().session.current_page().unwrap().outline(o).unwrap().paragraphs[0].runs.clone();
+    let runs = h.state().session.current_page().unwrap().outline(o).unwrap().para(0).unwrap().runs.clone();
     let linked: Vec<(&str, Option<&str>)> = runs.iter().map(|r| (r.text.as_str(), r.link.as_deref())).collect();
     assert!(linked.contains(&("the docs", Some("https://example.com/docs"))), "{linked:?}");
     assert_eq!(text_of(h.state(), o), "read the docs today", "typing in the dialog stays out of the note");
@@ -334,5 +334,5 @@ fn the_review_tab_counts_words_and_sets_the_language() {
     h.run_steps(3);
     h.get_by_label("English (United Kingdom)").click();
     h.run_steps(3);
-    assert_eq!(h.state().session.current_page().unwrap().outline(o).unwrap().paragraphs[0].lang.as_deref(), Some("en-GB"));
+    assert_eq!(h.state().session.current_page().unwrap().outline(o).unwrap().para(0).unwrap().lang.as_deref(), Some("en-GB"));
 }

@@ -6,16 +6,19 @@
 use egui::{Color32, Painter, Rect, Stroke, StrokeKind};
 use notecraft_doc::Guid;
 use notecraft_engine::TextPos;
+use notecraft_engine::text::{CellRef, Frame};
 
 use super::CanvasState;
 use super::layout::PageLayout;
 use super::view::{self, View};
 use crate::theme::Tokens;
 
-/// One match: the container (`None` for the title), the paragraph and the characters.
+/// One match: the container (`None` for the title), its table cell (if in one), the paragraph
+/// and the characters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Match {
     pub outline: Option<Guid>,
+    pub cell: Option<CellRef>,
     pub para: usize,
     pub start: usize,
     pub end: usize,
@@ -29,12 +32,17 @@ impl Match {
             Some(serde_json::Value::String(s)) => Some(Guid::parse(s)?),
             _ => None,
         };
-        Some(Match { outline, para: n("para")?, start: n("start")?, end: n("end")? })
+        let cell = v.get("cell").and_then(CellRef::from_json);
+        Some(Match { outline, cell, para: n("para")?, start: n("start")?, end: n("end")? })
     }
 
     /// As `text.replace`'s `at`.
     pub fn to_json(self) -> serde_json::Value {
-        serde_json::json!({"outline": self.outline, "para": self.para, "start": self.start, "end": self.end})
+        serde_json::json!({"outline": self.outline, "cell": self.cell.map(CellRef::to_json), "para": self.para, "start": self.start, "end": self.end})
+    }
+
+    fn frame(self) -> Frame {
+        self.cell.map_or(Frame::Top, Frame::Cell)
     }
 }
 
@@ -54,7 +62,7 @@ pub fn paint(painter: &Painter, state: &CanvasState, tokens: &Tokens, v: &View, 
     let (all, current) = colors(tokens);
     for (i, m) in h.matches.iter().enumerate() {
         let Some(id) = m.outline else { continue };
-        let Some(o) = lay.outline(id) else { continue };
+        let Some(o) = lay.outline(id).and_then(|o| o.frame(m.frame())) else { continue };
         let is_current = h.current == Some(i);
         let range = (TextPos::new(m.para, m.start), TextPos::new(m.para, m.end));
         super::text::paint_selection(painter, o, v, range, if is_current { current } else { all });
@@ -88,7 +96,7 @@ pub fn reveal_current(state: &mut CanvasState, v: &View, lay: &PageLayout, sheet
     }
     let Some(m) = h.current.and_then(|i| h.matches.get(i)).copied() else { return };
     let r = match m.outline {
-        Some(id) => lay.outline(id).and_then(|o| rect_of(o, v, m)),
+        Some(id) => lay.outline(id).and_then(|o| o.frame(m.frame())).and_then(|o| rect_of(o, v, m)),
         // The title: the top of the page.
         None => Some(Rect::from_min_size(v.pt(0.0, 0.0), egui::vec2(1.0, 1.0))),
     };

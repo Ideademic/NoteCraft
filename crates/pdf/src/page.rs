@@ -194,16 +194,55 @@ pub fn draw(s: &mut Surface, fs: &mut FontSet, images: &mut Images, lay: &PageLa
         if !visible(Rect::new(o.rect.x - 40.0, o.rect.y, o.rect.w + 40.0, o.rect.h), clip) {
             continue;
         }
-        for p in &o.paras {
-            if p.top > clip.y + clip.h || p.top + p.height < clip.y {
-                continue;
+        paras(s, fs, &o.paras, clip, links);
+        for t in &o.tables {
+            if visible(t.rect, clip) {
+                table(s, fs, t, ink, clip, links);
             }
-            marker(s, fs, p, clip, links);
-            tag(s, fs, p, clip, links);
-            text::draw_block(s, fs, &p.block, p.x + p.align_dx, p.top, clip, links);
         }
     }
     ink_layer(s, page, ink, clip, false);
+}
+
+fn paras(s: &mut Surface, fs: &mut FontSet, ps: &[text::ParaLay], clip: Rect, links: &mut Vec<LinkArea>) {
+    for p in ps {
+        if p.top > clip.y + clip.h || p.top + p.height < clip.y {
+            continue;
+        }
+        marker(s, fs, p, clip, links);
+        tag(s, fs, p, clip, links);
+        text::draw_block(s, fs, &p.block, p.x + p.align_dx, p.top, clip, links);
+    }
+}
+
+/// A table: cell shading, the cells' text, then the grid (hidden borders aren't printed, as in
+/// OneNote).
+fn table(s: &mut Surface, fs: &mut FontSet, t: &text::TableLay, ink: &Ink, clip: Rect, links: &mut Vec<LinkArea>) {
+    for c in &t.cells {
+        if let Some(sh) = c.shading
+            && visible(c.rect, clip)
+        {
+            // On a dark page, darkened towards the paper so the light text stays readable.
+            let sh = if ink.dark { mix(ink.paper, sh, 0.35) } else { sh };
+            draw::fill_rect(s, c.rect.x, c.rect.y, c.rect.w, c.rect.h, sh);
+        }
+    }
+    for c in &t.cells {
+        if visible(c.rect, clip) {
+            paras(s, fs, &c.paras, clip, links);
+        }
+    }
+    if !t.borders {
+        return;
+    }
+    let grey = mix(ink.paper, ink.text, 0.45);
+    let (Some(&x0), Some(&x1), Some(&y0), Some(&y1)) = (t.col_x.first(), t.col_x.last(), t.row_y.first(), t.row_y.last()) else { return };
+    for &y in &t.row_y {
+        draw::line(s, (x0, y), (x1, y), 0.75, grey);
+    }
+    for &x in &t.col_x {
+        draw::line(s, (x, y0), (x, y1), 0.75, grey);
+    }
 }
 
 fn rule_lines(s: &mut Surface, page: &Page, ink: &Ink, clip: Rect) {

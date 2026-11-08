@@ -2,21 +2,23 @@
 //!
 //! Misspellings are named by their note container, paragraph and character range
 //! (`{"outline", "para", "start", "end", "word", "lang"}`; `start`/`end` are characters in the
-//! paragraph, as the selection model's `char`). See [`crate::proof`] for how paragraphs are
-//! checked and cached.
+//! paragraph, as the selection model's `char`). A misspelling in a table cell also names the
+//! `cell` (`{"block", "row", "col"}`), and the commands that take one accept it, as the text
+//! commands do ([`super::text`]). See [`crate::proof`] for how paragraphs are checked and
+//! cached.
 
 use notecraft_doc::page::clean_lang;
 use notecraft_doc::{ElementKind, Guid, Outline, Page, Paragraph, Run};
 use serde_json::{Value, json};
 
-use super::text::{outline_id, range, with_outline};
+use super::text::{frame_param, outline_id, range, with_frame, with_outline};
 use super::{has_page, target_page};
 use crate::ids::{
     PROOF_ADD_TO_DICTIONARY, PROOF_APPLY, PROOF_CHANGE_ALL, PROOF_CHECK, PROOF_DICTIONARY, PROOF_IGNORE, PROOF_IGNORE_ALL, PROOF_LANGUAGES,
     PROOF_REMOVE_FROM_DICTIONARY, PROOF_SET_DEFAULT_LANGUAGE, PROOF_SET_LANGUAGE, PROOF_SUGGESTIONS, REVIEW_WORD_COUNT,
 };
 use crate::proof::{self, Misspelling, ProofState};
-use crate::text::{self, TextPos};
+use crate::text::{self, Flow, Frame, TextPos};
 use crate::{CmdError, CmdOutput, CmdResult, CommandSpec, Session, p};
 
 /// Most misspellings `proof.check` lists by default, and at most.
@@ -68,8 +70,12 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
-fn issue_json(outline: Guid, para: usize, m: &Misspelling) -> Value {
-    json!({"outline": outline, "para": para, "start": m.start, "end": m.end, "word": m.word, "lang": m.lang})
+fn issue_json(outline: Guid, frame: Frame, para: usize, m: &Misspelling) -> Value {
+    let mut v = json!({"outline": outline, "para": para, "start": m.start, "end": m.end, "word": m.word, "lang": m.lang});
+    if let (Some(c), Value::Object(map)) = (frame.cell(), &mut v) {
+        map.insert("cell".into(), c.to_json());
+    }
+    v
 }
 
 fn outlines(page: &Page) -> impl Iterator<Item = (Guid, &Outline)> {
@@ -80,15 +86,15 @@ fn outlines(page: &Page) -> impl Iterator<Item = (Guid, &Outline)> {
 }
 
 /// Every misspelling on `page` (of one container when `only` names it), in reading order.
-fn page_issues(state: &ProofState, page: &Page, only: Option<Guid>, limit: usize) -> (Vec<(Guid, usize, Misspelling)>, bool) {
+fn page_issues(state: &ProofState, page: &Page, only: Option<Guid>, limit: usize) -> (Vec<(Guid, Frame, usize, Misspelling)>, bool) {
     let mut out = Vec::new();
     for (id, o) in outlines(page).filter(|(id, _)| only.is_none_or(|w| w == *id)) {
-        for (i, para) in o.paragraphs.iter().enumerate() {
+        for (frame, i, para) in text::all_paragraphs(o) {
             for m in proof::issues(state, para) {
                 if out.len() >= limit {
                     return (out, true);
                 }
-                out.push((id, i, m));
+                out.push((id, frame, i, m));
             }
         }
     }
@@ -101,13 +107,13 @@ fn check(s: &mut Session, params: &Value) -> CmdResult {
     let state = s.proof.clone();
     let page = target_page(s, params)?;
     let (found, more) = page_issues(&state, page, only, limit);
-    let list: Vec<Value> = found.iter().map(|(o, i, m)| issue_json(*o, *i, m)).collect();
+    let list: Vec<Value> = found.iter().map(|(o, f, i, m)| issue_json(*o, *f, *i, m)).collect();
     Ok(CmdOutput::query(json!({"issues": list, "more": more})))
 }
 
 /// The misspelling covering `at` in paragraph `para` of `o`.
-fn issue_at(state: &ProofState, o: &Outline, at: TextPos) -> Option<Misspelling> {
-    let para = o.paragraphs.get(at.para)?;
+fn issue_at(state: &ProofState, o: &dyn Flow, at: TextPos) -> Option<Misspelling> {
+    let para = o.para(at.para)?;
     proof::issues(state, para).into_iter().find(|m| m.start <= at.char && at.char <= m.end)
 }
 
@@ -117,10 +123,12 @@ fn suggestions(s: &mut Session, params: &Value) -> CmdResult {
     let state = s.proof.clone();
     let page = target_page(s, params)?;
     let o = page.outline(id).ok_or_else(|| CmdError::Params(format!("no outline {id}")))?;
+    let frame = frame_param(params)?;
+    let o = text::flow(o, frame).ok_or_else(|| CmdError::Params("no such table cell".into()))?;
     let at = params.get("at").and_then(TextPos::from_json).or_else(|| range(params, o).map(|(a, _)| a));
     let at = at.ok_or_else(|| CmdError::Params("`at` must be {\"para\", \"char\"}".into()))?;
     let Some(m) = issue_at(&state, o, text::clamp_ref(o, at)) else { return Ok(CmdOutput::query(Value::Null)) };
-    let mut v = issue_json(id, at.para, &m);
+    let mut v = issue_json(id, frame, at.para, &m);
     if let Value::Object(map) = &mut v {
         map.insert("suggestions".into(), json!(proof::suggestions(&m.word, &m.lang, max)));
     }
@@ -155,8 +163,8 @@ fn clean_replacement(t: &str) -> Result<String, CmdError> {
 
 /// Replaces characters `a..b` of paragraph `para` with `with`, in the formatting of the first
 /// replaced character. Returns the caret after it.
-fn replace(o: &mut Outline, para: usize, a: usize, b: usize, with: &str) -> Option<TextPos> {
-    let p = o.paragraphs.get(para)?;
+fn replace(o: &mut dyn Flow, para: usize, a: usize, b: usize, with: &str) -> Option<TextPos> {
+    let p = o.para(para)?;
     let len = text::para_len(p);
     if a >= b || b > len {
         return None;
@@ -172,8 +180,8 @@ fn apply(s: &mut Session, params: &Value) -> CmdResult {
     let b = p::index(params, "end").ok_or_else(|| CmdError::Params("`end` (number) is required".into()))?;
     let with = clean_replacement(p::req_str(params, "text")?)?;
     let word = p::str(params, "word").map(str::to_owned);
-    with_outline(s, params, |o| {
-        let p = o.paragraphs.get(para).ok_or_else(|| CmdError::Params(format!("no paragraph {para}")))?;
+    with_frame(s, params, |o| {
+        let p = o.para(para).ok_or_else(|| CmdError::Params(format!("no paragraph {para}")))?;
         if let Some(w) = &word
             && chars_of(p, a, b) != *w
         {
@@ -195,12 +203,16 @@ fn change_all(s: &mut Session, params: &Value) -> CmdResult {
     let mut changed = 0usize;
     for el in &mut page.elements {
         let ElementKind::Outline(o) = &mut el.kind else { continue };
-        for i in 0..o.paragraphs.len() {
-            let Some(para) = o.paragraphs.get(i) else { continue };
-            let found: Vec<Misspelling> = proof::issues(&state, para).into_iter().filter(|m| m.word == word).collect();
+        let found: Vec<(Frame, usize, Vec<Misspelling>)> = text::all_paragraphs(o)
+            .into_iter()
+            .map(|(f, i, para)| (f, i, proof::issues(&state, para).into_iter().filter(|m| m.word == word).collect::<Vec<_>>()))
+            .filter(|(_, _, ms)| !ms.is_empty())
+            .collect();
+        for (frame, i, ms) in found {
+            let Some(fl) = text::flow_mut(o, frame) else { continue };
             // Last first: the earlier ranges stay where they are.
-            for m in found.iter().rev() {
-                if replace(o, i, m.start, m.end, &with).is_some() {
+            for m in ms.iter().rev() {
+                if replace(fl, i, m.start, m.end, &with).is_some() {
                     changed += 1;
                 }
             }
@@ -220,7 +232,8 @@ fn ignore(s: &mut Session, params: &Value) -> CmdResult {
     let state = s.proof.clone();
     let page = target_page(s, params)?;
     let o = page.outline(id).ok_or_else(|| CmdError::Params(format!("no outline {id}")))?;
-    let Some(pg) = o.paragraphs.get(para) else { return Err(CmdError::Params(format!("no paragraph {para}"))) };
+    let o = text::flow(o, frame_param(params)?).ok_or_else(|| CmdError::Params("no such table cell".into()))?;
+    let Some(pg) = o.para(para) else { return Err(CmdError::Params(format!("no paragraph {para}"))) };
     let text = pg.text();
     let found = proof::issues(&state, pg).into_iter().find(|m| m.start == start);
     match found {
@@ -271,21 +284,28 @@ fn lang_param(params: &Value) -> Result<Option<String>, CmdError> {
 
 fn set_language(s: &mut Session, params: &Value) -> CmdResult {
     let lang = lang_param(params)?;
-    let set = |o: &mut Outline, a: usize, b: usize| {
-        let mut n = 0;
-        for p in o.paragraphs.iter_mut().skip(a).take(b.saturating_sub(a) + 1) {
-            if p.lang != lang {
-                p.lang = lang.clone();
-                n += 1;
-            }
+    let set_one = |p: &mut Paragraph, n: &mut usize| {
+        if p.lang != lang {
+            p.lang = lang.clone();
+            *n += 1;
         }
-        n
     };
     let n = if params.get("outline").is_some() || params.get("id").is_some() {
         let mut n = 0;
+        let frame = frame_param(params)?;
         with_outline(s, params, |o| {
-            let (a, b) = range(params, o).map_or((0, o.paragraphs.len().saturating_sub(1)), |(a, b)| (a.para, b.para));
-            n = set(o, a, b);
+            match range(params, text::flow(o, frame).ok_or_else(|| CmdError::Params("no such table cell".into()))?) {
+                // A range: its paragraphs in the caret's flow.
+                Some((a, b)) => {
+                    let fl = text::flow_mut(o, frame).ok_or_else(|| CmdError::Params("no such table cell".into()))?;
+                    text::for_paras_mut(fl, a.para, b.para, &mut |p| set_one(p, &mut n));
+                }
+                // The whole container, its tables' cells too (or the whole cell).
+                None => match text::flow_mut(o, frame) {
+                    Some(fl) if frame != Frame::Top => text::for_paras_mut(fl, 0, usize::MAX, &mut |p| set_one(p, &mut n)),
+                    _ => o.paragraphs_mut().for_each(|p| set_one(p, &mut n)),
+                },
+            }
             Ok(if n > 0 { CmdOutput::ok() } else { CmdOutput::unchanged() })
         })?;
         n
@@ -294,8 +314,7 @@ fn set_language(s: &mut Session, params: &Value) -> CmdResult {
         let mut n = 0;
         for el in &mut page.elements {
             if let ElementKind::Outline(o) = &mut el.kind {
-                let last = o.paragraphs.len().saturating_sub(1);
-                n += set(o, 0, last);
+                o.paragraphs_mut().for_each(|p| set_one(p, &mut n));
             }
         }
         if n > 0 {
@@ -329,13 +348,14 @@ fn word_count(s: &mut Session, params: &Value) -> CmdResult {
     let page = target_page(s, params)?;
     let mut paras: Vec<String> = Vec::new();
     let mut scope = "page";
-    match only.and_then(|id| page.outline(id)) {
+    let frame = frame_param(params)?;
+    match only.and_then(|id| page.outline(id)).and_then(|o| text::flow(o, frame)) {
         Some(o) if range(params, o).is_some_and(|(a, b)| a != b) => {
             scope = "selection";
             let (a, b) = range(params, o).unwrap_or_default();
-            for i in a.para..=b.para.min(o.paragraphs.len().saturating_sub(1)) {
+            for i in a.para..=b.para.min(o.count().saturating_sub(1)) {
                 let (x, y) = text::para_span(o, i, a, b);
-                if let Some(p) = o.paragraphs.get(i) {
+                if let Some(p) = o.para(i) {
                     paras.push(chars_of(p, x, y));
                 }
             }
@@ -345,7 +365,7 @@ fn word_count(s: &mut Session, params: &Value) -> CmdResult {
                 paras.push(page.title.clone());
             }
             for (_, o) in outlines(page) {
-                paras.extend(o.paragraphs.iter().map(Paragraph::text));
+                paras.extend(o.paragraphs().map(Paragraph::text));
             }
         }
     }

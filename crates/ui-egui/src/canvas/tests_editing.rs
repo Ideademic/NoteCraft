@@ -147,7 +147,7 @@ fn format_painter_copies_formatting_onto_a_clicked_word() {
     let p = at(&h, quiet_x, 158.0);
     click(&mut h, p);
     let o = h.state().session.current_page().unwrap().outline(id).unwrap().clone();
-    let runs = &o.paragraphs[0].runs;
+    let runs = &o.para(0).unwrap().runs;
     let painted = runs.iter().find(|r| r.text.contains("quiet") || r.text.contains("words") || r.text.contains("and")).unwrap();
     let bold_words: Vec<&str> = runs.iter().filter(|r| r.bold && r.color.is_some()).map(|r| r.text.as_str()).collect();
     assert!(bold_words.len() >= 2, "a second word took the formatting: {runs:?}");
@@ -206,10 +206,10 @@ fn pasting_html_from_another_app_keeps_basic_formatting() {
     let os = outlines(&h);
     assert_eq!(os.len(), 1, "a new container where the caret waited");
     let o = &os[0].1;
-    assert_eq!(o.paragraphs.len(), 3, "{:?}", o.text());
-    assert!(o.paragraphs[0].runs.iter().any(|r| r.bold && r.text == "Bold"));
-    assert!(o.paragraphs[0].runs.iter().any(|r| r.italic && r.text == "slanted"));
-    assert_eq!(o.paragraphs[1].list, Some(notecraft_doc::ListKind::Bullet));
+    assert_eq!(o.blocks.len(), 3, "{:?}", o.text());
+    assert!(o.para(0).unwrap().runs.iter().any(|r| r.bold && r.text == "Bold"));
+    assert!(o.para(0).unwrap().runs.iter().any(|r| r.italic && r.text == "slanted"));
+    assert_eq!(o.para(1).unwrap().list, Some(notecraft_doc::ListKind::Bullet));
     assert!((o.pos.y - 260.0).abs() < 2.0);
 }
 
@@ -227,7 +227,7 @@ fn paste_as_plain_text_drops_the_formatting() {
     h.run_steps(2);
     let o = h.state().session.current_page().unwrap().outline(id).unwrap().clone();
     assert!(o.text().contains("Strong"), "{}", o.text());
-    assert!(o.paragraphs[0].runs.iter().all(|r| !r.bold), "{:?}", o.paragraphs[0].runs);
+    assert!(o.para(0).unwrap().runs.iter().all(|r| !r.bold), "{:?}", o.para(0).unwrap().runs);
 }
 
 #[test]
@@ -248,7 +248,7 @@ fn copying_a_container_and_pasting_makes_a_copy() {
     let os = outlines(&h);
     assert_eq!(os.len(), 2, "pasted next to the pointer");
     let copy = os.iter().find(|(i, _)| *i != id).unwrap();
-    assert!(copy.1.paragraphs[0].runs[0].bold && copy.1.paragraphs[1].list.is_some(), "with its formatting");
+    assert!(copy.1.para(0).unwrap().runs[0].bold && copy.1.para(1).unwrap().list.is_some(), "with its formatting");
     assert!((copy.1.pos.x - 400.0).abs() < 2.0, "{:?}", copy.1.pos);
 }
 
@@ -277,7 +277,7 @@ fn copied_text_pastes_into_another_container_with_its_formatting() {
     h.run_steps(2);
     let o = h.state().session.current_page().unwrap().outline(b).unwrap().clone();
     assert_eq!(o.text(), "into: red");
-    assert!(o.paragraphs[0].runs.iter().any(|r| r.text == "red" && r.color.is_some()), "{:?}", o.paragraphs[0].runs);
+    assert!(o.para(0).unwrap().runs.iter().any(|r| r.text == "red" && r.color.is_some()), "{:?}", o.para(0).unwrap().runs);
 }
 
 #[test]

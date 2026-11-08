@@ -63,6 +63,8 @@ pub struct Item {
     pub page_title: String,
     pub section_name: String,
     pub outline: Guid,
+    /// The table cell the paragraph is in.
+    pub cell: Option<notecraft_engine::text::CellRef>,
     pub para: usize,
     pub tag: Tag,
     pub label: String,
@@ -122,6 +124,7 @@ pub fn refresh(app: &mut NoteApp, pane: &mut TagsPane) {
                 page_title: s(v, "pageTitle"),
                 section_name: s(v, "sectionName"),
                 outline: Guid::parse(&s(v, "outline"))?,
+                cell: v.get("cell").and_then(notecraft_engine::text::CellRef::from_json),
                 para: v.get("para").and_then(Value::as_u64).and_then(|n| usize::try_from(n).ok()).unwrap_or(0),
                 tag,
                 label: s(v, "label"),
@@ -181,6 +184,7 @@ pub fn jump(app: &mut NoteApp, it: &Item) {
         app.act(ids::NAV_PAGE, json!({ "id": it.page }));
     }
     app.canvas.goto = Some((it.outline, it.para));
+    app.canvas.goto_cell = it.cell;
 }
 
 /// The pane.

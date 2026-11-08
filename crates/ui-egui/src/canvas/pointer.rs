@@ -42,6 +42,9 @@ pub enum Gesture {
     /// Dragging out a shape with the Shape tool: where the drag started and is now (page
     /// points), and whether Shift constrains it.
     Shape { kind: super::ShapeKind, from: Point, to: Point, constrain: bool },
+    /// Dragging a table's column border: the column, its width when the drag began, where the
+    /// pointer was pressed (page x) and the undo key that makes the drag one step.
+    ColumnResize { outline: Guid, block: usize, col: usize, start_w: f32, from_x: f32, key: String },
     /// Insert Space: the line's page y where the drag started and is now.
     Space { from: f32, to: f32 },
 }
@@ -149,10 +152,11 @@ pub fn handle(ui: &mut Ui, state: &mut CanvasState, session: &mut Session, v: &V
         && let Some(c) = state.caret.clone()
         && let Some(o) = lay.outline(c.outline)
         && o.rect(v).expand(text::FRAME_PAD_X).contains(at)
+        && o.hit_frame(v, at).0 == c.frame()
     {
-        let pos = o.hit(v, at);
-        let (a, b) = if p.clicks == 3 { para_range(session, c.outline, pos) } else { word_range(session, c.outline, pos) };
-        set_caret(state, TextCaret { anchor: a, head: b, ..c });
+        let pos = o.hit_frame(v, at).1;
+        let (a, b) = if p.clicks == 3 { para_range(session, &c, pos) } else { word_range(session, &c, pos) };
+        set_caret(state, TextCaret { anchor: a, head: b, cells: None, ..c });
         state.gesture = Gesture::None;
         return;
     }
@@ -171,13 +175,13 @@ fn set_caret(state: &mut CanvasState, c: TextCaret) {
     state.caret = Some(c);
 }
 
-fn word_range(session: &Session, outline: Guid, pos: TextPos) -> (TextPos, TextPos) {
-    let Some(o) = session.current_page().and_then(|p| p.outline(outline)) else { return (pos, pos) };
+fn word_range(session: &Session, c: &TextCaret, pos: TextPos) -> (TextPos, TextPos) {
+    let Some(o) = edit::flow(session, c) else { return (pos, pos) };
     if let Some(r) = notecraft_engine::text::word_at(o, pos) {
         return r;
     }
     // At a word's edge (or on a space): the word after, else the one before.
-    let text: Vec<char> = o.paragraphs.get(pos.para).map(|p| p.text().chars().collect()).unwrap_or_default();
+    let text: Vec<char> = o.para(pos.para).map(|p| p.text().chars().collect()).unwrap_or_default();
     let is_word = |c: Option<&char>| c.is_some_and(|c| c.is_alphanumeric() || *c == '_' || *c == '\'');
     let ch = pos.char.min(text.len());
     let (mut a, mut b) = (ch, ch);
@@ -198,9 +202,8 @@ fn word_range(session: &Session, outline: Guid, pos: TextPos) -> (TextPos, TextP
     (TextPos::new(pos.para, a), TextPos::new(pos.para, b))
 }
 
-fn para_range(session: &Session, outline: Guid, pos: TextPos) -> (TextPos, TextPos) {
-    let len =
-        session.current_page().and_then(|p| p.outline(outline)).and_then(|o| o.paragraphs.get(pos.para)).map_or(0, notecraft_engine::text::para_len);
+fn para_range(session: &Session, c: &TextCaret, pos: TextPos) -> (TextPos, TextPos) {
+    let len = edit::flow(session, c).map_or(0, |o| notecraft_engine::text::len_at(o, pos.para));
     (TextPos::new(pos.para, 0), TextPos::new(pos.para, len))
 }
 
@@ -234,14 +237,25 @@ fn press(ui: &Ui, state: &mut CanvasState, session: &mut Session, v: &View, lay:
         if !frame.contains(at) {
             continue;
         }
-        for i in 0..o.paras.len() {
-            if layout::todo_box(o, v, i).is_some_and(|r| r.expand(2.0).contains(at)) {
+        if let Some((block, col)) = super::table::border_at(o, v, at) {
+            let start_w = session.current_page().and_then(|p| p.outline(o.id)).and_then(|ol| ol.table(block)).map_or(72.0, |t| t.col_width(col));
+            state.gesture = Gesture::ColumnResize { outline: o.id, block, col, start_w, from_x: page_pt.x, key: format!("col:{}", Guid::new()) };
+            session.break_undo_merge();
+            return;
+        }
+        for (fr, i, r) in layout::todo_boxes(o, v) {
+            if r.expand(2.0).contains(at) {
                 let page = state.page;
-                run(state, session, ids::FORMAT_TOGGLE_TODO, json!({"outline": o.id, "para": i, "page": page}));
+                run(
+                    state,
+                    session,
+                    ids::FORMAT_TOGGLE_TODO,
+                    json!({"outline": o.id, "cell": fr.cell().map(|c| c.to_json()), "para": i, "page": page}),
+                );
                 return;
             }
         }
-        let pos = o.hit(v, at);
+        let (fr, pos) = o.hit_frame(v, at);
         let same = state.caret.as_ref().is_some_and(|c| c.outline == o.id);
         if !same {
             edit::leave(state, session, Some(o.id));
@@ -250,9 +264,10 @@ fn press(ui: &Ui, state: &mut CanvasState, session: &mut Session, v: &View, lay:
         state.selection.elements.clear();
         clear_ink_selection(state, session);
         let caret = match state.caret.clone() {
-            Some(c) if same && shift => TextCaret { head: pos, goal_x: None, ..c },
-            Some(c) if same => TextCaret { anchor: pos, head: pos, goal_x: None, ..c },
-            _ => TextCaret::at(o.id, pos),
+            Some(c) if same && shift && c.frame() == fr => TextCaret { head: pos, goal_x: None, cells: None, ..c },
+            Some(c) if same && shift && super::table::same_table(c.frame(), fr) => super::table::span_to(c, fr),
+            Some(c) if same => TextCaret { anchor: pos, head: pos, goal_x: None, cell: fr.cell(), cells: None, ..c },
+            _ => TextCaret { cell: fr.cell(), ..TextCaret::at(o.id, pos) },
         };
         state.pending_style = super::PendingStyle::default();
         session.break_undo_merge();
@@ -313,15 +328,28 @@ pub(crate) fn clear_ink_selection(state: &mut CanvasState, session: &mut Session
     state.selection.strokes.clear();
 }
 
-fn drag(state: &mut CanvasState, session: &Session, v: &View, lay: &PageLayout, at: Pos2) {
+fn drag(state: &mut CanvasState, session: &mut Session, v: &View, lay: &PageLayout, at: Pos2) {
     let p = v.to_page(at);
+    if let Gesture::ColumnResize { outline, block, col, start_w, from_x, key } = &state.gesture {
+        let params = json!({"outline": outline, "block": block, "col": col, "width": start_w + p.x - from_x, "mergeKey": key, "page": state.page});
+        run(state, session, ids::TABLE_SET_COLUMN_WIDTH, params);
+        return;
+    }
     match &mut state.gesture {
         Gesture::SelectText { outline } => {
             let id = *outline;
             if let Some(o) = lay.outline(id) {
-                let pos = o.hit(v, at);
+                let (fr, pos) = o.hit_frame(v, at);
                 if let Some(c) = state.caret.as_mut().filter(|c| c.outline == id) {
-                    c.head = pos;
+                    if fr == c.frame() {
+                        c.head = pos;
+                        c.cells = None;
+                    } else if super::table::same_table(c.frame(), fr) {
+                        *c = super::table::span_to(c.clone(), fr);
+                    } else if c.cell.is_none() {
+                        // From the container's text over a table: the selection covers it.
+                        c.head = o.hit(v, at);
+                    }
                     c.goal_x = None;
                 }
             }
@@ -331,7 +359,6 @@ fn drag(state: &mut CanvasState, session: &Session, v: &View, lay: &PageLayout, 
         Gesture::ImageResize { corner, start, rect, .. } => *rect = images::resized(*start, *corner, p),
         _ => {}
     }
-    let _ = session;
 }
 
 fn release(state: &mut CanvasState, session: &mut Session) {
@@ -367,6 +394,7 @@ fn release(state: &mut CanvasState, session: &mut Session) {
                 run(state, session, ids::DRAW_MOVE_SELECTION, json!({"dx": dx, "dy": dy}));
             }
         }
+        Gesture::ColumnResize { .. } => session.break_undo_merge(),
         Gesture::SelectText { .. } if state.painter.is_some() => super::format_painter::apply(state, session),
         other => state.gesture = other,
     }
@@ -383,7 +411,7 @@ pub fn cursor(ui: &Ui, state: &CanvasState, session: &Session, v: &View, lay: &P
     let Some(at) = resp.hover_pos().or_else(|| ui.input(|i| i.pointer.latest_pos())) else { return };
     let icon = match &state.gesture {
         Gesture::Move { .. } | Gesture::InkMove { .. } => CursorIcon::Grabbing,
-        Gesture::Resize { .. } => CursorIcon::ResizeHorizontal,
+        Gesture::Resize { .. } | Gesture::ColumnResize { .. } => CursorIcon::ResizeHorizontal,
         Gesture::ImageResize { corner, .. } => corner_cursor(*corner),
         Gesture::SelectText { .. } => CursorIcon::Text,
         Gesture::Ink { .. } | Gesture::Lasso { .. } | Gesture::Shape { .. } => CursorIcon::Crosshair,
@@ -419,7 +447,10 @@ fn hover_icon(state: &CanvasState, session: &Session, v: &View, lay: &PageLayout
             return CursorIcon::Grab;
         }
         if frame.contains(at) {
-            if (0..o.paras.len()).any(|i| layout::todo_box(o, v, i).is_some_and(|r| r.expand(2.0).contains(at))) {
+            if super::table::border_at(o, v, at).is_some() {
+                return CursorIcon::ResizeHorizontal;
+            }
+            if layout::todo_boxes(o, v).iter().any(|(_, _, r)| r.expand(2.0).contains(at)) {
                 return CursorIcon::PointingHand;
             }
             // The Format Painter's brush.

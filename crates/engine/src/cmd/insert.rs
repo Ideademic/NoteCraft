@@ -120,7 +120,7 @@ fn date_time(s: &mut Session, params: &Value) -> CmdResult {
             (e, e)
         });
         let at: TextPos = text::delete(o, a, b);
-        let fmt = o.paragraphs.get(at.para).map(|pg| text::format_at(pg, at.char)).unwrap_or_default();
+        let fmt = text::Flow::para(o, at.para).map(|pg| text::format_at(pg, at.char)).unwrap_or_default();
         let caret = text::insert(o, at, &txt, &fmt);
         page.touch();
         return Ok(CmdOutput::value(json!({"caret": caret.to_json(), "text": txt})));

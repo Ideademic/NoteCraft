@@ -163,8 +163,7 @@ fn sanitize_page(pg: &mut notecraft_doc::Page) {
             el.set_pos(p);
         }
         if let notecraft_doc::ElementKind::Outline(o) = &mut el.kind {
-            o.paragraphs.truncate(notecraft_doc::page::MAX_PARAGRAPHS);
-            o.paragraphs = std::mem::take(&mut o.paragraphs).into_iter().map(notecraft_doc::Paragraph::sanitized).collect();
+            o.sanitize();
             o.width = if o.width.is_finite() { o.width.clamp(1.0, 100_000.0) } else { notecraft_doc::page::DEFAULT_OUTLINE_WIDTH };
         }
     }

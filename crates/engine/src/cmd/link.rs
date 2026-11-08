@@ -2,19 +2,21 @@
 //! Paragraph make `notecraft:` links ([`notecraft_doc::link`]), and typing `[[Page title]]` links
 //! to that page (creating it when the notebook has none).
 //!
+//! In a table cell, pass `"cell"` as the text commands take it ([`super::text`]).
+//!
 //! Addresses are checked before they are kept: web and mail links as the PDF export allows them
 //! (`craft_pdf::safe_url`), `notecraft:` links when they parse, `file:` and `onenote:` links as
 //! they are. `www.example.com` becomes `https://www.example.com` and `a@b.org` a `mailto:` link.
 //! Nothing else (`javascript:`, `data:`…) is kept.
 
 use notecraft_doc::link::{InternalLink, MAX_URL, scheme};
-use notecraft_doc::{Guid, Outline, Page, Paragraph, Run};
+use notecraft_doc::{Guid, Page, Paragraph, Run};
 use serde_json::{Value, json};
 
 use super::has_page;
-use super::text::{outline_id, range, with_outline};
+use super::text::{frame_param, outline_id, range, with_frame};
 use crate::ids::{LINK_FOLLOW, LINK_GET, LINK_REMOVE, LINK_SET, LINK_TO_PAGE, LINK_TO_PARAGRAPH, LINK_WIKI};
-use crate::text::{self, TextPos};
+use crate::text::{self, Flow, TextPos};
 use crate::{CmdError, CmdOutput, CmdResult, CommandSpec, Location, Session, p};
 
 /// Longest page name a `[[wiki link]]` takes, characters.
@@ -136,21 +138,21 @@ fn run_at_char(p: &Paragraph, ch: usize) -> Run {
 }
 
 /// The text between `a` and `b` of `o`, paragraphs joined by newlines.
-fn text_between(o: &Outline, a: TextPos, b: TextPos) -> String {
+fn text_between(o: &dyn Flow, a: TextPos, b: TextPos) -> String {
     let mut out = String::new();
-    for i in a.para..=b.para.min(o.paragraphs.len().saturating_sub(1)) {
+    for i in a.para..=b.para.min(o.count().saturating_sub(1)) {
         let (x, y) = text::para_span(o, i, a, b);
         if i > a.para {
             out.push('\n');
         }
-        if let Some(p) = o.paragraphs.get(i) {
+        if let Some(p) = o.para(i) {
             out.extend(p.text().chars().skip(x).take(y - x));
         }
     }
     out
 }
 
-fn pos_range(params: &Value, o: &Outline) -> (TextPos, TextPos) {
+fn pos_range(params: &Value, o: &dyn Flow) -> (TextPos, TextPos) {
     if let Some(at) = params.get("at").and_then(TextPos::from_json) {
         let at = text::clamp_ref(o, at);
         return (at, at);
@@ -172,10 +174,10 @@ fn set(s: &mut Session, params: &Value) -> CmdResult {
     let shown: Option<String> = p::str(params, "text")
         .map(|t| t.chars().map(|c| if c == '\n' || c == '\r' { ' ' } else { c }).filter(|c| !c.is_control()).take(MAX_LINK_TEXT).collect::<String>())
         .filter(|t| !t.trim().is_empty());
-    with_outline(s, params, |o| {
+    with_frame(s, params, |o| {
         let (a, b) = pos_range(params, o);
         let current = text_between(o, a, b);
-        let base = match o.paragraphs.get(a.para) {
+        let base = match o.para(a.para) {
             Some(p) if a < b => run_at_char(p, a.char),
             Some(p) => text::format_at(p, a.char),
             None => Run::default(),
@@ -194,10 +196,10 @@ fn set(s: &mut Session, params: &Value) -> CmdResult {
 }
 
 fn remove(s: &mut Session, params: &Value) -> CmdResult {
-    with_outline(s, params, |o| {
+    with_frame(s, params, |o| {
         let (mut a, mut b) = pos_range(params, o);
         if a == b {
-            let Some((x, y, _)) = o.paragraphs.get(a.para).and_then(|p| link_extent(p, a.char)) else { return Ok(CmdOutput::unchanged()) };
+            let Some((x, y, _)) = o.para(a.para).and_then(|p| link_extent(p, a.char)) else { return Ok(CmdOutput::unchanged()) };
             (a, b) = (TextPos::new(a.para, x), TextPos::new(a.para, y));
         }
         let had = text::runs_in(o, a, b).iter().any(|r| r.link.is_some());
@@ -213,8 +215,9 @@ fn get(s: &mut Session, params: &Value) -> CmdResult {
     let id = outline_id(params)?;
     let page = super::target_page(s, params)?;
     let o = page.outline(id).ok_or_else(|| CmdError::Params(format!("no outline {id}")))?;
+    let o = text::flow(o, frame_param(params)?).ok_or_else(|| CmdError::Params("no such table cell".into()))?;
     let (a, _) = pos_range(params, o);
-    let Some(p) = o.paragraphs.get(a.para) else { return Ok(CmdOutput::query(Value::Null)) };
+    let Some(p) = o.para(a.para) else { return Ok(CmdOutput::query(Value::Null)) };
     let Some((x, y, url)) = link_extent(p, a.char) else { return Ok(CmdOutput::query(Value::Null)) };
     let text: String = p.text().chars().skip(x).take(y - x).collect();
     Ok(CmdOutput::query(json!({"url": url, "text": text, "start": TextPos::new(a.para, x).to_json(), "end": TextPos::new(a.para, y).to_json()})))
@@ -295,8 +298,12 @@ fn to_paragraph(s: &mut Session, params: &Value) -> CmdResult {
     };
     let page = super::target_page(s, params)?;
     let o = page.outline(oid).ok_or_else(|| CmdError::Params(format!("no outline {oid}")))?;
-    let para = params.get("at").and_then(TextPos::from_json).map(|t| t.para).or_else(|| p::index(params, "para")).unwrap_or(0);
-    let para = para.min(o.paragraphs.len().saturating_sub(1));
+    // In a cell: the link goes to the table's block.
+    let para = match frame_param(params)?.cell() {
+        Some(c) => c.block,
+        None => params.get("at").and_then(TextPos::from_json).map(|t| t.para).or_else(|| p::index(params, "para")).unwrap_or(0),
+    };
+    let para = para.min(o.blocks.len().saturating_sub(1));
     let mut l = page_link(s, pid).ok_or_else(|| CmdError::Params(format!("no page {pid}")))?;
     l.outline = Some(oid);
     l.para = Some(para);
@@ -337,11 +344,13 @@ fn wiki(s: &mut Session, params: &Value) -> CmdResult {
         Some(id) => id,
         None => s.current.page.ok_or_else(|| CmdError::Disabled("no page is open".into()))?,
     };
+    let frame = frame_param(params)?;
     let found = {
         let page = super::target_page(s, params)?;
         let o = page.outline(oid).ok_or_else(|| CmdError::Params(format!("no outline {oid}")))?;
+        let o = text::flow(o, frame).ok_or_else(|| CmdError::Params("no such table cell".into()))?;
         let at = text::clamp_ref(o, at);
-        o.paragraphs.get(at.para).and_then(|p| wiki_before(p, at.char)).map(|(start, name)| (at, start, name))
+        o.para(at.para).and_then(|p| wiki_before(p, at.char)).map(|(start, name)| (at, start, name))
     };
     let Some((at, start, name)) = found else { return Ok(CmdOutput::query(Value::Null)) };
     let nb = s.notebooks.iter().position(|n| n.find_page(host).is_some()).ok_or_else(|| CmdError::Params(format!("no page {host}")))?;
@@ -361,8 +370,8 @@ fn wiki(s: &mut Session, params: &Value) -> CmdResult {
         }
     };
     let url = page_link(s, target).map(|l| l.to_url()).ok_or_else(|| CmdError::Failed("the page couldn't be linked".into()))?;
-    let out = with_outline(s, params, |o| {
-        let fmt = o.paragraphs.get(at.para).map(|p| run_at_char(p, start + 2)).unwrap_or_default();
+    let out = with_frame(s, params, |o| {
+        let fmt = o.para(at.para).map(|p| run_at_char(p, start + 2)).unwrap_or_default();
         let from = text::delete(o, TextPos::new(at.para, start), at);
         let caret = text::insert(o, from, &name, &Run { link: Some(url.clone()), ..fmt });
         Ok(CmdOutput::value(json!({"caret": caret.to_json(), "page": target, "created": created})))

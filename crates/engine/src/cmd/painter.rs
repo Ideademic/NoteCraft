@@ -4,15 +4,15 @@
 //! double-click); these commands only read and apply it. Text formatting (font, size, colours,
 //! highlight, bold, italic, underline, strike) goes onto the painted characters; paragraph
 //! formatting (style, alignment, list) onto the paragraphs the painted range covers whole. Tags
-//! and links are not painted.
+//! and links are not painted. In a table cell, pass `"cell"` as the text commands take it.
 
-use notecraft_doc::{Align, ListKind, ListStyle, Outline, ParaStyle, Run};
+use notecraft_doc::{Align, ListKind, ListStyle, ParaStyle, Run};
 use serde_json::{Value, json};
 
-use super::text::{apply_style, outline_id, range, with_outline};
+use super::text::{apply_style, frame_param, outline_id, range, with_outline};
 use super::{has_page, target_page};
 use crate::ids::{FORMAT_PAINTER_APPLY, FORMAT_PAINTER_PICK};
-use crate::text::{self, TextPos};
+use crate::text::{self, Flow, TextPos};
 use crate::{CmdError, CmdOutput, CmdResult, CommandSpec, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -27,22 +27,23 @@ pub fn specs() -> Vec<CommandSpec> {
 }
 
 /// The run formatting at the start of the range (what typing there would get for a caret).
-fn run_at(o: &Outline, a: TextPos, b: TextPos) -> Run {
+fn run_at(o: &dyn Flow, a: TextPos, b: TextPos) -> Run {
     if a != b
         && let Some(r) = text::runs_in(o, a, b).into_iter().next()
     {
         return Run { text: String::new(), ..r };
     }
-    o.paragraphs.get(a.para).map(|p| text::format_at(p, a.char)).unwrap_or_default()
+    o.para(a.para).map(|p| text::format_at(p, a.char)).unwrap_or_default()
 }
 
 fn pick(s: &mut Session, params: &Value) -> CmdResult {
     let id = outline_id(params)?;
     let page = target_page(s, params)?;
     let o = page.outline(id).ok_or_else(|| CmdError::Params(format!("no outline {id}")))?;
+    let o = text::flow(o, frame_param(params)?).ok_or_else(|| CmdError::Params("no such table cell".into()))?;
     let (a, b) = range(params, o).unwrap_or_default();
     let r = run_at(o, a, b);
-    let para = o.paragraphs.get(a.para).cloned().unwrap_or_default();
+    let para = o.para(a.para).cloned().unwrap_or_default();
     let hex = |c: Option<notecraft_doc::Color>| c.map_or(Value::Null, |c| Value::String(c.to_hex()));
     Ok(CmdOutput::query(json!({
         "run": {
@@ -80,10 +81,10 @@ fn para_fmt(v: &Value) -> Option<ParaFmt> {
 }
 
 /// Paragraphs the range covers whole: it starts at or before their start and reaches their end.
-fn covered(o: &Outline, a: TextPos, b: TextPos) -> Vec<usize> {
-    (a.para..=b.para.min(o.paragraphs.len().saturating_sub(1)))
+fn covered(o: &dyn Flow, a: TextPos, b: TextPos) -> Vec<usize> {
+    (a.para..=b.para.min(o.count().saturating_sub(1)))
         .filter(|&i| {
-            let Some(p) = o.paragraphs.get(i) else { return false };
+            let Some(p) = o.para(i) else { return false };
             let starts = i > a.para || a.char == 0;
             let ends = if i < b.para {
                 true
@@ -105,7 +106,10 @@ fn apply(s: &mut Session, params: &Value) -> CmdResult {
     let mut picked = apply_style(run_v, Run::default())?;
     picked.link = None;
     let para = fmt.get("para").and_then(para_fmt);
-    with_outline(s, params, |o| {
+    let frame = frame_param(params)?;
+    with_outline(s, params, |ol| {
+        let before = ol.blocks.clone();
+        let o = text::flow_mut(ol, frame).ok_or_else(|| CmdError::Params("no such table cell".into()))?;
         let (a, b) = match range(params, o) {
             Some((a, b)) if a == b => match text::word_at(o, a) {
                 Some(w) => w,
@@ -114,7 +118,6 @@ fn apply(s: &mut Session, params: &Value) -> CmdResult {
             Some(r) => r,
             None => (TextPos::default(), text::end_of(o)),
         };
-        let before = o.paragraphs.clone();
         let p = picked.clone();
         text::apply_range(o, a, b, &mut |r: &mut Run| {
             let link = r.link.take();
@@ -122,7 +125,7 @@ fn apply(s: &mut Session, params: &Value) -> CmdResult {
         });
         if let Some(pf) = &para {
             for i in covered(o, a, b) {
-                if let Some(pg) = o.paragraphs.get_mut(i) {
+                if let Some(pg) = o.para_mut(i) {
                     pg.style = pf.style;
                     pg.align = pf.align;
                     pg.list = pf.list;
@@ -131,7 +134,7 @@ fn apply(s: &mut Session, params: &Value) -> CmdResult {
             }
         }
         let out = json!({"caret": b.to_json()});
-        Ok(if o.paragraphs == before { CmdOutput::query(out) } else { CmdOutput::value(out) })
+        Ok(if ol.blocks == before { CmdOutput::query(out) } else { CmdOutput::value(out) })
     })
 }
 
@@ -157,15 +160,15 @@ mod tests {
         // A caret in a word paints that word, not its paragraph.
         s.run(ids::FORMAT_PAINTER_APPLY, &json!({"outline": o, "start": [1, 7], "end": [1, 7], "format": f})).unwrap();
         let ol = s.current_page().unwrap().outline(notecraft_doc::Guid::parse(o.as_str().unwrap()).unwrap()).unwrap().clone();
-        assert!(ol.paragraphs[1].runs.iter().any(|r| r.bold && r.text == "words"));
-        assert!(ol.paragraphs[1].runs.iter().any(|r| !r.bold && r.text.contains("plain")));
-        assert_eq!(ol.paragraphs[1].style, ParaStyle::Normal);
+        assert!(ol.para(1).unwrap().runs.iter().any(|r| r.bold && r.text == "words"));
+        assert!(ol.para(1).unwrap().runs.iter().any(|r| !r.bold && r.text.contains("plain")));
+        assert_eq!(ol.para(1).unwrap().style, ParaStyle::Normal);
         // A whole paragraph gets the paragraph format too; tags aren't painted.
         s.run(ids::FORMAT_PAINTER_APPLY, &json!({"outline": o, "start": [2, 0], "end": [2, 10], "format": f})).unwrap();
         let ol = s.current_page().unwrap().outline(notecraft_doc::Guid::parse(o.as_str().unwrap()).unwrap()).unwrap().clone();
-        assert_eq!(ol.paragraphs[2].style, ParaStyle::Heading2);
-        assert!(ol.paragraphs[2].tag.is_none());
-        assert!(ol.paragraphs[2].runs.iter().all(|r| r.bold && r.color.is_some()));
+        assert_eq!(ol.para(2).unwrap().style, ParaStyle::Heading2);
+        assert!(ol.para(2).unwrap().tag.is_none());
+        assert!(ol.para(2).unwrap().runs.iter().all(|r| r.bold && r.color.is_some()));
         // Outside a word: nothing to paint.
         let r = s.run(ids::FORMAT_PAINTER_APPLY, &json!({"outline": o, "at": [1, 5], "end": [1, 5], "format": f})).unwrap();
         assert_eq!(r.value["collapsed"], true);

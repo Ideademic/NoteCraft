@@ -42,6 +42,8 @@ pub struct ReviewUi {
 #[derive(Clone, Debug, PartialEq)]
 pub struct LinkDialog {
     pub outline: Guid,
+    /// The table cell the text is in.
+    pub cell: Option<notecraft_engine::text::CellRef>,
     pub start: TextPos,
     pub end: TextPos,
     /// The text to show.
@@ -129,7 +131,7 @@ pub fn open_link_dialog(app: &mut NoteApp) {
     let (mut a, mut b) = c.range();
     let existing = app
         .session
-        .run(ids::LINK_GET, &json!({"outline": c.outline, "at": a.to_json(), "page": page}))
+        .run(ids::LINK_GET, &json!({"outline": c.outline, "cell": c.cell.map(|x| x.to_json()), "at": a.to_json(), "page": page}))
         .ok()
         .map(|o| o.value)
         .filter(|v| !v.is_null());
@@ -141,9 +143,10 @@ pub fn open_link_dialog(app: &mut NoteApp) {
             b = l.get("end").and_then(TextPos::from_json).unwrap_or(b);
         }
     }
-    let text = selected_text(app, c.outline, a, b);
+    let text = selected_text(app, &c, a, b);
     app.ui.review.link = Some(LinkDialog {
         outline: c.outline,
+        cell: c.cell,
         start: a,
         end: b,
         text: text.clone(),
@@ -156,15 +159,17 @@ pub fn open_link_dialog(app: &mut NoteApp) {
     });
 }
 
-fn selected_text(app: &NoteApp, outline: Guid, a: TextPos, b: TextPos) -> String {
-    let Some(o) = app.session.current_page().and_then(|p| p.outline(outline)) else { return String::new() };
+fn selected_text(app: &NoteApp, c: &TextCaret, a: TextPos, b: TextPos) -> String {
+    let Some(o) = app.session.current_page().and_then(|p| p.outline(c.outline)).and_then(|o| notecraft_engine::text::flow(o, c.frame())) else {
+        return String::new();
+    };
     let mut out = String::new();
-    for i in a.para..=b.para.min(o.paragraphs.len().saturating_sub(1)) {
+    for i in a.para..=b.para.min(o.count().saturating_sub(1)) {
         let (x, y) = notecraft_engine::text::para_span(o, i, a, b);
         if i > a.para {
             out.push(' ');
         }
-        if let Some(p) = o.paragraphs.get(i) {
+        if let Some(p) = o.para(i) {
             out.extend(p.text().chars().skip(x).take(y - x));
         }
     }
@@ -257,13 +262,16 @@ fn link_dialog(ctx: &egui::Context, app: &mut NoteApp) {
     }
     let page = app.session.current.page;
     if remove {
-        app.act(ids::LINK_REMOVE, json!({"outline": d.outline, "start": d.start.to_json(), "end": d.end.to_json(), "page": page}));
+        app.act(
+            ids::LINK_REMOVE,
+            json!({"outline": d.outline, "cell": d.cell.map(|x| x.to_json()), "start": d.start.to_json(), "end": d.end.to_json(), "page": page}),
+        );
         app.ui.review.link = None;
         return;
     }
     match done {
         Some(true) => {
-            let mut params = json!({"outline": d.outline, "start": d.start.to_json(), "end": d.end.to_json(), "url": d.address, "page": page});
+            let mut params = json!({"outline": d.outline, "cell": d.cell.map(|x| x.to_json()), "start": d.start.to_json(), "end": d.end.to_json(), "url": d.address, "page": page});
             if (d.text != d.original || d.start == d.end)
                 && !d.text.trim().is_empty()
                 && let Value::Object(m) = &mut params
@@ -274,7 +282,7 @@ fn link_dialog(ctx: &egui::Context, app: &mut NoteApp) {
             match app.session.run(ids::LINK_SET, &params) {
                 Ok(out) => {
                     if let Some(c) = out.value.get("caret").and_then(TextPos::from_json) {
-                        let mut caret = TextCaret::at(d.outline, c);
+                        let mut caret = TextCaret { cell: d.cell, ..TextCaret::at(d.outline, c) };
                         if let Some(old) = &app.canvas.caret {
                             caret.merge_key = old.merge_key.clone();
                         }
@@ -675,7 +683,7 @@ fn merge(mut a: Value, b: Value) -> Value {
 
 fn copy_paragraph_link(ctx: &egui::Context, app: &mut NoteApp, outline: Guid, para: usize) {
     let page = app.session.current.page;
-    if let Ok(out) = app.run(ids::LINK_TO_PARAGRAPH, json!({"outline": outline, "para": para, "page": page}))
+    if let Ok(out) = app.run(ids::LINK_TO_PARAGRAPH, json!({"outline": outline, "cell": caret_cell(app), "para": para, "page": page}))
         && let Some(url) = out.value.get("url").and_then(Value::as_str)
     {
         ctx.copy_text(url.to_owned());
@@ -687,6 +695,11 @@ fn format(app: &mut NoteApp, id: &str, extra: Value) {
     if let Some(Err(e)) = crate::canvas::format_command(&mut app.canvas, &mut app.session, id, extra) {
         app.set_status(e.to_string(), true);
     }
+}
+
+/// The caret's table cell as command params take it (`null` outside a table).
+fn caret_cell(app: &NoteApp) -> Value {
+    app.canvas.caret.as_ref().and_then(|c| c.cell).map_or(Value::Null, |c| c.to_json())
 }
 
 fn text_menu(ui: &mut Ui, app: &mut NoteApp, outline: Guid, at: TextPos, issue: Option<&Value>, link: Option<&str>) {
@@ -704,7 +717,7 @@ fn text_menu(ui: &mut Ui, app: &mut NoteApp, outline: Guid, at: TextPos, issue: 
         }
         for s in list {
             if suggestion_item(ui, &s) {
-                let mut p = json!({"outline": outline, "para": issue.get("para"), "start": issue.get("start"), "end": issue.get("end"), "word": word, "text": s, "page": page});
+                let mut p = json!({"outline": outline, "cell": issue.get("cell"), "para": issue.get("para"), "start": issue.get("start"), "end": issue.get("end"), "word": word, "text": s, "page": page});
                 if let Value::Object(m) = &mut p {
                     m.retain(|_, v| !v.is_null());
                 }
@@ -720,7 +733,10 @@ fn text_menu(ui: &mut Ui, app: &mut NoteApp, outline: Guid, at: TextPos, issue: 
             }
         }
         if item(ui, None, tl!("Ignore"), true) {
-            app.act(ids::PROOF_IGNORE, json!({"outline": outline, "para": issue.get("para"), "start": issue.get("start"), "page": page}));
+            app.act(
+                ids::PROOF_IGNORE,
+                json!({"outline": outline, "cell": issue.get("cell"), "para": issue.get("para"), "start": issue.get("start"), "page": page}),
+            );
         }
         if item(ui, None, tl!("Ignore All"), true) {
             app.act(ids::PROOF_IGNORE_ALL, json!({"word": word}));
@@ -756,7 +772,7 @@ fn text_menu(ui: &mut Ui, app: &mut NoteApp, outline: Guid, at: TextPos, issue: 
             ui.ctx().copy_text(url);
         }
         if item(ui, None, tl!("Remove Link"), true) {
-            app.act(ids::LINK_REMOVE, json!({"outline": outline, "at": at.to_json(), "page": page}));
+            app.act(ids::LINK_REMOVE, json!({"outline": outline, "cell": caret_cell(app), "at": at.to_json(), "page": page}));
         }
     }
     if item(ui, None, tl!("Copy Link to Paragraph"), true) {
@@ -923,7 +939,7 @@ fn set_language(app: &mut NoteApp, target: Option<Value>, lang: Value) {
 fn current_language(app: &NoteApp) -> Option<String> {
     let c = app.canvas.caret.as_ref()?;
     let o = app.session.current_page()?.outline(c.outline)?;
-    o.paragraphs.get(c.head.para)?.lang.clone()
+    notecraft_engine::text::flow(o, c.frame())?.para(c.head.para)?.lang.clone()
 }
 
 /// The accessible name of Options › Proofing's language picker.

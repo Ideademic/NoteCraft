@@ -75,7 +75,8 @@ fn selected_text(app: &NoteApp) -> Option<String> {
         return None;
     }
     let o = app.session.current_page()?.outline(c.outline)?;
-    let t: String = o.paragraphs.get(a.para)?.text().chars().skip(a.char).take(b.char.saturating_sub(a.char)).collect();
+    let o = notecraft_engine::text::flow(o, c.frame())?;
+    let t: String = o.para(a.para)?.text().chars().skip(a.char).take(b.char.saturating_sub(a.char)).collect();
     (!t.trim().is_empty() && t.chars().count() <= 200).then_some(t)
 }
 

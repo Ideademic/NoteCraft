@@ -10,23 +10,30 @@
 //!   `"value": true|false` sets it instead of toggling.
 //! - **Paragraph formatting** (style, lists, indent, tags) covers every paragraph the range
 //!   touches.
+//! - **Tables:** `cell` puts the range in a table cell, `cells` covers whole cells, and a range
+//!   in the outline's own blocks covers every table it spans (see [`super::text`]).
 
+use notecraft_doc::Block;
 use notecraft_doc::page::MAX_INDENT;
 use notecraft_doc::{Align, Color, ListKind, ListStyle, Outline, ParaStyle, Paragraph, Run, Tag};
 use serde_json::{Value, json};
 
 use super::has_page;
-use super::text::{clamp_size, clean_font, range, range_or_all, with_outline};
+use super::text::{clamp_size, clean_font, frame_param, range, targets, with_outline};
 use crate::ids::{
     FORMAT_ALIGN, FORMAT_BOLD, FORMAT_BULLETS, FORMAT_CLEAR, FORMAT_COLOR, FORMAT_FONT, FORMAT_HIGHLIGHT, FORMAT_INDENT, FORMAT_ITALIC,
     FORMAT_NUMBERING, FORMAT_OUTDENT, FORMAT_SIZE, FORMAT_STRIKE, FORMAT_STYLE, FORMAT_TAG, FORMAT_TAG_TODO, FORMAT_TOGGLE_TODO, FORMAT_UNDERLINE,
 };
-use crate::text::{self, TextPos};
+use crate::text::{self, Frame, TextPos};
 use crate::{CmdError, CmdOutput, CmdResult, CommandSpec, Session, p};
 
 macro_rules! sel {
     ($extra:literal) => {
-        concat!(r##"{"outline": guid, "start"?: {"para","char"}, "end"?: {"para","char"}, "page"?: guid"##, $extra, "}")
+        concat!(
+            r##"{"outline": guid, "cell"?: {"block","row","col"}, "cells"?: {"block","rows":[r0,r1],"cols":[c0,c1]}, "start"?: {"para","char"}, "end"?: {"para","char"}, "page"?: guid"##,
+            $extra,
+            "}"
+        )
     };
 }
 
@@ -70,39 +77,52 @@ pub fn specs() -> Vec<CommandSpec> {
 
 // --- character formatting ------------------------------------------------------------------
 
-/// The characters a character command covers: the range, the word at a collapsed caret, or the
-/// whole outline. `None`: a caret outside any word.
-fn char_range(params: &Value, o: &Outline) -> Option<(TextPos, TextPos)> {
-    match range(params, o) {
-        Some((a, b)) if a == b => text::word_at(o, a),
-        Some(r) => Some(r),
-        None => Some(range_or_all(params, o)),
+/// The characters a character command covers: the range (and the tables it spans), the word
+/// at a collapsed caret, or the whole outline. `None`: a caret outside any word.
+fn char_targets(params: &Value, o: &Outline) -> Result<Option<Vec<(Frame, TextPos, TextPos)>>, CmdError> {
+    if params.get("cells").is_none_or(Value::is_null) {
+        let frame = frame_param(params)?;
+        let fl = text::flow(o, frame).ok_or_else(|| CmdError::Params("no such table cell".into()))?;
+        if let Some((a, b)) = range(params, fl)
+            && a == b
+        {
+            return Ok(text::word_at(fl, a).map(|(a, b)| vec![(frame, a, b)]));
+        }
     }
+    targets(params, o).map(Some)
+}
+
+/// Every block's paragraphs, for "did anything change".
+fn snapshot(o: &Outline) -> Vec<Block> {
+    o.blocks.clone()
 }
 
 fn collapsed() -> CmdResult {
     Ok(CmdOutput::query(json!({"collapsed": true})))
 }
 
-/// Applies `f` to the covered characters; unchanged when it changed nothing.
-fn apply_chars(s: &mut Session, params: &Value, f: &dyn Fn(&Outline, TextPos, TextPos) -> Box<dyn FnMut(&mut Run)>) -> CmdResult {
+/// Applies `f` (made from the covered runs) to the covered characters; unchanged when it
+/// changed nothing.
+fn apply_chars(s: &mut Session, params: &Value, f: &dyn Fn(&[Run]) -> Box<dyn FnMut(&mut Run)>) -> CmdResult {
     with_outline(s, params, |o| {
-        let Some((a, b)) = char_range(params, o) else { return collapsed() };
-        let before = o.paragraphs.clone();
-        let mut g = f(o, a, b);
-        text::apply_range(o, a, b, &mut *g);
-        Ok(if o.paragraphs == before { CmdOutput::unchanged() } else { CmdOutput::ok() })
+        let Some(targets) = char_targets(params, o)? else { return collapsed() };
+        let runs: Vec<Run> = targets.iter().filter_map(|(fr, a, b)| text::flow(o, *fr).map(|fl| text::runs_in(fl, *a, *b))).flatten().collect();
+        let before = snapshot(o);
+        let mut g = f(&runs);
+        for (fr, a, b) in targets {
+            if let Some(fl) = text::flow_mut(o, fr) {
+                text::apply_range(fl, a, b, &mut *g);
+            }
+        }
+        Ok(if o.blocks == before { CmdOutput::unchanged() } else { CmdOutput::ok() })
     })
 }
 
 /// A toggle: on unless everything covered already has it (or `value` says).
 fn toggle(s: &mut Session, params: &Value, get: fn(&Run) -> bool, set: fn(&mut Run, bool)) -> CmdResult {
     let value = p::bool(params, "value");
-    apply_chars(s, params, &|o, a, b| {
-        let on = value.unwrap_or_else(|| {
-            let runs = text::runs_in(o, a, b);
-            runs.is_empty() || !runs.iter().all(get)
-        });
+    apply_chars(s, params, &|runs| {
+        let on = value.unwrap_or_else(|| runs.is_empty() || !runs.iter().all(get));
         Box::new(move |r: &mut Run| set(r, on))
     })
 }
@@ -126,8 +146,7 @@ fn strike(s: &mut Session, params: &Value) -> CmdResult {
 fn highlight(s: &mut Session, params: &Value) -> CmdResult {
     let explicit = params.get("color").is_some();
     let c = if explicit { p::color(params, "color")? } else { Some(Color::HIGHLIGHT_YELLOW) };
-    apply_chars(s, params, &|o, a, b| {
-        let runs = text::runs_in(o, a, b);
+    apply_chars(s, params, &|runs| {
         // The button toggles: pressing it again over highlighted text removes the highlight.
         let value = if !explicit && !runs.is_empty() && runs.iter().all(|r| r.highlight == c) { None } else { c };
         Box::new(move |r: &mut Run| r.highlight = value)
@@ -139,7 +158,7 @@ fn color(s: &mut Session, params: &Value) -> CmdResult {
         return Err(CmdError::Params("`color` (#rrggbb or null) is required".into()));
     }
     let c = p::color(params, "color")?;
-    apply_chars(s, params, &|_, _, _| Box::new(move |r: &mut Run| r.color = c))
+    apply_chars(s, params, &|_| Box::new(move |r: &mut Run| r.color = c))
 }
 
 fn size(s: &mut Session, params: &Value) -> CmdResult {
@@ -148,7 +167,7 @@ fn size(s: &mut Session, params: &Value) -> CmdResult {
         Some(_) => Some(clamp_size(p::req_f32(params, "size")?)),
         None => return Err(CmdError::Params("`size` (number or null) is required".into())),
     };
-    apply_chars(s, params, &|_, _, _| Box::new(move |r: &mut Run| r.size = v))
+    apply_chars(s, params, &|_| Box::new(move |r: &mut Run| r.size = v))
 }
 
 fn font(s: &mut Session, params: &Value) -> CmdResult {
@@ -157,7 +176,7 @@ fn font(s: &mut Session, params: &Value) -> CmdResult {
         Some(Value::String(f)) => Some(clean_font(f).ok_or_else(|| CmdError::Params("`font` must not be empty".into()))?),
         _ => return Err(CmdError::Params("`font` (string or null) is required".into())),
     };
-    apply_chars(s, params, &|_, _, _| {
+    apply_chars(s, params, &|_| {
         let v = v.clone();
         Box::new(move |r: &mut Run| r.font = v.clone())
     })
@@ -166,36 +185,56 @@ fn font(s: &mut Session, params: &Value) -> CmdResult {
 /// Clear All Formatting: plain runs (links kept), normal paragraphs (lists and tags kept).
 fn clear(s: &mut Session, params: &Value) -> CmdResult {
     with_outline(s, params, |o| {
-        let (a, b) = match range(params, o) {
-            Some((a, b)) if a == b => text::word_at(o, a).unwrap_or((a, b)),
-            Some(r) => r,
-            None => range_or_all(params, o),
+        let targets = match char_targets(params, o)? {
+            Some(t) => t,
+            // A caret outside a word: its paragraph's style still goes back to normal.
+            None => {
+                let frame = frame_param(params)?;
+                let at = text::flow(o, frame).and_then(|fl| range(params, fl)).map_or(TextPos::default(), |(a, _)| a);
+                vec![(frame, at, at)]
+            }
         };
-        let before = o.paragraphs.clone();
-        text::apply_range(o, a, b, &mut |r| *r = Run { text: std::mem::take(&mut r.text), link: r.link.take(), ..Run::default() });
-        for pg in paras_mut(o, a, b) {
-            pg.style = ParaStyle::Normal;
+        let before = snapshot(o);
+        for (fr, a, b) in targets {
+            let Some(fl) = text::flow_mut(o, fr) else { continue };
+            text::apply_range(fl, a, b, &mut |r| *r = Run { text: std::mem::take(&mut r.text), link: r.link.take(), ..Run::default() });
+            text::for_paras_mut(fl, a.para, b.para, &mut |pg| pg.style = ParaStyle::Normal);
         }
-        Ok(if o.paragraphs == before { CmdOutput::unchanged() } else { CmdOutput::ok() })
+        Ok(if o.blocks == before { CmdOutput::unchanged() } else { CmdOutput::ok() })
     })
 }
 
 // --- paragraph formatting ------------------------------------------------------------------
 
-fn paras_mut(o: &mut Outline, a: TextPos, b: TextPos) -> impl Iterator<Item = &mut Paragraph> {
-    let hi = b.para.min(o.paragraphs.len().saturating_sub(1));
-    o.paragraphs.get_mut(a.para..=hi).into_iter().flatten()
-}
-
-/// Applies `f` to every paragraph the range touches (all of them without one).
+/// Applies `f` to every paragraph the range touches (all of them without one), table cells
+/// included (see [`targets`]).
 fn apply_paras(s: &mut Session, params: &Value, f: &dyn Fn(&mut [Paragraph])) -> CmdResult {
     with_outline(s, params, |o| {
-        let (a, b) = range_or_all(params, o);
-        let hi = b.para.min(o.paragraphs.len().saturating_sub(1));
-        let Some(slice) = o.paragraphs.get_mut(a.para..=hi) else { return Ok(CmdOutput::unchanged()) };
-        let before = slice.to_vec();
-        f(slice);
-        Ok(if slice == before.as_slice() { CmdOutput::unchanged() } else { CmdOutput::ok() })
+        let targets = targets(params, o)?;
+        let mut paras: Vec<Paragraph> = Vec::new();
+        for (fr, a, b) in &targets {
+            if let Some(fl) = text::flow(o, *fr) {
+                paras.extend(text::paras_in(fl, a.para, b.para).into_iter().cloned());
+            }
+        }
+        if paras.is_empty() {
+            return Ok(CmdOutput::unchanged());
+        }
+        let before = paras.clone();
+        f(&mut paras);
+        if paras == before {
+            return Ok(CmdOutput::unchanged());
+        }
+        let mut it = paras.into_iter();
+        for (fr, a, b) in targets {
+            let Some(fl) = text::flow_mut(o, fr) else { continue };
+            text::for_paras_mut(fl, a.para, b.para, &mut |pg| {
+                if let Some(np) = it.next() {
+                    *pg = np;
+                }
+            });
+        }
+        Ok(CmdOutput::ok())
     })
 }
 

@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use notecraft_doc::page::{MAX_INDENT, TITLE_ORIGIN};
-use notecraft_doc::{Align, ElementKind, Guid, ImageElement, ListStyle, Outline, Page, PageElement, ParaStyle, Paragraph, Point, Run, Section, Tag};
+use notecraft_doc::{
+    Align, Block, ElementKind, Guid, ImageElement, ListStyle, Outline, Page, PageElement, ParaStyle, Paragraph, Point, Run, Section, Table, Tag,
+};
 use notecraft_onestore::{ExtendedGuid, FileKind, ObjectSpace, PropertySet, PropertyValue, Store};
 
 use crate::build::{SpaceBuilder, element_object_id};
@@ -383,7 +385,8 @@ impl PageWriter {
     }
 
     fn outline(&mut self, id: Guid, o: &Outline) -> ExtendedGuid {
-        let tops = self.outline_tree(&o.paragraphs);
+        let blocks: Vec<&Block> = o.blocks.iter().collect();
+        let tops = self.outline_tree(&blocks);
         let mut p = PropertySet::default();
         p.push(prop::LAST_MODIFIED_TIME, PropertyValue::U32(self.modified))
             .push(prop::ELEMENT_CHILD_NODES, PropertyValue::Ids(tops))
@@ -398,29 +401,29 @@ impl PageWriter {
         self.b.add_as(element_object_id(id), jcid::OUTLINE_NODE, p)
     }
 
-    /// Outline elements for `paragraphs`, nested by indent (an indent more than one deeper than
-    /// the paragraph above is treated as one deeper); returns the top-level ones.
-    fn outline_tree(&mut self, paragraphs: &[Paragraph]) -> Vec<ExtendedGuid> {
-        let paragraphs: Vec<&Paragraph> = if paragraphs.is_empty() { Vec::new() } else { paragraphs.iter().collect() };
-        let mut levels = Vec::with_capacity(paragraphs.len());
+    /// Outline elements for `blocks` (paragraphs and tables), nested by indent (an indent more
+    /// than one deeper than the block above is treated as one deeper); returns the top-level
+    /// ones.
+    fn outline_tree(&mut self, blocks: &[&Block]) -> Vec<ExtendedGuid> {
+        let mut levels = Vec::with_capacity(blocks.len());
         let mut prev: Option<u8> = None;
-        for p in &paragraphs {
+        for b in blocks {
             let l = match prev {
                 None => 0,
-                Some(pl) => p.indent.min(pl.saturating_add(1)).min(MAX_INDENT),
+                Some(pl) => b.indent().min(pl.saturating_add(1)).min(MAX_INDENT),
             };
             levels.push(l);
             prev = Some(l);
         }
-        let empty = Paragraph::plain("");
-        if paragraphs.is_empty() {
-            return vec![self.paragraph(&empty, &[])];
+        if blocks.is_empty() {
+            let empty = Block::Paragraph(Paragraph::plain(""));
+            return vec![self.block(&empty, &[])];
         }
-        self.subtree(&paragraphs, &levels, 0, paragraphs.len(), 0)
+        self.subtree(blocks, &levels, 0, blocks.len(), 0)
     }
 
-    /// Outline elements for paragraphs `from..to`, whose top level is `level`.
-    fn subtree(&mut self, paras: &[&Paragraph], levels: &[u8], from: usize, to: usize, level: u8) -> Vec<ExtendedGuid> {
+    /// Outline elements for blocks `from..to`, whose top level is `level`.
+    fn subtree(&mut self, paras: &[&Block], levels: &[u8], from: usize, to: usize, level: u8) -> Vec<ExtendedGuid> {
         let mut out = Vec::new();
         let mut i = from;
         while i < to {
@@ -430,11 +433,40 @@ impl PageWriter {
             }
             let children = if j > i + 1 { self.subtree(paras, levels, i + 1, j, level.saturating_add(1)) } else { Vec::new() };
             if let Some(p) = paras.get(i) {
-                out.push(self.paragraph(p, &children));
+                out.push(self.block(p, &children));
             }
             i = j;
         }
         out
+    }
+
+    /// One block as an outline element.
+    fn block(&mut self, b: &Block, children: &[ExtendedGuid]) -> ExtendedGuid {
+        match b {
+            Block::Paragraph(p) => self.paragraph(p, children),
+            Block::Table { table } => self.table(table, children),
+        }
+    }
+
+    /// A table as an outline element whose content is a jcidTableNode (see [`crate::table`]).
+    fn table(&mut self, t: &Table, children: &[ExtendedGuid]) -> ExtendedGuid {
+        let mut rows = Vec::with_capacity(t.rows.len());
+        for row in &t.rows {
+            let mut cells = Vec::with_capacity(row.cells.len());
+            for cell in &row.cells {
+                let blocks: Vec<Block> = cell.paragraphs.iter().cloned().map(Block::Paragraph).collect();
+                let refs: Vec<&Block> = blocks.iter().collect();
+                let oes = self.outline_tree(&refs);
+                let props = crate::table::cell_props(cell, oes, self.modified, indents());
+                cells.push(self.b.add(jcid::TABLE_CELL_NODE, props));
+            }
+            let props = crate::table::row_props(cells, self.modified);
+            rows.push(self.b.add(jcid::TABLE_ROW_NODE, props));
+        }
+        let props = crate::table::table_props(t, rows, self.modified);
+        let node = self.b.add(jcid::TABLE_NODE, props);
+        let oe = self.oe_props(node, children, None);
+        self.b.add(jcid::OUTLINE_ELEMENT_NODE, oe)
     }
 
     /// One paragraph: its rich text, list and tag, as an outline element.

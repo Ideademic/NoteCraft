@@ -10,7 +10,8 @@ use epaint::text::{FontId, Galley, LayoutJob, TextFormat, TextWrapping};
 use k::geom::{Point, Transform};
 use k::surface::Surface;
 use k::text::{GlyphId, KrillaGlyph};
-use notecraft_doc::{Align, Color, Outline, Paragraph, Run, Tag};
+use notecraft_doc::table::{CELL_PAD_X, CELL_PAD_Y, TABLE_GAP};
+use notecraft_doc::{Align, Block as DocBlock, Color, Outline, Paragraph, Run, Table, Tag};
 use notecraft_geom::Rect;
 
 use crate::draw;
@@ -168,17 +169,97 @@ impl ParaLay {
 /// One laid-out note container, page points.
 pub struct OutlineLay {
     pub rect: Rect,
+    /// The container's own paragraphs.
+    pub paras: Vec<ParaLay>,
+    pub tables: Vec<TableLay>,
+}
+
+/// One laid-out table, page points.
+pub struct TableLay {
+    pub rect: Rect,
+    /// Column edges, left to right (one more than the columns).
+    pub col_x: Vec<f32>,
+    /// Row edges, top to bottom (one more than the rows).
+    pub row_y: Vec<f32>,
+    pub borders: bool,
+    pub cells: Vec<CellLay>,
+}
+
+/// One laid-out table cell.
+pub struct CellLay {
+    pub rect: Rect,
+    pub shading: Option<Color>,
     pub paras: Vec<ParaLay>,
 }
 
-/// Lays out a container as the canvas does (`canvas/layout.rs::specs_for` at 100 %).
+/// Lays out a container as the canvas does (`canvas/layout.rs` at 100 %): its paragraphs
+/// stacked down, and each table a grid of cells laid out like small containers.
 pub fn layout_outline(fs: &mut FontSet, o: &Outline, ink: &Ink) -> OutlineLay {
     let width = if o.width.is_finite() { o.width.clamp(24.0, 4000.0) } else { notecraft_doc::page::DEFAULT_OUTLINE_WIDTH };
     let pos = o.pos.sanitized();
-    let markers = style::markers(&o.paragraphs);
     let mut y = 0.0;
-    let mut paras = Vec::with_capacity(o.paragraphs.len());
-    for (i, p) in o.paragraphs.iter().enumerate() {
+    let mut paras = Vec::with_capacity(o.blocks.len());
+    let mut tables = Vec::new();
+    let mut run: Vec<&Paragraph> = Vec::new();
+    let mut first = true;
+    for b in &o.blocks {
+        match b {
+            DocBlock::Paragraph(p) => run.push(p),
+            DocBlock::Table { table } => {
+                y = layout_paras(fs, &run, (pos.x, pos.y + y), width, ink, first, &mut paras) - pos.y;
+                run.clear();
+                let t = layout_table(fs, table, (pos.x, pos.y + y), ink);
+                y = t.rect.y + t.rect.h - pos.y;
+                tables.push(t);
+                first = false;
+            }
+        }
+    }
+    y = layout_paras(fs, &run, (pos.x, pos.y + y), width, ink, first, &mut paras) - pos.y;
+    OutlineLay { rect: Rect::new(pos.x, pos.y, o.display_width().clamp(24.0, 8000.0), y), paras, tables }
+}
+
+/// A table at `at` (its container's top-left corner, where the table's block starts).
+fn layout_table(fs: &mut FontSet, t: &Table, at: (f32, f32), ink: &Ink) -> TableLay {
+    let x0 = at.0 + f32::from(t.indent.min(notecraft_doc::page::MAX_INDENT)) * INDENT_STEP;
+    let y0 = at.1 + TABLE_GAP;
+    let mut col_x = vec![x0];
+    for c in 0..t.col_count() {
+        let last = col_x.last().copied().unwrap_or(x0);
+        col_x.push(last + t.col_width(c));
+    }
+    let mut row_y = vec![y0];
+    let mut cells = Vec::new();
+    for row in &t.rows {
+        let top = row_y.last().copied().unwrap_or(y0);
+        let mut bottom = top;
+        let first_cell = cells.len();
+        for (c, cell) in row.cells.iter().enumerate() {
+            let (Some(&l), Some(&r)) = (col_x.get(c), col_x.get(c + 1)) else { continue };
+            let refs: Vec<&Paragraph> = cell.paragraphs.iter().collect();
+            let mut ps = Vec::new();
+            let end = layout_paras(fs, &refs, (l + CELL_PAD_X, top + CELL_PAD_Y), (r - l - 2.0 * CELL_PAD_X).max(8.0), ink, true, &mut ps);
+            bottom = bottom.max(end + CELL_PAD_Y);
+            cells.push(CellLay { rect: Rect::new(l, top, r - l, 0.0), shading: cell.shading, paras: ps });
+        }
+        for cl in cells.iter_mut().skip(first_cell) {
+            cl.rect.h = bottom - top;
+        }
+        row_y.push(bottom);
+    }
+    let (x1, y1) = (col_x.last().copied().unwrap_or(x0), row_y.last().copied().unwrap_or(y0));
+    TableLay { rect: Rect::new(x0, y0, x1 - x0, y1 - y0 + TABLE_GAP), col_x, row_y, borders: t.borders, cells }
+}
+
+/// Lays out `ps` from `at` down, `width` wide (`first`: the first text of its container, which
+/// gets no space above a heading); returns the bottom.
+fn layout_paras(fs: &mut FontSet, ps: &[&Paragraph], at: (f32, f32), width: f32, ink: &Ink, first: bool, paras: &mut Vec<ParaLay>) -> f32 {
+    let owned: Vec<Paragraph> = ps.iter().map(|p| Paragraph { runs: Vec::new(), ..(*p).clone() }).collect();
+    let markers = style::markers(&owned);
+    let pos = notecraft_geom::Point::new(at.0, at.1);
+    let mut y = 0.0;
+    for (i, p) in ps.iter().enumerate() {
+        let i_first = first && i == 0;
         let indent = f32::from(p.indent.min(notecraft_doc::page::MAX_INDENT)) * INDENT_STEP;
         let tag_w = if p.tag.is_some() { TAG_W } else { 0.0 };
         let marker_w = if p.list.is_some() { MARKER_W } else { 0.0 };
@@ -188,7 +269,7 @@ pub fn layout_outline(fs: &mut FontSet, o: &Outline, ink: &Ink) -> OutlineLay {
         let empty = section_of(fs, &Run::default(), p, ink);
         let block = layout_aligned(fs, &runs, Some(wrap), empty, p.align);
         let first = p.runs.iter().find(|r| !r.text.is_empty()).or(p.runs.first()).map_or(p.style.font_size(), |r| style::size_pt(r, p.style));
-        if i > 0 && p.style.heading_level().is_some() {
+        if !i_first && p.style.heading_level().is_some() {
             y += HEADING_SPACE;
         }
         let marker = markers.get(i).cloned().flatten().map(|m| {
@@ -217,16 +298,20 @@ pub fn layout_outline(fs: &mut FontSet, o: &Outline, ink: &Ink) -> OutlineLay {
         });
         y += h;
     }
-    OutlineLay { rect: Rect::new(pos.x, pos.y, width, y), paras }
+    pos.y + y
 }
 
-/// Every text row's vertical span, page points (sheet breaks avoid cutting them).
+/// Every text row's vertical span, page points (sheet breaks avoid cutting them). A table row
+/// is one span, so a break doesn't cut through its cells.
 pub fn row_spans(o: &OutlineLay, out: &mut Vec<(f32, f32)>) {
     for p in &o.paras {
         for r in &p.block.galley.rows {
             let rr = r.rect();
             out.push((p.top + rr.top(), p.top + rr.bottom()));
         }
+    }
+    for t in &o.tables {
+        out.extend(t.row_y.windows(2).filter_map(|w| Some((*w.first()?, *w.get(1)?))));
     }
 }
 

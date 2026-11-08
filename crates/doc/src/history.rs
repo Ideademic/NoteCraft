@@ -53,7 +53,7 @@ pub fn page_size(page: &Page) -> usize {
     let mut n = page.title.len();
     for e in &page.elements {
         n = n.saturating_add(match &e.kind {
-            ElementKind::Outline(o) => o.paragraphs.iter().map(|p| p.runs.iter().map(|r| r.text.len() + 16).sum::<usize>() + 16).sum(),
+            ElementKind::Outline(o) => o.paragraphs().map(|p| p.runs.iter().map(|r| r.text.len() + 16).sum::<usize>() + 16).sum(),
             ElementKind::Image(i) => i.data.len(),
             ElementKind::EmbeddedFile { bytes, .. } => bytes.len(),
             ElementKind::Printout(p) => p.file_bytes.len().saturating_add(p.pages.iter().map(|i| i.data.len()).sum()),

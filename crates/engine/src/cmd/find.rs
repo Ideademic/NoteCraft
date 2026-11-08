@@ -1,11 +1,12 @@
-//! Find and Replace on the page (Ctrl+F): the title and every note container's text.
+//! Find and Replace on the page (Ctrl+F): the title and every note container's text, table
+//! cells included (a match in a cell names it: `"cell": {"block", "row", "col"}`).
 
 use notecraft_doc::{ElementKind, Guid, Paragraph};
 use serde_json::{Value, json};
 
 use super::{has_page, target_page};
 use crate::ids::{TEXT_FIND, TEXT_REPLACE};
-use crate::text;
+use crate::text::{self, Frame};
 use crate::{CmdError, CmdOutput, CmdResult, CommandSpec, Session, p};
 
 /// Longest search text, characters.
@@ -64,18 +65,18 @@ impl Opts {
     }
 }
 
-/// One match: the outline (`None`: the title), paragraph, char range.
-type Hit = (Option<Guid>, usize, usize, usize);
+/// One match: the outline (`None`: the title), the flow, paragraph, char range.
+type Hit = (Option<Guid>, Frame, usize, usize, usize);
 
 fn hits(page: &notecraft_doc::Page, o: &Opts) -> Vec<Hit> {
     let mut out = Vec::new();
     let title: Vec<char> = page.title.chars().collect();
-    out.extend(o.matches(&title).into_iter().map(|(a, b)| (None, 0, a, b)));
+    out.extend(o.matches(&title).into_iter().map(|(a, b)| (None, Frame::Top, 0, a, b)));
     for el in &page.elements {
         let ElementKind::Outline(ol) = &el.kind else { continue };
-        for (pi, para) in ol.paragraphs.iter().enumerate() {
+        for (frame, pi, para) in text::all_paragraphs(ol) {
             let chars: Vec<char> = para.text().chars().collect();
-            out.extend(o.matches(&chars).into_iter().map(|(a, b)| (Some(el.id), pi, a, b)));
+            out.extend(o.matches(&chars).into_iter().map(|(a, b)| (Some(el.id), frame, pi, a, b)));
             if out.len() >= MAX_MATCHES {
                 out.truncate(MAX_MATCHES);
                 return out;
@@ -88,7 +89,16 @@ fn hits(page: &notecraft_doc::Page, o: &Opts) -> Vec<Hit> {
 fn find(s: &mut Session, params: &Value) -> CmdResult {
     let o = Opts::from(params)?;
     let page = target_page(s, params)?;
-    let matches: Vec<Value> = hits(page, &o).into_iter().map(|(ol, pi, a, b)| json!({"outline": ol, "para": pi, "start": a, "end": b})).collect();
+    let matches: Vec<Value> = hits(page, &o)
+        .into_iter()
+        .map(|(ol, f, pi, a, b)| {
+            let mut m = json!({"outline": ol, "para": pi, "start": a, "end": b});
+            if let (Some(c), Value::Object(map)) = (f.cell(), &mut m) {
+                map.insert("cell".into(), c.to_json());
+            }
+            m
+        })
+        .collect();
     Ok(CmdOutput::query(json!({ "matches": matches })))
 }
 
@@ -126,21 +136,22 @@ fn replace(s: &mut Session, params: &Value) -> CmdResult {
         Some(v) => {
             let outline = p::guid(v, "outline")?;
             let n = |k: &str| p::index(v, k).ok_or_else(|| CmdError::Params(format!("`at` needs `{k}`")));
-            Some((outline, n("para")?, n("start")?))
+            let frame = Frame::from_json(v.get("cell")).ok_or_else(|| CmdError::Params("`at.cell` must be {\"block\", \"row\", \"col\"}".into()))?;
+            Some((outline, frame, n("para")?, n("start")?))
         }
         None => None,
     };
     let page = target_page(s, params)?;
     let mut todo = hits(page, &o);
-    if let Some((ol, pi, start)) = at {
-        todo.retain(|h| h.0 == ol && h.1 == pi && h.2 == start);
+    if let Some((ol, f, pi, start)) = at {
+        todo.retain(|h| h.0 == ol && h.1 == f && h.2 == pi && h.3 == start);
     }
     if todo.is_empty() {
         return Ok(CmdOutput { value: json!({"replaced": 0}), changed: false });
     }
     let n = todo.len();
     // Back to front, so earlier offsets stay right.
-    for (ol, pi, a, b) in todo.into_iter().rev() {
+    for (ol, frame, pi, a, b) in todo.into_iter().rev() {
         match ol {
             None => {
                 let mut t: Vec<char> = page.title.chars().collect();
@@ -150,7 +161,7 @@ fn replace(s: &mut Session, params: &Value) -> CmdResult {
                 }
             }
             Some(id) => {
-                if let Some(para) = page.outline_mut(id).and_then(|outline| outline.paragraphs.get_mut(pi)) {
+                if let Some(para) = page.outline_mut(id).and_then(|outline| text::flow_mut(outline, frame)).and_then(|fl| fl.para_mut(pi)) {
                     splice(para, a, b, &with);
                 }
             }
@@ -183,15 +194,15 @@ mod tests {
         let depth = s.undo_depth();
         let one = json!({"outline": ol, "para": 1, "start": 4});
         s.run(ids::TEXT_REPLACE, &json!({"query": "cat", "with": "dog", "at": one})).unwrap();
-        assert_eq!(s.current_page().unwrap().outline(ol).unwrap().paragraphs[1].text(), "the dog sat");
+        assert_eq!(s.current_page().unwrap().outline(ol).unwrap().para(1).unwrap().text(), "the dog sat");
         let r = s.run(ids::TEXT_REPLACE, &json!({"query": "cat", "with": "dog", "wholeWord": true})).unwrap();
         assert_eq!(r.value["replaced"], 3);
         assert_eq!(s.undo_depth(), depth + 2);
         let page = s.current_page().unwrap();
         assert_eq!(page.title, "dog notes");
         let o = page.outline(ol).unwrap();
-        assert_eq!(o.paragraphs[0].text(), "dog dog category");
-        assert!(o.paragraphs[0].runs.iter().any(|r| r.bold && r.text == "dog"), "the replacement keeps the formatting");
+        assert_eq!(o.para(0).unwrap().text(), "dog dog category");
+        assert!(o.para(0).unwrap().runs.iter().any(|r| r.bold && r.text == "dog"), "the replacement keeps the formatting");
         assert!(!s.run(ids::TEXT_REPLACE, &json!({"query": "zebra", "with": "x"})).unwrap().changed);
         assert!(s.undo());
         assert_eq!(s.current_page().unwrap().title, "Cat notes");
