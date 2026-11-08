@@ -236,14 +236,12 @@ fn edit(ui: &mut Ui, app: &mut NoteApp) {
     if widgets::small(ui, app, b) {
         crate::ribbon::editing::insert_space(app);
     }
-    let has_sel = !app.canvas.selection.strokes.is_empty() || !app.session.ink_selection.is_empty();
-    let b = Btn::new(Icon::Delete, tl!("Delete")).icon_only().help(tl!("Delete the selected ink.")).for_command(app, ids::DRAW_DELETE_SELECTION);
-    let b = Btn { enabled: b.enabled && has_sel, ..b };
+    let b = Btn::new(Icon::Delete, tl!("Delete"))
+        .icon_only()
+        .help(tl!("Delete the selected ink or items."))
+        .enabled(crate::ribbon::editing::can_delete_selection(app));
     if widgets::small(ui, app, b) {
-        // The canvas mirrors its lasso selection into `Session::ink_selection`, which the command
-        // deletes.
-        app.act(ids::DRAW_DELETE_SELECTION, json!({}));
-        app.canvas.selection.strokes.clear();
+        crate::ribbon::editing::delete_selection(app);
     }
     let b = Btn::new(Icon::Arrange, tl!("Arrange"))
         .icon_only()

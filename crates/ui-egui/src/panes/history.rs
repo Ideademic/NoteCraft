@@ -72,10 +72,20 @@ pub fn period_label(key: &str) -> &'static str {
     }
 }
 
-/// A time as the page list shows it, in the user's time zone.
+/// A time as the page list shows it, in the user's time zone: "Nov 8, 2026 9:41 PM", spelled
+/// out like the page's own date line so no reader takes the day for the month.
 pub fn when(t: DateTime<Utc>, offset_minutes: i32) -> String {
+    local(t, offset_minutes).format("%b %-d, %Y %-I:%M %p").to_string()
+}
+
+/// The day of `t` in the user's time zone, as [`when`] writes it: "Nov 8, 2026".
+pub fn day(t: DateTime<Utc>, offset_minutes: i32) -> String {
+    local(t, offset_minutes).format("%b %-d, %Y").to_string()
+}
+
+fn local(t: DateTime<Utc>, offset_minutes: i32) -> DateTime<FixedOffset> {
     let offset = FixedOffset::east_opt(offset_minutes.clamp(-14 * 60, 14 * 60) * 60).unwrap_or_else(|| Utc.fix());
-    t.with_timezone(&offset).format("%d/%m/%Y %-I:%M %p").to_string()
+    t.with_timezone(&offset)
 }
 
 // --- the recycle bin ------------------------------------------------------------------------
@@ -708,7 +718,10 @@ mod tests {
     fn times_follow_the_offset_and_keys_never_meet_live_revisions() {
         let t = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
         assert_ne!(when(t, 0), when(t, 120));
-        assert!(when(t, 99_999).contains('/'));
+        assert!(when(t, 99_999).contains(','));
+        let t = DateTime::from_timestamp(1_794_172_860, 0).unwrap();
+        assert_eq!(when(t, 0), "Nov 8, 2026 9:21 PM");
+        assert_eq!(day(t, 0), "Nov 8, 2026");
         let k = key_of(Guid::new(), 1);
         assert!(k >= 1 << 63);
         assert_ne!(key_of(Guid::NIL, 1), key_of(Guid::NIL, 2));

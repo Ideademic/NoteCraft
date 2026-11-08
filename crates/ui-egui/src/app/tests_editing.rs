@@ -286,3 +286,28 @@ fn the_picture_menu_turns_orders_and_copies_pictures() {
     h.run_steps(3);
     assert_eq!(h.state().session.current_page().unwrap().elements.len(), 3);
 }
+
+#[test]
+fn draw_delete_removes_a_selected_picture() {
+    for layout in [crate::ribbon::display::RibbonLayout::Classic, crate::ribbon::display::RibbonLayout::Simplified] {
+        let mut a = app();
+        a.ui.ribbon_layout = layout;
+        a.run(ids::PAGE_NEW, json!({"title": "Pictures", "blank": true})).unwrap();
+        let png = crate::app::files::png_from_rgba(4, 4, &[90; 64]).unwrap();
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &png);
+        let pic = id_of(&a.run(ids::EDIT_PASTE_PICTURE, json!({"bytesBase64": b64, "x": 200, "y": 200})).unwrap().value);
+        a.ui.ribbon_tab = crate::ribbon::RibbonTab::Draw;
+        let mut h = harness(a);
+        h.run_steps(3);
+        // Nothing selected: Delete has nothing to delete.
+        h.get_by_label("Delete").click();
+        h.run_steps(2);
+        assert!(h.state().session.current_page().unwrap().element(pic).is_some(), "{layout:?}");
+        h.state_mut().canvas.selection.elements = vec![pic];
+        h.run_steps(2);
+        h.get_by_label("Delete").click();
+        h.run_steps(3);
+        assert!(h.state().session.current_page().unwrap().element(pic).is_none(), "{layout:?}: the picture is deleted");
+        assert!(h.state().canvas.selection.elements.is_empty());
+    }
+}

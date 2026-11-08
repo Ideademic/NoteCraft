@@ -257,8 +257,9 @@ pub fn show(ui: &mut Ui, app: &mut NoteApp) {
         ui.vertical(|ui| {
             ui.set_width(280.0f32.min(width * 0.45));
             ui.horizontal(|ui| {
-                let busy = app.print.printer.busy();
-                if flat_button(ui, tl!("Print"), true, !busy) {
+                // Without a print service (a host that gives none) the note below says why.
+                let can = !app.print.printer.busy() && app.services.print.is_some();
+                if flat_button(ui, tl!("Print"), true, can) {
                     print(app);
                 }
                 if flat_button(ui, tl!("Save as PDF…"), false, true) {

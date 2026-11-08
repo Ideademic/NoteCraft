@@ -230,7 +230,8 @@ pub fn pane(ui: &mut Ui, app: &mut NoteApp) {
             );
             let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             let ok = !pane.name.trim().is_empty() && app.session.current_page().is_some();
-            if (widgets::flat_button(ui, tl!("Save"), false, ok) || (enter && ok)) && ok {
+            let clicked = widgets::flat_button(ui, tl!("Save"), false, ok);
+            if ok && (clicked || enter) {
                 save = Some(pane.name.trim().to_owned());
             }
         });

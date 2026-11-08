@@ -72,7 +72,10 @@ pub fn page_list(ui: &mut Ui, app: &mut NoteApp) {
         .session
         .current_section()
         .map(|s| {
-            s.pages.iter().map(|p| Row { id: p.id, title: p.title.clone(), level: p.level, when: p.created.format("%d/%m/%Y").to_string() }).collect()
+            s.pages
+                .iter()
+                .map(|p| Row { id: p.id, title: p.title.clone(), level: p.level, when: p.created.format("%b %-d, %Y").to_string() })
+                .collect()
         })
         .unwrap_or_default();
     let list = Rect::from_min_max(pos2(full.min.x + 1.0, header.max.y + 1.0), full.max);

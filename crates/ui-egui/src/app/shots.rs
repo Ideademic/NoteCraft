@@ -486,7 +486,11 @@ pub fn prepare(app: &mut NoteApp, shot: &str) {
             crate::backstage::open(app, BackstagePage::Open);
         }
         "backstage-export" => crate::backstage::open(app, BackstagePage::Export),
-        "backstage-print" => crate::backstage::open(app, BackstagePage::Print),
+        "backstage-print" => {
+            // As in the web app: the browser's print dialog.
+            app.services.print = Some(crate::Printing::Browser(Box::new(|_| Ok(()))));
+            crate::backstage::open(app, BackstagePage::Print);
+        }
         "backstage-options" => crate::backstage::open(app, BackstagePage::Options),
         "backstage-about" => crate::backstage::open(app, BackstagePage::About),
         "panes-collapsed" => {

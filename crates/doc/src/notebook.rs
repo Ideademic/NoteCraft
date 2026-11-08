@@ -149,10 +149,12 @@ pub struct SearchHit {
     pub snippet: String,
 }
 
-/// The welcome page's pen underline: from x, to x, at y (points).
-const UNDERLINE: (f32, f32, f32) = (35.0, 352.0, 128.0);
-/// The welcome page's highlighter sweep: from x, to x, at y (points).
-const SWEEP: (f32, f32, f32) = (33.0, 377.0, 156.5);
+/// The welcome page's pen underline: from x, to x, at y (points). Measured on the default font,
+/// Calibri, or its metric-compatible stand-in Carlito, which every release build embeds.
+const UNDERLINE: (f32, f32, f32) = (35.0, 325.0, 128.0);
+/// The welcome page's highlighter sweep: from x, to x, at y (points), over the second line of
+/// the intro in Calibri metrics, like [`UNDERLINE`].
+const SWEEP: (f32, f32, f32) = (33.0, 349.0, 158.5);
 
 impl Notebook {
     /// An empty notebook.
@@ -447,14 +449,15 @@ mod tests {
         assert_eq!(p.title, "Welcome to NoteCraft");
         assert_eq!(p.elements.len(), 1);
         assert_eq!(p.ink.len(), 2);
-        // The highlighter sweeps the whole sentence, the pen underlines the heading.
+        // The highlighter sweeps the whole sentence, the pen underlines the heading (in Calibri
+        // metrics the sentence ends near 342 pt and the heading near 321 pt).
         let hl = p.ink.iter().find(|s| s.tool == InkTool::Highlighter).unwrap();
         let xs = |s: &InkStroke| s.points.iter().map(|q| q.x).fold((f32::MAX, f32::MIN), |(a, b), x| (a.min(x), b.max(x)));
         let (from, to) = xs(hl);
-        assert!(from <= 36.0 && to >= 370.0, "{from}..{to}");
+        assert!(from <= 36.0 && to >= 345.0, "{from}..{to}");
         assert!(hl.points.len() > 2, "a sweep, not a ruler line");
         let pen = p.ink.iter().find(|s| s.tool == InkTool::Pen).unwrap();
-        assert!(xs(pen).1 - xs(pen).0 > 300.0);
+        assert!(xs(pen).0 <= 36.0 && xs(pen).1 >= 322.0);
         let ElementKind::Outline(o) = &p.elements[0].kind else { panic!("an outline") };
         assert_eq!(o.paragraphs().filter(|q| matches!(q.tag, Some(crate::Tag::ToDo { .. }))).count(), 4);
         assert_eq!(o.para(0).unwrap().style, crate::ParaStyle::Heading2);

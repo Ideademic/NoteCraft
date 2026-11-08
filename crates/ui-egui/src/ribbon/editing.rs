@@ -116,6 +116,25 @@ pub fn can_arrange(app: &NoteApp) -> bool {
     !app.canvas.selection.elements.is_empty() || has_ink_selection(app)
 }
 
+/// Whether Draw › Delete has selected ink or items (pictures, containers, files) to delete.
+pub fn can_delete_selection(app: &NoteApp) -> bool {
+    !app.canvas.selection.elements.is_empty() || !app.canvas.selection.strokes.is_empty() || has_ink_selection(app)
+}
+
+/// Draw › Delete: the selected ink and items, as the Delete key does on the page.
+pub fn delete_selection(app: &mut NoteApp) {
+    if has_ink_selection(app) || !app.canvas.selection.strokes.is_empty() {
+        // The canvas mirrors its lasso selection into `Session::ink_selection`, which the
+        // command deletes.
+        app.act(ids::DRAW_DELETE_SELECTION, json!({}));
+        app.canvas.selection.strokes.clear();
+    }
+    let page = app.canvas.page;
+    for el in std::mem::take(&mut app.canvas.selection.elements) {
+        app.act(ids::OUTLINE_DELETE, json!({"id": el, "page": page}));
+    }
+}
+
 /// Whether Rotate has a picture or ink to turn.
 pub fn can_rotate(app: &NoteApp) -> bool {
     !selected_pictures(app).is_empty() || has_ink_selection(app)

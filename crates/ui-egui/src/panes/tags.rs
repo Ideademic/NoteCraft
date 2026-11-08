@@ -152,8 +152,7 @@ pub fn grouped(items: &[Item], by: GroupBy, utc_offset_minutes: i32) -> Vec<(Str
             GroupBy::Date => match it.modified {
                 // Newest first: sort on the negated time.
                 Some(d) => {
-                    let local = crate::panes::history::when(d, utc_offset_minutes);
-                    let day = local.split(' ').next().unwrap_or("").to_owned();
+                    let day = crate::panes::history::day(d, utc_offset_minutes);
                     (format!("{:020}", i64::MAX - d.date_naive().and_hms_opt(0, 0, 0).map_or(0, |n| n.and_utc().timestamp())), day)
                 }
                 None => ("~".into(), tl!("No date").to_owned()),
