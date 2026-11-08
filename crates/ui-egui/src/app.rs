@@ -198,6 +198,9 @@ pub enum Prompt {
     Recovery { names: Vec<String> },
     /// A message with an OK button.
     Message { title: String, body: String },
+    /// A yes / no question that runs `command` with `params` on yes (Empty Recycle Bin, Delete
+    /// All Versions).
+    Confirm { title: String, body: String, yes: String, command: String, params: Value },
 }
 
 /// UI state that isn't part of the notebooks.
@@ -245,6 +248,12 @@ pub struct UiState {
     pub new_notebook_dir: Option<String>,
     /// File › Info: the notebook whose settings are open.
     pub info_notebook: Option<notecraft_doc::Guid>,
+    /// History ▸ Notebook Recycle Bin is open in the page area.
+    pub bin_view: Option<crate::panes::history::BinView>,
+    /// Where the user was when the recycle bin opened (going elsewhere closes it).
+    pub bin_opened_at: Location,
+    /// History ▸ Recent Edits is open, for this period (`history.recentEdits`'s `since`).
+    pub recent_edits: Option<String>,
     pub prefs: Prefs,
 }
 
@@ -277,6 +286,9 @@ impl Default for UiState {
             new_notebook_name: String::new(),
             new_notebook_dir: None,
             info_notebook: None,
+            bin_view: None,
+            bin_opened_at: Location::default(),
+            recent_edits: None,
             prefs,
         }
     }
@@ -288,6 +300,8 @@ pub struct NoteApp {
     pub services: Services,
     pub ui: UiState,
     pub canvas: CanvasState,
+    /// The canvas state of read-only pages (a page version, a page in the recycle bin).
+    pub preview_canvas: CanvasState,
     /// File › Print: its settings, preview and the job being sent.
     pub print: crate::backstage::print::PrintPage,
     pub tokens: Tokens,
@@ -317,6 +331,7 @@ impl NoteApp {
             services,
             ui,
             canvas: CanvasState::default(),
+            preview_canvas: CanvasState::default(),
             print: crate::backstage::print::PrintPage::default(),
             tokens: Tokens::light(),
             integrated_titlebar: false,
@@ -358,6 +373,21 @@ impl NoteApp {
         p.ribbon_layout = self.ui.ribbon_layout;
         p.ribbon_display = self.ui.ribbon_display;
         p
+    }
+
+    /// Takes the pages the user had seen (History ▸ Unread), as [`NoteApp::read_state_json`]
+    /// gave them: the host stores them beside its settings (`read.json`). Open notebooks the
+    /// state doesn't know count as read through.
+    pub fn load_read_state(&mut self, json: &str) {
+        self.session.read_state = notecraft_engine::unread::ReadState::from_json(json);
+        for nb in &self.session.notebooks {
+            self.session.read_state.adopt(nb);
+        }
+    }
+
+    /// The pages the user has seen, for the host to store.
+    pub fn read_state_json(&self) -> String {
+        self.session.read_state.to_json()
     }
 
     /// Whether command `id` exists (some land in later versions; their buttons stay greyed out).
@@ -547,3 +577,5 @@ impl NoteApp {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_history;

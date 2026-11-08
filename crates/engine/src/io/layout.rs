@@ -61,7 +61,37 @@ fn free(base: &str, used: &HashSet<String>, ext: bool) -> String {
 pub fn plan(nb: &Notebook, previous: Option<&Layout>, pin: Option<(Guid, &str)>) -> (Layout, Vec<FolderPlan>) {
     let mut w = Walker { previous, pin, layout: Layout::new(), folders: Vec::new() };
     w.walk(&nb.sections, Path::new(""), None, 0);
+    for (id, rel) in bin_files(nb) {
+        w.layout.insert(id, rel);
+    }
     (w.layout, w.folders)
+}
+
+/// The key the recycle bin's deleted pages section has in a [`Layout`]: the notebook id with its
+/// bits flipped (no section has it).
+pub fn deleted_pages_key(nb: &Notebook) -> Guid {
+    let mut g = nb.id.0;
+    for b in &mut g {
+        *b = !*b;
+    }
+    Guid(g)
+}
+
+/// The recycle bin's files: each deleted section by its id, the deleted pages section by
+/// [`deleted_pages_key`], relative to the notebook folder (`OneNote_RecycleBin/…`).
+pub fn bin_files(nb: &Notebook) -> Vec<(Guid, PathBuf)> {
+    let bin = Path::new(super::RECYCLE_BIN);
+    let mut out: Vec<(Guid, PathBuf)> =
+        notecraft_one::recycle_bin_names(&nb.recycle_bin).into_iter().map(|(id, name)| (id, bin.join(name))).collect();
+    if !nb.recycle_bin.pages.is_empty() {
+        out.push((deleted_pages_key(nb), bin.join(notecraft_one::DELETED_PAGES_FILE)));
+    }
+    out
+}
+
+/// Whether a laid-out path is in the recycle bin folder.
+pub fn in_bin(rel: &Path) -> bool {
+    rel.components().next().is_some_and(|c| c.as_os_str().eq_ignore_ascii_case(super::RECYCLE_BIN))
 }
 
 struct Walker<'a> {

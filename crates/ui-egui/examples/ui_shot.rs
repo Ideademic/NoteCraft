@@ -1,7 +1,7 @@
 //! Headless screenshots of the whole NoteCraft window, rendered offscreen with wgpu (works with
 //! a locked screen or no display).
 //!
-//! `cargo run -p notecraft-ui-egui --example ui_shot -- OUT_DIR [light|dark|all]`
+//! `cargo run -p notecraft-ui-egui --example ui_shot -- OUT_DIR [light|dark|all] [NAME_PREFIX]`
 //!
 //! Writes `main-light.png`, `main-dark.png`, one per ribbon tab (`tab-insert-light.png`…), the
 //! backstage pages, the collapsed panes, and the ribbon's layouts and display options
@@ -9,6 +9,11 @@
 
 use notecraft_engine::Session;
 use notecraft_ui_egui::{Appearance, NoteApp, Services};
+
+/// An optional third argument: only the shots whose names start with it (`history`).
+fn args_filter() -> Option<String> {
+    std::env::args().nth(3)
+}
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -21,10 +26,13 @@ fn main() {
         _ => vec![(Appearance::Light, "light"), (Appearance::Dark, "dark")],
     };
     for (appearance, name) in themes {
+        let filter = args_filter();
         let shots = notecraft_ui_egui::app::shots::SHOTS
             .iter()
             .chain(notecraft_ui_egui::app::shots::RIBBON_SHOTS.iter())
-            .chain(notecraft_ui_egui::app::shots::PLATFORM_SHOTS.iter());
+            .chain(notecraft_ui_egui::app::shots::PLATFORM_SHOTS.iter())
+            .chain(notecraft_ui_egui::app::shots::HISTORY_SHOTS.iter())
+            .filter(|s| filter.as_ref().is_none_or(|f| s.starts_with(f.as_str())));
         for &shot in shots {
             let mut app = NoteApp::new(Session::new_default(), Services::default());
             app.ui.prefs.appearance = appearance;

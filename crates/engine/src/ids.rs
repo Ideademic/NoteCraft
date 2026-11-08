@@ -85,6 +85,23 @@ pub const NAV_PAGE: &str = "nav.page";
 
 pub const SEARCH: &str = "search";
 
+pub const HISTORY_RECYCLE_BIN: &str = "history.recycleBin";
+pub const HISTORY_RESTORE: &str = "history.restore";
+pub const HISTORY_DELETE_FOREVER: &str = "history.deleteForever";
+pub const HISTORY_EMPTY_RECYCLE_BIN: &str = "history.emptyRecycleBin";
+pub const HISTORY_VERSIONS: &str = "history.versions";
+pub const HISTORY_VIEW_VERSION: &str = "history.viewVersion";
+pub const HISTORY_RESTORE_VERSION: &str = "history.restoreVersion";
+pub const HISTORY_DELETE_VERSION: &str = "history.deleteVersion";
+pub const HISTORY_DELETE_ALL_VERSIONS: &str = "history.deleteAllVersions";
+pub const HISTORY_SHOW_VERSIONS: &str = "history.showVersions";
+pub const HISTORY_DISABLE: &str = "history.disableHistory";
+pub const HISTORY_MARK_READ: &str = "history.markRead";
+pub const HISTORY_MARK_UNREAD: &str = "history.markUnread";
+pub const HISTORY_TOGGLE_READ: &str = "history.toggleRead";
+pub const HISTORY_NEXT_UNREAD: &str = "history.nextUnread";
+pub const HISTORY_RECENT_EDITS: &str = "history.recentEdits";
+
 /// Every id above, for tests and tooling.
 pub const ALL: &[&str] = &[
     NOTEBOOK_NEW,
@@ -159,4 +176,20 @@ pub const ALL: &[&str] = &[
     NAV_SECTION,
     NAV_PAGE,
     SEARCH,
+    HISTORY_RECYCLE_BIN,
+    HISTORY_RESTORE,
+    HISTORY_DELETE_FOREVER,
+    HISTORY_EMPTY_RECYCLE_BIN,
+    HISTORY_VERSIONS,
+    HISTORY_VIEW_VERSION,
+    HISTORY_RESTORE_VERSION,
+    HISTORY_DELETE_VERSION,
+    HISTORY_DELETE_ALL_VERSIONS,
+    HISTORY_SHOW_VERSIONS,
+    HISTORY_DISABLE,
+    HISTORY_MARK_READ,
+    HISTORY_MARK_UNREAD,
+    HISTORY_TOGGLE_READ,
+    HISTORY_NEXT_UNREAD,
+    HISTORY_RECENT_EDITS,
 ];

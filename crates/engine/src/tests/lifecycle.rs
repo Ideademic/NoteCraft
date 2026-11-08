@@ -55,7 +55,7 @@ struct JsonFolder(PathBuf);
 
 impl Storage for JsonFolder {
     fn save(&mut self, nb: &Notebook, origin: &Origin, dirty: &HashSet<Guid>, toc: bool) -> Result<Option<Origin>, IoError> {
-        let job = SaveJob { notebook: nb, origin, dirty_sections: dirty, toc_dirty: toc, previous: None };
+        let job = SaveJob { notebook: nb, origin, dirty_sections: dirty, toc_dirty: toc, bin_dirty: true, previous: None };
         Ok(self.save_notebook(&job)?.origin)
     }
     fn save_notebook(&mut self, job: &SaveJob<'_>) -> Result<SaveOutcome, IoError> {
@@ -97,7 +97,7 @@ fn folder_saves_follow_renames_and_warn_once() {
     s.save_dirty().unwrap();
     assert!(dir.join("Inbox.one").is_file());
     assert!(!dir.join("Quick Notes.one").exists());
-    assert!(dir.join(crate::io::RECYCLE_BIN).join("Quick Notes.one").is_file());
+    assert!(dir.join(crate::io::RECYCLE_BIN).join("Quick Notes.one.bak").is_file(), "kept, as a backup");
     // A new notebook goes to its own folder under the root and into the recent list.
     s.run(ids::NOTEBOOK_NEW, &json!({"name": "Work"})).unwrap();
     s.save_dirty().unwrap();

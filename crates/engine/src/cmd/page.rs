@@ -1,6 +1,7 @@
-//! Pages: new, new subpage, delete, rename, move, indent / outdent (make subpage).
+//! Pages: new, new subpage, delete (to the recycle bin), rename, move, indent / outdent (make
+//! subpage).
 
-use notecraft_doc::{Page, Section, page::MAX_PAGE_LEVEL};
+use notecraft_doc::{DeletedPage, Page, Section, page::MAX_PAGE_LEVEL};
 use serde_json::{Value, json};
 
 use super::{has_page, has_section, id_or};
@@ -69,15 +70,20 @@ fn new_subpage(s: &mut Session, params: &Value) -> CmdResult {
     insert_page(s, None, title, true)
 }
 
-/// Deletes one page (its subpages stay, one level up where needed).
+/// Deletes one page (its subpages stay, one level up where needed) into the notebook's recycle
+/// bin (History ▸ Notebook Recycle Bin).
 fn delete(s: &mut Session, params: &Value) -> CmdResult {
     let id = id_or(params, s.current.page, "page")?;
-    let sec = s.notebooks.iter_mut().find_map(|n| n.all_sections_mut().into_iter().find(|x| x.page(id).is_some()));
-    let sec = sec.ok_or_else(|| CmdError::Params(format!("no page {id}")))?;
+    let now = s.now();
+    let nb = s.notebooks.iter_mut().find(|n| n.find_page(id).is_some()).ok_or_else(|| CmdError::Params(format!("no page {id}")))?;
+    let sec = nb.all_sections_mut().into_iter().find(|x| x.page(id).is_some()).ok_or_else(|| CmdError::Params(format!("no page {id}")))?;
     let i = sec.page_index(id).ok_or_else(|| CmdError::Params(format!("no page {id}")))?;
-    sec.pages.remove(i);
+    let page = sec.pages.remove(i);
     normalize_levels(sec);
+    let deleted = DeletedPage { page, deleted: now, section: sec.id, section_name: sec.name.clone(), index: i };
     let next = sec.pages.get(i).or_else(|| i.checked_sub(1).and_then(|j| sec.pages.get(j))).map(|p| p.id);
+    nb.recycle_bin.pages.push(deleted);
+    nb.recycle_bin.cap();
     if s.current.page == Some(id) {
         s.current.page = next;
     }

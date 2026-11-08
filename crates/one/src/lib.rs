@@ -31,8 +31,10 @@ mod ink;
 mod notebook;
 mod opaque;
 mod read;
+mod recycle;
 mod toc;
 mod util;
+mod versions;
 mod write;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -44,6 +46,10 @@ use notecraft_doc::{Color, Guid, Section};
 use notecraft_doc::Notebook;
 
 pub use notebook::{NotebookFile, notebook_files, notebook_from_files};
+pub use recycle::{
+    DELETED_PAGES_FILE, RECYCLE_BIN_FOLDER, read_recycle_bin, recycle_bin_files, recycle_bin_names, write_deleted_pages, write_deleted_section,
+};
+pub use versions::history_context;
 pub use write::WRITER_NAME;
 
 /// The table of contents' file name in a notebook folder and in each section group folder.
@@ -74,6 +80,9 @@ pub struct NotebookToc {
     pub name: String,
     pub color: Color,
     pub entries: Vec<TocEntry>,
+    /// History ▸ Disable History for this Notebook: MS-ONE EnableHistory false (only the
+    /// notebook's own table of contents carries it).
+    pub history_disabled: bool,
 }
 
 /// One entry of a [`NotebookToc`], in tab order.

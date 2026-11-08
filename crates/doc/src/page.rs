@@ -120,6 +120,10 @@ pub struct Page {
     /// Page-level ink in page points, drawn above the elements, oldest first. See [`crate::ink`].
     #[serde(default)]
     pub ink: Vec<InkStroke>,
+    /// Earlier versions of the page, oldest first (History ▸ Page Versions). See
+    /// [`crate::history`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub versions: Vec<crate::PageVersion>,
 }
 
 impl Page {
@@ -140,6 +144,7 @@ impl Page {
             background: PageBackground::default(),
             elements: Vec::new(),
             ink: Vec::new(),
+            versions: Vec::new(),
         }
     }
 

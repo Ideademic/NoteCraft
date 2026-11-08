@@ -138,24 +138,43 @@ fn parse_snapshot(bytes: &[u8]) -> Result<SessionSnapshot, IoError> {
 /// Bounds a notebook read from JSON the way the file readers bound theirs.
 pub(crate) fn sanitize(mut nb: Notebook) -> Notebook {
     for s in nb.all_sections_mut() {
-        for pg in &mut s.pages {
-            pg.level = pg.level.min(notecraft_doc::page::MAX_PAGE_LEVEL);
-            pg.elements.truncate(notecraft_doc::page::MAX_ELEMENTS_PER_PAGE);
-            pg.ink.truncate(notecraft_doc::ink::MAX_INK_PER_PAGE);
-            pg.ink = std::mem::take(&mut pg.ink).into_iter().map(notecraft_doc::InkStroke::sanitized).collect();
-            for el in &mut pg.elements {
-                if let Some(p) = el.pos() {
-                    el.set_pos(p);
-                }
-                if let notecraft_doc::ElementKind::Outline(o) = &mut el.kind {
-                    o.paragraphs.truncate(notecraft_doc::page::MAX_PARAGRAPHS);
-                    o.paragraphs = std::mem::take(&mut o.paragraphs).into_iter().map(notecraft_doc::Paragraph::sanitized).collect();
-                    o.width = if o.width.is_finite() { o.width.clamp(1.0, 100_000.0) } else { notecraft_doc::page::DEFAULT_OUTLINE_WIDTH };
-                }
-            }
-        }
+        s.pages.iter_mut().for_each(sanitize_page);
+    }
+    // The recycle bin: bounded like the readers bound it, and its contents like live pages.
+    nb.recycle_bin.cap();
+    for d in &mut nb.recycle_bin.pages {
+        sanitize_page(&mut d.page);
+    }
+    for d in &mut nb.recycle_bin.sections {
+        d.group_path.truncate(notecraft_doc::notebook::MAX_GROUP_DEPTH);
+        d.section.pages.iter_mut().for_each(sanitize_page);
     }
     nb
+}
+
+/// Bounds one page and its versions.
+fn sanitize_page(pg: &mut notecraft_doc::Page) {
+    pg.level = pg.level.min(notecraft_doc::page::MAX_PAGE_LEVEL);
+    pg.elements.truncate(notecraft_doc::page::MAX_ELEMENTS_PER_PAGE);
+    pg.ink.truncate(notecraft_doc::ink::MAX_INK_PER_PAGE);
+    pg.ink = std::mem::take(&mut pg.ink).into_iter().map(notecraft_doc::InkStroke::sanitized).collect();
+    for el in &mut pg.elements {
+        if let Some(p) = el.pos() {
+            el.set_pos(p);
+        }
+        if let notecraft_doc::ElementKind::Outline(o) = &mut el.kind {
+            o.paragraphs.truncate(notecraft_doc::page::MAX_PARAGRAPHS);
+            o.paragraphs = std::mem::take(&mut o.paragraphs).into_iter().map(notecraft_doc::Paragraph::sanitized).collect();
+            o.width = if o.width.is_finite() { o.width.clamp(1.0, 100_000.0) } else { notecraft_doc::page::DEFAULT_OUTLINE_WIDTH };
+        }
+    }
+    notecraft_doc::history::trim_versions(&mut pg.versions);
+    for v in &mut pg.versions {
+        let mut copy = (*v.page).clone();
+        copy.versions.clear();
+        sanitize_page(&mut copy);
+        v.page = std::sync::Arc::new(copy);
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]

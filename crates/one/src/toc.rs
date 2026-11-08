@@ -47,6 +47,9 @@ pub fn toc_store(toc: &NotebookToc, entry_ids: &[Guid], ancestor: Guid) -> Store
         p.push(prop::NC_TOC_ENTRIES, PropertyValue::Ids(entries));
     }
     p.push(prop::NOTEBOOK_COLOR, PropertyValue::U32(to_colorref(toc.color))).push(prop::NC_TOC_NAME, wz_bytes(&toc.name));
+    if toc.history_disabled {
+        p.push(prop::ENABLE_HISTORY, PropertyValue::Bool(false));
+    }
     let root = b.add(jcid::TOC_CONTAINER, p);
     b.root(role::CONTENT, root);
     Store {
@@ -81,7 +84,8 @@ pub fn toc(store: &Store) -> Result<(NotebookToc, Vec<Option<Guid>>)> {
         ids.push(guid(p, prop::FILE_IDENTITY_GUID));
         entries.push(e);
     }
-    Ok((NotebookToc { id: store.file_id, name, color, entries }, ids))
+    let history_disabled = root.and_then(|r| r.props.bool(prop::ENABLE_HISTORY)) == Some(false);
+    Ok((NotebookToc { id: store.file_id, name, color, entries, history_disabled }, ids))
 }
 
 fn entry(p: &PropertySet) -> Option<TocEntry> {

@@ -10,6 +10,7 @@
 //!
 //! Everything changes the notebooks through commands; renames happen in place.
 
+pub mod history;
 pub mod notebooks;
 pub mod pages;
 pub mod search;

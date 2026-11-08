@@ -173,6 +173,7 @@ fn toc_round_trip() {
             TocEntry::Group { folder_name: "Work".into() },
             TocEntry::Section { file_name: "Later.one".into(), color: None },
         ],
+        history_disabled: true,
     };
     assert_eq!(read_toc(&write_toc(&t).unwrap()).unwrap(), t);
     assert!(read_section(&write_toc(&t).unwrap()).is_err());
@@ -249,16 +250,85 @@ fn notebook_dir_round_trip() {
     std::fs::write(dir.join("Zebra.one.bak"), b"backup").unwrap();
     std::fs::write(dir.join(".notecraft-save-Zebra.one.tmp"), b"partial").unwrap();
     std::fs::write(dir.join("Broken.one"), b"not a section").unwrap();
-    let back = read_notebook_dir(&dir).unwrap();
+    let mut back = read_notebook_dir(&dir).unwrap();
     let _ = std::fs::remove_dir_all(&dir);
+    // A section in the recycle bin is read as deleted, not as a section of the notebook.
+    let bin = std::mem::take(&mut back.recycle_bin);
+    assert_eq!(bin.sections.len(), 1);
+    assert_eq!(bin.sections[0].section.name, "Old");
     assert_eq!(normalize_nb(back), as_loaded(nb));
+}
+
+#[test]
+fn page_versions_round_trip() {
+    let mut s = sample_section();
+    let page = s.pages.first_mut().unwrap();
+    let mut old = page.clone();
+    old.title = "Welcome (draft)".into();
+    old.elements.truncate(1);
+    old.modified = at(1_700_000_050);
+    let mut v1 = notecraft_doc::PageVersion::of(&old);
+    v1.saved = DateTime::from_timestamp(1_700_000_050, 123_400).unwrap();
+    old.title = "Welcome (second draft)".into();
+    old.modified = at(1_700_000_060);
+    let v2 = notecraft_doc::PageVersion::of(&old);
+    page.versions = vec![v1.clone(), v2.clone()];
+    let bytes = write_section(&s).unwrap();
+    // On disk: the version history context and one context per version.
+    let store = notecraft_onestore::read(&bytes).unwrap();
+    let space = store.spaces.iter().find(|sp| sp.id.guid == s.pages[0].id.0).unwrap();
+    assert_eq!(space.contexts.len(), 3);
+    assert!(space.context(crate::history_context()).is_some());
+    let back = read_section(&bytes).unwrap();
+    let vs = &back.pages[0].versions;
+    assert_eq!(vs.len(), 2);
+    assert_eq!((vs[0].id, vs[0].saved), (v1.id, v1.saved));
+    assert_eq!(vs[0].page.title, "Welcome (draft)");
+    assert_eq!(vs[0].page.elements.len(), 1);
+    assert_eq!(vs[1].page.title, "Welcome (second draft)");
+    assert!(vs[1].page.versions.is_empty());
+    // The page itself reads as before.
+    let mut plain = back.clone();
+    plain.pages[0].versions.clear();
+    let mut expected = s.clone();
+    expected.pages[0].versions.clear();
+    assert_eq!(read_section(&write_section(&plain).unwrap()).unwrap(), plain);
+    assert_eq!(plain.pages[0].title, expected.pages[0].title);
+    // Rewriting what was read keeps the versions.
+    assert_eq!(read_section(&write_section(&back).unwrap()).unwrap().pages[0].versions, back.pages[0].versions);
+}
+
+#[test]
+fn notebook_files_carry_the_recycle_bin_and_history_setting() {
+    let mut nb = sample_notebook();
+    nb.history_disabled = true;
+    let mut gone = Section::new("Gone", Color::WHITE);
+    gone.pages.push(Page::new_at("Lost page", at(1_700_000_000)));
+    nb.recycle_bin.sections.push(notecraft_doc::DeletedSection { section: gone, deleted: at(1_750_000_000), group_path: vec![], index: 1 });
+    nb.recycle_bin.pages.push(notecraft_doc::DeletedPage {
+        page: Page::new_at("Deleted page", at(1_700_000_000)),
+        deleted: at(1_760_000_000),
+        section: Guid::new(),
+        section_name: "Quick Notes".into(),
+        index: 0,
+    });
+    let files = notebook_files(&nb).unwrap();
+    let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+    assert!(paths.contains(&"OneNote_RecycleBin/Gone.one"), "{paths:?}");
+    assert!(paths.contains(&"OneNote_RecycleBin/OneNote_DeletedPages.one"));
+    let (back, _) = notebook_from_files(&files, "x").unwrap();
+    assert!(back.history_disabled);
+    assert_eq!(back.recycle_bin.sections.len(), 1);
+    assert_eq!(back.recycle_bin.sections[0].section.pages[0].title, "Lost page");
+    assert_eq!(back.recycle_bin.pages[0].page.title, "Deleted page");
+    assert_eq!(back.all_sections().len(), nb.all_sections().len(), "bin sections stay out of the notebook");
 }
 
 #[test]
 fn hostile_sections_never_panic() {
     let good = [
         write_section(&sample_section()).unwrap(),
-        write_toc(&NotebookToc { id: Guid::new(), name: "x".into(), color: Color::WHITE, entries: vec![] }).unwrap(),
+        write_toc(&NotebookToc { id: Guid::new(), name: "x".into(), color: Color::WHITE, entries: vec![], history_disabled: false }).unwrap(),
     ];
     let mut state = 0x2545_F491_4F6C_DD1Du64;
     let mut next = || {

@@ -97,6 +97,8 @@ pub struct SaveJob<'a> {
     pub dirty_sections: &'a HashSet<Guid>,
     /// The table of contents (names, colours, order) changed.
     pub toc_dirty: bool,
+    /// The recycle bin changed.
+    pub bin_dirty: bool,
     /// Where each section was saved last time (from opening, or the previous save); `None`
     /// before the first save.
     pub previous: Option<&'a Layout>,
@@ -228,6 +230,7 @@ pub fn save_dirty(session: &mut Session) -> Result<usize, IoError> {
             origin: &origin,
             dirty_sections: &sections,
             toc_dirty: session.dirty_tocs.contains(&id),
+            bin_dirty: session.dirty_bins.contains(&id),
             previous: session.layouts.get(&id),
         };
         match storage.save_notebook(&job) {
@@ -270,6 +273,7 @@ impl Session {
             self.dirty.remove(s);
         }
         self.dirty_tocs.remove(&id);
+        self.dirty_bins.remove(&id);
         let fresh: Vec<Guid> = out.backed_up.iter().copied().filter(|s| self.warned_unsupported.insert(*s)).collect();
         let warn: Vec<String> = fresh
             .iter()
@@ -302,7 +306,7 @@ impl FolderStorage {
 #[cfg(not(target_arch = "wasm32"))]
 impl Storage for FolderStorage {
     fn save(&mut self, notebook: &Notebook, origin: &Origin, dirty: &HashSet<Guid>, toc_dirty: bool) -> Result<Option<Origin>, IoError> {
-        let job = SaveJob { notebook, origin, dirty_sections: dirty, toc_dirty, previous: None };
+        let job = SaveJob { notebook, origin, dirty_sections: dirty, toc_dirty, bin_dirty: true, previous: None };
         Ok(self.save_notebook(&job)?.origin)
     }
 
