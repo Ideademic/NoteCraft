@@ -7,7 +7,7 @@
 use egui::epaint::{CornerRadius, PathShape};
 use egui::text::CCursor;
 use egui::{Align2, Color32, FontId, Painter, Rect, Shape, Stroke, StrokeKind, pos2, vec2};
-use notecraft_doc::{ListStyle, Page, Tag};
+use notecraft_doc::{Page, Tag};
 
 use super::layout::{OutlineLayout, PageLayout};
 use super::style::{Ink, MARKER_W, Marker};
@@ -145,28 +145,7 @@ fn paint_marker(painter: &Painter, o: &OutlineLayout, v: &View, i: usize, ink: &
         Marker::Bullet(style) => {
             let r = (p.size_px * 0.15).clamp(1.5, 12.0);
             let c = pos2(top.x + p.marker_x + MARKER_W * v.scale * 0.4, cy);
-            let w = (r * 0.4).max(1.0);
-            match style {
-                ListStyle::Circle => {
-                    painter.circle_stroke(c, r - 0.5, Stroke::new((r * 0.35).max(1.0), color));
-                }
-                ListStyle::Square => {
-                    painter.rect_filled(Rect::from_center_size(c, vec2(r * 1.7, r * 1.7)), 0.0, color);
-                }
-                ListStyle::Dash => {
-                    painter.line_segment([pos2(c.x - r * 1.4, c.y), pos2(c.x + r * 1.4, c.y)], Stroke::new(w, color));
-                }
-                ListStyle::Arrow => {
-                    // A solid arrowhead pointing at the text.
-                    let s = r * 1.5;
-                    let pts = vec![pos2(c.x - s * 0.7, c.y - s), pos2(c.x + s * 0.9, c.y), pos2(c.x - s * 0.7, c.y + s), pos2(c.x - s * 0.2, c.y)];
-                    painter.add(Shape::convex_polygon(vec![pts[0], pts[1], pts[3]], color, Stroke::NONE));
-                    painter.add(Shape::convex_polygon(vec![pts[3], pts[1], pts[2]], color, Stroke::NONE));
-                }
-                _ => {
-                    painter.circle_filled(c, r, color);
-                }
-            }
+            crate::icons::paint_bullet(painter, c, r, *style, color);
         }
         Marker::Number(label) => {
             let font = p.galley.job.sections.first().map_or_else(|| FontId::proportional(p.size_px), |s| s.format.font_id.clone());

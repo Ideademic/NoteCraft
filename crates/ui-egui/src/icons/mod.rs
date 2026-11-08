@@ -430,8 +430,35 @@ pub fn tag_icon(tag: notecraft_doc::Tag) -> Option<Icon> {
     })
 }
 
-/// A notebook icon in the notebook's own colour (the notebook pane, the File menu lists).
+/// A list bullet of `style` centred at `c`, `r` its radius: the canvas's markers and the
+/// Bullets menu draw the same shapes.
+pub fn paint_bullet(painter: &Painter, c: Pos2, r: f32, style: notecraft_doc::ListStyle, color: Color32) {
+    use notecraft_doc::ListStyle;
+    let w = (r * 0.4).max(1.0);
+    match style {
+        ListStyle::Circle => {
+            painter.circle_stroke(c, r - 0.5, Stroke::new((r * 0.35).max(1.0), color));
+        }
+        ListStyle::Square => {
+            painter.rect_filled(Rect::from_center_size(c, vec2(r * 1.7, r * 1.7)), 0.0, color);
+        }
+        ListStyle::Dash => {
+            painter.line_segment([pos2(c.x - r * 1.4, c.y), pos2(c.x + r * 1.4, c.y)], Stroke::new(w, color));
+        }
+        ListStyle::Arrow => {
+            // A solid arrowhead pointing at the text, in two convex halves.
+            let s = r * 1.5;
+            let (top, tip, bottom, notch) = (pos2(c.x - s * 0.7, c.y - s), pos2(c.x + s * 0.9, c.y), pos2(c.x - s * 0.7, c.y + s), pos2(c.x - s * 0.2, c.y));
+            painter.add(Shape::convex_polygon(vec![top, tip, notch], color, Stroke::NONE));
+            painter.add(Shape::convex_polygon(vec![notch, tip, bottom], color, Stroke::NONE));
+        }
+        _ => {
+            painter.circle_filled(c, r, color);
+        }
+    }
+}
 
+/// A notebook icon in the notebook's own colour (the notebook pane, the File menu lists).
 pub fn paint_notebook(painter: &Painter, rect: Rect, color: Color32) {
     deck::extra::paint_mode(painter, rect, Extra::Notebook(crate::theme::opaque(color)), Color32::from_gray(0x80), Mode::Colour);
 }

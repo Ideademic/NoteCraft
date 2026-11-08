@@ -255,6 +255,8 @@ pub struct FontLibrary {
     cache: Mutex<(u64, HashMap<CacheKey, Option<Resolved>>)>,
     /// Families offered, of the current generation.
     families: Mutex<Option<(u64, Arc<[String]>)>>,
+    /// Polls for installed and removed fonts (desktop) while the library lives.
+    watch: Mutex<Option<craft_font_catalog::Watch>>,
     /// Changes not counted by the catalog (the fallback fonts for other scripts becoming ready).
     extra: AtomicU64,
 }
@@ -276,7 +278,14 @@ impl FontLibrary {
                 Bundled { family: f.family, weight, italic, bytes: f.bytes }
             })
             .collect();
-        FontLibrary { catalog, bundled, cache: Mutex::new((u64::MAX, HashMap::new())), families: Mutex::new(None), extra: AtomicU64::new(0) }
+        FontLibrary {
+            catalog,
+            bundled,
+            cache: Mutex::new((u64::MAX, HashMap::new())),
+            families: Mutex::new(None),
+            watch: Mutex::new(None),
+            extra: AtomicU64::new(0),
+        }
     }
 
     /// The catalog of installed and added fonts.
@@ -284,15 +293,21 @@ impl FontLibrary {
         &self.catalog
     }
 
-    /// Start reading the installed fonts without waiting: on a background thread on the desktop;
-    /// on the web (no font folders, no threads) the scan finds nothing and is done at once.
+    /// Start reading the installed fonts without waiting: on a background thread on the desktop,
+    /// which then looks for fonts installed or removed every few seconds (the generation moves on
+    /// when it finds some); on the web (no font folders, no threads) the scan finds nothing and is
+    /// done at once.
     pub fn start(&self) {
         if cfg!(target_arch = "wasm32") {
             if !self.catalog.is_ready() {
                 self.catalog.rescan();
             }
-        } else {
-            self.catalog.scan_in_background();
+            return;
+        }
+        self.catalog.scan_in_background();
+        let mut watch = self.watch.lock().unwrap_or_else(PoisonError::into_inner);
+        if watch.is_none() {
+            *watch = Some(self.catalog.watch(std::time::Duration::from_secs(5), |_| {}));
         }
     }
 

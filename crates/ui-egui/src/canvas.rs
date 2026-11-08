@@ -363,6 +363,9 @@ pub struct CurrentFormat {
     pub size: Option<Option<f32>>,
     pub style: Option<notecraft_doc::ParaStyle>,
     pub list: Option<Option<notecraft_doc::ListKind>>,
+    /// The list marker style in effect (the level's default included).
+    pub list_style: Option<Option<notecraft_doc::ListStyle>>,
+    pub align: Option<notecraft_doc::Align>,
     pub tag: Option<Option<notecraft_doc::Tag>>,
 }
 

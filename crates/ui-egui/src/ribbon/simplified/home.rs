@@ -6,14 +6,14 @@
 //! size and colours shown are the ones the classic tab remembers.
 
 use egui::{Align2, Color32, Sense, Ui, pos2, vec2};
-use notecraft_doc::{ListKind, ParaStyle};
+use notecraft_doc::ParaStyle;
 use notecraft_engine::ids;
 use serde_json::{Value, json};
 
 use super::Segment;
 use crate::canvas::CurrentFormat;
 use crate::icons::Icon;
-use crate::ribbon::home::{FONTS, SIZES, STYLE_ORDER, format, format_state, style_label};
+use crate::ribbon::home::{SIZES, STYLE_ORDER, format, format_state, shown_size, style_label};
 use crate::theme::{RADIUS_SMALL, regular};
 use crate::widgets::{self, Btn, color};
 use crate::{NoteApp, tl};
@@ -98,38 +98,19 @@ fn size_text(s: f32) -> String {
 }
 
 fn font(ui: &mut Ui, app: &mut NoteApp) {
-    if let Some(st) = format_state(app) {
-        if let Some(Some(f)) = st.font {
-            remember(ui, "nc_font", f);
-        }
-        if let Some(Some(sz)) = st.size {
-            remember(ui, "nc_size", sz);
-        }
+    let size = shown_size(app, ui);
+    if let Some(sz) = size
+        && format_state(app).is_some()
+    {
+        remember(ui, "nc_size", sz);
     }
-    ui.add_enabled_ui(app.can(ids::FORMAT_FONT), |ui| {
-        let font: String = remembered(ui, "nc_font", "Calibri".to_owned());
-        let mut pick = None;
-        let r = craft_ui::ComboBox::from_id_salt("nc_simple_font").width(104.0).selected_text(font.clone()).show_ui(ui, |ui| {
-            for f in FONTS {
-                if ui.selectable_label(f == font, f).clicked() {
-                    pick = Some(f);
-                }
-            }
-        });
-        r.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tl!("Font")));
-        r.response.on_hover_text(tl!("Font"));
-        if let Some(f) = pick {
-            remember(ui, "nc_font", f.to_owned());
-            format(app, ids::FORMAT_FONT, json!({ "font": f }));
-        }
-    });
+    crate::ribbon::font_box::show(ui, app, "simplified", 104.0);
     ui.add_space(2.0);
     ui.add_enabled_ui(app.can(ids::FORMAT_SIZE), |ui| {
-        let size: f32 = remembered(ui, "nc_size", 11.0);
         let mut pick = None;
-        let r = craft_ui::ComboBox::from_id_salt("nc_simple_size").width(44.0).selected_text(size_text(size)).show_ui(ui, |ui| {
+        let r = craft_ui::ComboBox::from_id_salt("nc_simple_size").width(44.0).selected_text(size.map(size_text).unwrap_or_default()).show_ui(ui, |ui| {
             for s in SIZES {
-                if ui.selectable_label(s == size, size_text(s)).clicked() {
+                if ui.selectable_label(Some(s) == size, size_text(s)).clicked() {
                     pick = Some(s);
                 }
             }
@@ -186,43 +167,9 @@ fn text(ui: &mut Ui, app: &mut NoteApp) {
     }
 }
 
-fn bullet_name(name: &str) -> &'static str {
-    match name {
-        "disc" => tl!("Filled round bullet"),
-        "circle" => tl!("Hollow round bullet"),
-        "square" => tl!("Square bullet"),
-        _ => tl!("Dash bullet"),
-    }
-}
-
 fn paragraph(ui: &mut Ui, app: &mut NoteApp) {
-    let list = format_state(app).and_then(|f| f.list).flatten();
-    let b = Btn::new(Icon::Bullets, tl!("Bullets")).checked(list == Some(ListKind::Bullet)).for_command(app, ids::FORMAT_BULLETS);
-    if widgets::small_split(ui, app, b, |ui, app| {
-        for (glyph, name) in [("•", "disc"), ("o", "circle"), ("·", "square"), ("–", "dash")] {
-            if widgets::menu_item(ui, None, &format!("{glyph}   {}", bullet_name(name)), true) {
-                format(app, ids::FORMAT_BULLETS, json!({ "bullet": name }));
-            }
-        }
-        if widgets::menu_item(ui, None, tl!("None"), true) {
-            format(app, ids::FORMAT_BULLETS, json!({ "value": false }));
-        }
-    }) {
-        format(app, ids::FORMAT_BULLETS, Value::Null);
-    }
-    let b = Btn::new(Icon::Numbering, tl!("Numbering")).checked(list == Some(ListKind::Numbered)).for_command(app, ids::FORMAT_NUMBERING);
-    if widgets::small_split(ui, app, b, |ui, app| {
-        for (sample, name) in [("1. 2. 3.", "decimal"), ("a. b. c.", "lowerAlpha"), ("A. B. C.", "upperAlpha"), ("i. ii. iii.", "lowerRoman")] {
-            if widgets::menu_item(ui, None, sample, true) {
-                format(app, ids::FORMAT_NUMBERING, json!({ "format": name }));
-            }
-        }
-        if widgets::menu_item(ui, None, tl!("None"), true) {
-            format(app, ids::FORMAT_NUMBERING, json!({ "value": false }));
-        }
-    }) {
-        format(app, ids::FORMAT_NUMBERING, Value::Null);
-    }
+    crate::ribbon::paragraph::bullets(ui, app);
+    crate::ribbon::paragraph::numbering(ui, app);
     for (icon, label, id) in
         [(Icon::Outdent, tl!("Decrease Indent"), ids::FORMAT_OUTDENT), (Icon::Indent, tl!("Increase Indent"), ids::FORMAT_INDENT)]
     {
@@ -230,18 +177,7 @@ fn paragraph(ui: &mut Ui, app: &mut NoteApp) {
             format(app, id, Value::Null);
         }
     }
-    let align = Btn::new(Icon::AlignLeft, tl!("Paragraph Alignment")).icon_only().for_command(app, "format.align");
-    widgets::small_menu(ui, app, align, |ui, app| {
-        for (icon, label, value) in [
-            (Icon::AlignLeft, tl!("Align Left"), "left"),
-            (Icon::AlignCenter, tl!("Center"), "center"),
-            (Icon::AlignRight, tl!("Align Right"), "right"),
-        ] {
-            if widgets::menu_item(ui, Some(icon), label, true) {
-                format(app, "format.align", json!({ "align": value }));
-            }
-        }
-    });
+    crate::ribbon::paragraph::alignment(ui, app);
     let clear = Btn::new(Icon::ClearFormat, tl!("Clear Formatting")).icon_only().for_command(app, "format.clear");
     if widgets::small(ui, app, clear) {
         format(app, "format.clear", Value::Null);
@@ -308,18 +244,7 @@ fn tags(ui: &mut Ui, app: &mut NoteApp) {
     if widgets::small(ui, app, b) {
         format(app, ids::FORMAT_TAG_TODO, Value::Null);
     }
-    let b = Btn::new(Icon::Important, tl!("Tags")).icon_only().help(tl!("Mark notes with a tag."));
-    widgets::small_menu(ui, app, b, |ui, app| {
-        widgets::menu_heading(ui, tl!("Tags"));
-        for (icon, label, key, id, params) in [
-            (Icon::ToDo, tl!("To Do"), "Mod+1", ids::FORMAT_TAG_TODO, Value::Null),
-            (Icon::Important, tl!("Important"), "Mod+2", "format.tag", json!({"tag": "important"})),
-            (Icon::Question, tl!("Question"), "Mod+3", "format.tag", json!({"tag": "question"})),
-        ] {
-            let text = format!("{label}    {}", widgets::shortcut_text(key));
-            if widgets::menu_item(ui, Some(icon), &text, app.can(id)) {
-                format(app, id, params);
-            }
-        }
-    });
+    let b = Btn::new(Icon::Important, tl!("Tags")).icon_only().help(tl!("Mark notes with a tag.")).for_command(app, ids::FORMAT_TAG);
+    widgets::small_menu(ui, app, b, crate::ribbon::paragraph::tag_menu);
+
 }

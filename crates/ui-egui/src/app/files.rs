@@ -194,6 +194,7 @@ pub fn drain_inbox(app: &mut NoteApp) {
     for f in files {
         match f.purpose {
             OpenPurpose::Picture | OpenPurpose::Printout | OpenPurpose::Attachment => insert_bytes(app, f.purpose, &f.name, &f.bytes),
+            OpenPurpose::Font => add_font(app, &f.name, &f.bytes),
             OpenPurpose::Notebook | OpenPurpose::NotebookFolder | OpenPurpose::Import => {
                 let lower = f.name.to_ascii_lowercase();
                 let id = if lower.ends_with(".onepkg") { ids::FILE_IMPORT_ONEPKG } else { ids::FILE_IMPORT_ONE };
@@ -202,6 +203,24 @@ pub fn drain_inbox(app: &mut NoteApp) {
                     app.ui.backstage = false;
                 }
             }
+        }
+    }
+}
+
+/// A font file the user added (Add Fonts, or dropped): available at once, kept for the next visit
+/// by the host when it can ([`crate::Services::keep_font`]), and said in the status bar.
+pub fn add_font(app: &mut NoteApp, name: &str, bytes: &[u8]) {
+    match crate::fonts::add_font_file(bytes) {
+        Ok(families) => {
+            if let Some(keep) = &app.services.keep_font {
+                keep(name, bytes);
+            }
+            let list = families.join(", ");
+            app.set_status(crate::i18n::fmt_plain(tl!("Added the font {name}."), &[("name", &list)]), false);
+        }
+        Err(e) => {
+            let msg = crate::i18n::fmt_plain(tl!("{file} wasn't added: {reason}"), &[("file", name), ("reason", &e.to_string())]);
+            app.set_status(msg, true);
         }
     }
 }

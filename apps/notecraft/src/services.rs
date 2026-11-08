@@ -42,6 +42,7 @@ fn filters(purpose: OpenPurpose) -> (&'static str, &'static [&'static str]) {
         OpenPurpose::Picture => ("Pictures", &["png", "jpg", "jpeg", "gif", "bmp", "webp"]),
         OpenPurpose::Printout => ("PDF documents and pictures", &["pdf", "png", "jpg", "jpeg"]),
         OpenPurpose::Attachment => ("All files", &["*"]),
+        OpenPurpose::Font => ("Fonts", &["ttf", "otf", "ttc", "woff", "woff2"]),
     }
 }
 

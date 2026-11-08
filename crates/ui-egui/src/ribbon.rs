@@ -10,8 +10,10 @@
 
 pub mod display;
 pub mod draw;
+pub mod font_box;
 pub mod home;
 pub mod insert;
+pub mod paragraph;
 pub mod simplified;
 pub mod view;
 

@@ -19,6 +19,8 @@ pub enum OpenPurpose {
     Printout,
     /// Insert › File Attachment.
     Attachment,
+    /// The font box's Add Fonts (web): TTF, OTF, TTC, WOFF, WOFF2.
+    Font,
     /// File › Import a `.onepkg` or `.one`.
     Import,
 }
@@ -69,6 +71,8 @@ pub struct Services {
     pub clipboard_image: Option<Box<dyn Fn() -> Option<ClipboardImage>>>,
     /// Web: told whether anything is unsaved after each frame (the leave-page guard).
     pub on_dirty: Option<Box<dyn Fn(bool)>>,
+    /// Web: keep a font file the user added (name, bytes) for the next visit.
+    pub keep_font: Option<Box<dyn Fn(&str, &[u8])>>,
     /// Whether the system prefers a dark theme, if it says.
     pub prefers_dark: Option<Box<dyn Fn() -> Option<bool>>>,
 }

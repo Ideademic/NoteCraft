@@ -309,7 +309,7 @@ fn para_html(p: &Paragraph, out: &mut String) {
     // A nested item without a chosen style takes its level's marker, as on the canvas.
     if let Some(k) = p.list
         && chosen_style(p).is_none()
-        && p.indent % 3 != 0
+        && !p.indent.is_multiple_of(3)
     {
         let _ = write!(css, "list-style-type:{};", list_css(ListStyle::by_level(k, p.indent)));
     }
