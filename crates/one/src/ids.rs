@@ -219,6 +219,9 @@ pub mod prop {
     pub const NC_HIDE_TITLE: u32 = 0x0BFC_0041;
     /// Section metadata: the page template new pages start from (a template id, UTF-16).
     pub const NC_SECTION_TEMPLATE: u32 = 0x1FFC_0042;
+    /// Paragraph: the proofing language NoteCraft keeps (a BCP 47 tag, UTF-16), for tags without
+    /// an LCID (`zxx`) and so a language chosen on purpose reads back as chosen.
+    pub const NC_PARA_LANG: u32 = 0x1FFC_000D;
 
     // .onetoc2 (MS-ONE names these without numbering them; NoteCraft-chosen, see README).
     /// TOC: the entries (sections and section groups) in order.

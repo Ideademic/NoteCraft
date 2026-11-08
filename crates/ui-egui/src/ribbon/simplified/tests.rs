@@ -358,6 +358,7 @@ fn a_narrow_window_moves_commands_into_more() {
                 RibbonTab::Insert => "Date & Time",
                 RibbonTab::Draw => "Delete",
                 RibbonTab::History => "Notebook Recycle Bin",
+                RibbonTab::Review => "Language",
                 RibbonTab::View => "Dark Mode",
             };
             let _ = h.get_by_label(probe);

@@ -420,7 +420,13 @@ impl Reader {
             _ => Align::Left,
         };
         let tag = self.note_tag(v, p);
-        Paragraph { runs, indent: 0, list: None, list_style: None, tag, style, align }
+        // NoteCraft's own tag, else RichEditTextLangID (or the first run's LanguageID); US
+        // English, OneNote's and NoteCraft's default, stays the default.
+        let lang = string(p, prop::NC_PARA_LANG).and_then(|t| notecraft_doc::page::clean_lang(&t)).or_else(|| {
+            let id = p.uint(prop::RICH_EDIT_TEXT_LANG_ID).or_else(|| formats.first().and_then(|f| f.props.uint(prop::LANGUAGE_ID)))?;
+            crate::lcid::to_tag(u32::try_from(id).ok()?).filter(|t| *t != "en-US").map(str::to_owned)
+        });
+        Paragraph { runs, indent: 0, list: None, list_style: None, tag, style, align, lang }
     }
 
     fn note_tag(&mut self, v: &View<'_>, p: &PropertySet) -> Option<Tag> {

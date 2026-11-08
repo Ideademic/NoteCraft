@@ -206,6 +206,10 @@ fn para_range(session: &Session, outline: Guid, pos: TextPos) -> (TextPos, TextP
 
 fn press(ui: &Ui, state: &mut CanvasState, session: &mut Session, v: &View, lay: &PageLayout, at: Pos2, shift: bool) {
     let page_pt = v.to_page(at);
+    // 0. Ctrl+click on a link follows it.
+    if super::links::press(ui, state, session, v, lay, at) {
+        return;
+    }
     // 1. Handles of the selected picture.
     if let Some((id, corner, r)) = images::handle_at(state, session, v, at) {
         state.gesture = Gesture::ImageResize { id, corner, start: r, rect: r };
@@ -263,7 +267,9 @@ fn press(ui: &Ui, state: &mut CanvasState, session: &mut Session, v: &View, lay:
         state.pending = None;
         clear_ink_selection(state, session);
         state.selection.elements = vec![id];
-        state.gesture = Gesture::Move { id, from: page_pt, to: page_pt };
+        // Kept content stays where the file put it.
+        let fixed = session.current_page().and_then(|p| p.element(id)).is_some_and(|e| matches!(e.kind, notecraft_doc::ElementKind::Opaque { .. }));
+        state.gesture = if fixed { Gesture::None } else { Gesture::Move { id, from: page_pt, to: page_pt } };
         return;
     }
     // 4. Ink, with Select.

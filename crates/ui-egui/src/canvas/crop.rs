@@ -110,7 +110,7 @@ pub fn dragged(full: notecraft_doc::Rect, start: notecraft_doc::Rect, h: u8, dx:
         return start.translate(dx, dy);
     }
     let left = matches!(h, 0 | 6 | 7);
-    let right = matches!(h, 2 | 3 | 4);
+    let right = matches!(h, 2..=4);
     let top = matches!(h, 0..=2);
     let bottom = matches!(h, 4..=6);
     let min_w = MIN_SIDE.min(full.w);

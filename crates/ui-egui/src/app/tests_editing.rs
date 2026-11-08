@@ -225,3 +225,64 @@ fn search_box_scope_is_passed_to_search() {
     a.ui.search_scope = "notebook".into();
     assert_eq!(crate::panes::search::find(&mut a, "zebra").len(), 1);
 }
+
+#[test]
+fn the_picture_menu_turns_orders_and_copies_pictures() {
+    let mut a = app();
+    a.run(ids::PAGE_NEW, json!({"title": "Pictures", "blank": true})).unwrap();
+    let mut rgba = Vec::new();
+    for _ in 0..(30 * 20) {
+        rgba.extend_from_slice(&[200, 80, 40, 255]);
+    }
+    let png = crate::app::files::png_from_rgba(30, 20, &rgba).unwrap();
+    let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &png);
+    let first = id_of(&a.run(ids::EDIT_PASTE_PICTURE, json!({"bytesBase64": b64, "x": 200, "y": 200})).unwrap().value);
+    let second = id_of(&a.run(ids::EDIT_PASTE_PICTURE, json!({"bytesBase64": b64, "x": 210, "y": 210})).unwrap().value);
+    let mut h = harness(a);
+    h.run_steps(3);
+    let to_screen = |h: &Harness<'_, NoteApp>, x: f32, y: f32| {
+        let o = h.state().canvas.last_origin.unwrap();
+        let k = h.state().canvas.scale();
+        egui::pos2(o.x + x * k, o.y + y * k)
+    };
+    let right_click = |h: &mut Harness<'_, NoteApp>, p: egui::Pos2| {
+        h.event(egui::Event::PointerMoved(p));
+        h.step();
+        h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Secondary, pressed: true, modifiers: egui::Modifiers::NONE });
+        h.step();
+        h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Secondary, pressed: false, modifiers: egui::Modifiers::NONE });
+        h.run_steps(3);
+    };
+    // The top picture (the second) to the back.
+    let p = to_screen(&h, 225.0, 222.0);
+    right_click(&mut h, p);
+    h.get_by_label("Order").hover();
+    h.run_steps(3);
+    h.get_by_label("Send to Back").click();
+    h.run_steps(3);
+    let order: Vec<Guid> = h.state().session.current_page().unwrap().elements.iter().map(|e| e.id).collect();
+    assert_eq!(order, vec![second, first]);
+    // Rotate the one now on top (the first).
+    let p = to_screen(&h, 205.0, 205.0);
+    right_click(&mut h, p);
+    h.get_by_label("Rotate").hover();
+    h.run_steps(3);
+    h.get_by_label("Rotate Right 90°").click();
+    h.run_steps(3);
+    let rot = |h: &Harness<'_, NoteApp>, id: Guid| match &h.state().session.current_page().unwrap().element(id).unwrap().kind {
+        notecraft_doc::ElementKind::Image(i) => i.transform.rotation,
+        _ => 9,
+    };
+    assert_eq!(rot(&h, first), 1);
+    // Copy, then Paste on the paper makes a third picture.
+    right_click(&mut h, p);
+    // (The ribbon has a Copy too: the menu's is the last.)
+    h.get_all_by_label("Copy").last().unwrap().click();
+    h.run_steps(3);
+    assert!(crate::canvas::clipboard::internal(&h.ctx).is_some_and(|i| i.clip.elements.len() == 1));
+    let paper = to_screen(&h, 500.0, 420.0);
+    right_click(&mut h, paper);
+    h.get_all_by_label("Paste").last().unwrap().click();
+    h.run_steps(3);
+    assert_eq!(h.state().session.current_page().unwrap().elements.len(), 3);
+}

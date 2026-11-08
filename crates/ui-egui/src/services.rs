@@ -130,6 +130,13 @@ pub struct Services {
     pub prefers_dark: Option<Box<dyn Fn() -> Option<bool>>>,
     /// Printing: the host's printers and spooler, or the browser's print dialog.
     pub print: Option<Printing>,
+    /// Open a link (`https:`, `mailto:`, `file:`) or a file path with the system's app for it
+    /// (desktop). Without it web and mail links go through egui's `open_url` (a new tab in the
+    /// browser) and other links can't be opened.
+    pub open_external: Option<Box<dyn Fn(&str) -> Result<(), String>>>,
+    /// Open an attached file (name, bytes): the desktop writes it to a temporary file and opens
+    /// that with the system's app; without it the file is handed to `download`.
+    pub open_file: Option<Box<dyn Fn(&str, &[u8]) -> Result<(), String>>>,
 }
 
 /// How the host prints File › Print's PDF.

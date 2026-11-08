@@ -143,10 +143,7 @@ fn format_painter_copies_formatting_onto_a_clicked_word() {
     };
     assert!(picked, "the painter picks up the caret's formatting");
     // A click on "quiet" paints it.
-    let quiet_x = {
-        let lay_x = 60.0 + 70.0;
-        lay_x
-    };
+    let quiet_x = 60.0 + 70.0;
     let p = at(&h, quiet_x, 158.0);
     click(&mut h, p);
     let o = h.state().session.current_page().unwrap().outline(id).unwrap().clone();

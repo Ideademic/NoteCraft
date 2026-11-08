@@ -34,6 +34,7 @@ fn main() {
             .chain(notecraft_ui_egui::app::shots::HISTORY_SHOTS.iter())
             .chain(notecraft_ui_egui::app::shots::FONT_SHOTS.iter())
             .chain(notecraft_ui_egui::app::shots::EDITING_SHOTS.iter())
+            .chain(notecraft_ui_egui::app::shots::REVIEW_SHOTS.iter())
             .filter(|s| filter.as_ref().is_none_or(|f| s.starts_with(f.as_str())));
         for &shot in shots {
             let mut app = NoteApp::new(Session::new_default(), Services::default());
@@ -75,6 +76,46 @@ fn main() {
                 use egui_kittest::kittest::Queryable;
                 harness.get_by_label(notecraft_ui_egui::backstage::options::LANGUAGE_LABEL).click();
                 harness.run_steps(4);
+            }
+            if notecraft_ui_egui::app::shots::REVIEW_SHOTS.contains(&shot) {
+                // The spelling check runs on a background thread: wait for its marks.
+                for _ in 0..200 {
+                    harness.step();
+                    if !harness.state().canvas.review.marks.is_empty() {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                harness.run_steps(2);
+                if let Some(click) = notecraft_ui_egui::app::shots::review_click(harness.state(), shot) {
+                    let st = harness.state();
+                    let p = match click {
+                        notecraft_ui_egui::app::shots::ReviewClick::Text(o, para, ch) => notecraft_ui_egui::canvas::caret_screen_rect(
+                            &harness.ctx,
+                            &st.canvas,
+                            &st.session,
+                            &st.tokens,
+                            o,
+                            notecraft_engine::TextPos::new(para, ch),
+                        )
+                        .map(|r| egui::pos2(r.left() + 2.0, r.center().y)),
+                        notecraft_ui_egui::app::shots::ReviewClick::Page(x, y) => notecraft_ui_egui::canvas::page_to_screen(&st.canvas, x, y),
+                    };
+                    if let Some(p) = p {
+                        harness.event(egui::Event::PointerMoved(p));
+                        harness.step();
+                        for pressed in [true, false] {
+                            harness.event(egui::Event::PointerButton {
+                                pos: p,
+                                button: egui::PointerButton::Secondary,
+                                pressed,
+                                modifiers: egui::Modifiers::NONE,
+                            });
+                            harness.step();
+                        }
+                        harness.run_steps(4);
+                    }
+                }
             }
             if shot == "update-up-to-date" {
                 // The check runs on its own thread: give it a moment, then draw its answer.

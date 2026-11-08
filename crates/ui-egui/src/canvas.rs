@@ -13,6 +13,7 @@
 //! zoom (96 dpi, like Office), so `scale = zoom * PX_PER_PT`.
 
 pub mod clipboard;
+pub mod context_menu;
 pub mod crop;
 pub mod drop;
 pub mod edit;
@@ -21,8 +22,10 @@ pub mod format_painter;
 pub mod images;
 pub mod ink;
 pub mod layout;
+pub mod links;
 pub mod page;
 pub mod pointer;
+pub mod proof;
 pub mod shape;
 pub mod space;
 pub mod style;
@@ -289,6 +292,8 @@ pub struct CanvasState {
     pub(crate) last_origin: Option<Pos2>,
     /// Status messages the canvas wants shown (errors from commands); the shell may drain them.
     pub messages: Vec<String>,
+    /// Spelling marks, the right-click menu's target, links being followed ([`context_menu`]).
+    pub review: context_menu::CanvasReview,
 }
 
 impl Default for CanvasState {
@@ -319,6 +324,7 @@ impl Default for CanvasState {
             last_rect: None,
             last_origin: None,
             messages: Vec::new(),
+            review: context_menu::CanvasReview::default(),
         }
     }
 }
@@ -411,6 +417,12 @@ pub fn show(ui: &mut egui::Ui, state: &mut CanvasState, session: &mut Session, t
     let id = ui.scope_id().with("nc_canvas");
     crate::fonts::sync(ui.ctx());
     sync(state, session);
+    links::apply_goto(state, session);
+    // The context menu's Cut, Copy and Paste reach the keyboard handling below as input.
+    let inject = std::mem::take(&mut state.review.inject);
+    if !inject.is_empty() {
+        ui.ctx().input_mut(|i| i.events.extend(inject));
+    }
     let resp = ui.interact(rect, id, Sense::click_and_drag());
     state.last_rect = Some(rect);
     let painter = ui.painter_at(rect);
@@ -429,7 +441,16 @@ pub fn show(ui: &mut egui::Ui, state: &mut CanvasState, session: &mut Session, t
     let title = if state.hide_title { None } else { session.current_page().map(|p| page::title_rect(ui.ctx(), p, &v)) };
     let rev = session.revision;
     pointer::handle(ui, state, session, &v, &lay, &resp, title);
-    if session.revision != rev {
+    if resp.secondary_clicked()
+        && let Some(at) = resp.interact_pointer_pos()
+    {
+        context_menu::on_secondary_click(state, session, &v, &lay, at);
+    }
+    if resp.double_clicked() {
+        context_menu::on_double_click(state, session, &v, resp.interact_pointer_pos());
+    }
+    links::frame(ui, state, session, services, &v, &lay, &resp);
+    if session.revision != rev || session.current.page != state.page {
         lay = layout::page_layout(ui.ctx(), state, session, tokens, &v);
     }
     let rev = session.revision;
@@ -450,6 +471,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut CanvasState, session: &mut Session, t
         ink::paint_layer(&painter, state, pg, tokens, &v, true);
         find::paint(&painter, state, tokens, &v, &lay);
         text::paint_outlines(&painter, state, pg, tokens, &v, &lay, &resp);
+        proof::paint(ui.ctx(), &painter, state, session, &v, &lay, style::Ink::new(tokens, pg.background.color).dark);
         ink::paint_layer(&painter, state, pg, tokens, &v, false);
         shape::paint_preview(&painter, state, pg, tokens, &v);
         images::paint_selection(&painter, state, pg, tokens, &v);
@@ -462,6 +484,28 @@ pub fn show(ui: &mut egui::Ui, state: &mut CanvasState, session: &mut Session, t
     page::title_editor(ui, state, session, tokens, &v);
     view::paint_scrollbars(ui, state, session, tokens, sheet, &v, &lay);
     pointer::cursor(ui, state, session, &v, &lay, &resp);
+}
+
+/// Where page point (x, y) was on screen last frame.
+pub fn page_to_screen(state: &CanvasState, x: f32, y: f32) -> Option<Pos2> {
+    let o = state.last_origin?;
+    Some(egui::pos2(o.x + x * state.scale(), o.y + y * state.scale()))
+}
+
+/// Where text position `pos` of note container `outline` is on screen (a zero-width caret rect),
+/// as last frame laid the page out. For the shell's popups and for tests.
+pub fn caret_screen_rect(
+    ctx: &egui::Context,
+    state: &CanvasState,
+    session: &Session,
+    tokens: &Tokens,
+    outline: Guid,
+    pos: TextPos,
+) -> Option<egui::Rect> {
+    let sheet = page::sheet_rect(state.last_rect?);
+    let v = view::View::new(state, sheet);
+    let lay = layout::page_layout(ctx, state, session, tokens, &v);
+    lay.outline(outline)?.caret_rect(&v, pos)
 }
 
 /// Keeps the state in step with the session: another page resets selection and editing; the

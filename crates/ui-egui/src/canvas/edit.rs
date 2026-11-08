@@ -55,8 +55,9 @@ fn burst_key(state: &mut CanvasState, base: &str, kind: u8, text: &str, now: f64
         *b = Burst { base: base.to_owned(), started: now, ..Burst::default() };
     } else {
         let starts_word = b.after_space && text.chars().next().is_some_and(char::is_alphanumeric);
-        let paused = b.last.is_none_or(|t| !(now - t < PAUSE_SECS));
-        let old = !(now - b.started < PAUSE_SECS);
+        // NaN times count as a pause.
+        let paused = b.last.is_none_or(|t| (now - t).partial_cmp(&PAUSE_SECS) != Some(std::cmp::Ordering::Less));
+        let old = (now - b.started).partial_cmp(&PAUSE_SECS) != Some(std::cmp::Ordering::Less);
         let new_step = b.kind != kind || paused || (kind == 1 && b.boundary) || (kind == 1 && starts_word && old);
         if new_step && b.last.is_some() {
             b.count = b.count.saturating_add(1);
@@ -189,7 +190,7 @@ pub fn insert(state: &mut CanvasState, session: &mut Session, t: &str, now: f64)
     let key = burst_key(state, &c.merge_key, 1, &t, now);
     let mut params = range_params(state, &c);
     if let Value::Object(m) = &mut params {
-        m.insert("text".into(), Value::String(t));
+        m.insert("text".into(), Value::String(t.clone()));
         m.insert("mergeKey".into(), Value::String(key));
         if !state.pending_style.is_empty() {
             m.insert("style".into(), state.pending_style.to_json());
@@ -200,6 +201,7 @@ pub fn insert(state: &mut CanvasState, session: &mut Session, t: &str, now: f64)
         if let Some(pos) = caret_from(&out) {
             set_head(state, pos, false);
         }
+        super::links::after_insert(state, session, &t);
     }
 }
 
@@ -565,10 +567,10 @@ pub fn keyboard(ui: &mut Ui, state: &mut CanvasState, session: &mut Session, ser
         type_keys(ui, state, session, services, lay, v, id);
         return;
     }
-    if ui.memory(|m| m.focused().is_some()) {
+    if ui.memory(|m| m.focused().is_some_and(|f| f != id)) {
         return;
     }
-    // Nothing has the keyboard: copy, cut and paste what's selected on the page, Delete removes
+    // Nothing else has the keyboard: copy, cut and paste what's selected on the page, Delete removes
     // it, Esc lets it go (or ends cropping, or turns the Format Painter off), Enter keeps a crop.
     let events = ui.input(|i| i.events.clone());
     let ctx = ui.ctx().clone();

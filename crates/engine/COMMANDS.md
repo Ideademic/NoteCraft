@@ -285,6 +285,40 @@ fractions of the source), drawn by the canvas, baked into PDF and HTML exports, 
 | `template.delete` |  | — | `{"id": string}` | Deletes a user template. |
 | `page.newFromTemplate` |  | yes | `{"template": string, "title"?: string, "section"?: guid} -> {"id": guid}` | A new page after the current page's family, copied from the template (new ids); made current. |
 | `section.defaultTemplate` |  | yes | `{"template": string \| null, "section"?: guid}` | The template new pages in the section start from (`page.new`); `null` for none. Kept in `.one` as a private property. |
+### Review (spelling, language, word count)
+
+Spelling comes from craft-proof: English always (SCOWL when the build has craft-i18n's language data, else the public-domain Moby list), other languages when a Hunspell dictionary is installed. Each paragraph is checked in its own language (`Paragraph.lang`, kept in `.one` as RichEditTextLangID / LanguageID) or the default (`proof.setDefaultLanguage`; the app sets the system's). Misspellings are `{"outline", "para", "start", "end", "word", "lang"}` with character offsets in the paragraph. Ignore, Ignore All and the user dictionary are the user's, not the notebook's: they don't touch undo.
+
+| id | shortcut | undo | params | effect / output |
+|---|---|---|---|---|
+| `proof.check` | F7 | — | `{"page"?: guid, "outline"?: guid, "limit"?: number} -> {"issues": [issue], "more": bool}` | The page's misspellings in reading order (at most 500, or `limit` up to 5000). F7 opens the Spelling pane, which uses this. |
+| `proof.suggestions` |  | — | `{"outline": guid, "at": pos, "page"?: guid, "max"?: number} -> null \| issue + {"suggestions": [string]}` | The misspelling at a caret, with suggestions (the right-click menu). |
+| `proof.apply` |  | yes | `{"outline": guid, "para", "start", "end": number, "text": string, "word"?: string, "page"?: guid} -> {"caret"}` | Change: replaces the word, keeping its formatting. With `word`, fails when the text there changed. |
+| `proof.changeAll` |  | yes | `{"word": string, "text": string, "page"?: guid} -> {"changed": number}` | Change All on the page. |
+| `proof.ignore` |  | — | issue | Ignore (once): that word there, while its paragraph's text is the same. |
+| `proof.ignoreAll` |  | — | `{"word": string}` | Ignore All, until NoteCraft closes. |
+| `proof.addToDictionary` |  | — | `{"word": string} -> {"word", "words": [string]}` | Adds to the user dictionary (the app keeps it in its settings). |
+| `proof.removeFromDictionary` |  | — | `{"word": string} -> {"removed": bool, "words"}` | Takes a word out again (File › Options). |
+| `proof.dictionary` |  | — | `{} -> {"words": [string]}` | The user dictionary. |
+| `proof.setLanguage` |  | yes | `{"lang": string\|null, "outline"?: guid, "start"?/"end"?: pos, "page"?: guid} -> {"paragraphs": number}` | Sets the proofing language of the selected paragraphs (the container, or the whole page without `outline`). `"zxx"`: don't check; `null`: the default. |
+| `proof.setDefaultLanguage` |  | — | `{"lang": string} -> {"lang"}` | The language of paragraphs without one. |
+| `proof.languages` |  | — | `{} -> {"default", "languages": [{"tag", "name", "dictionary": bool}]}` | The languages offered. |
+| `review.wordCount` |  | — | `{"page"?: guid, "outline"?: guid, "start"?/"end"?: pos} -> {"scope", "words", "characters", "charactersNoSpaces", "paragraphs"}` | Counts the selection, else the page (title included). |
+
+### Links and attachments
+
+Link addresses are checked before they are kept: web and mail links as the PDF export allows them, `notecraft:` links when they parse, `file:` and `onenote:` links as they are; `www.example.com` becomes `https://…`, `a@b.org` a `mailto:` link, a path a `file:` link. NoteCraft's own links are `notecraft:page?id=<page>&section=<section>&notebook=<notebook>&title=<title>[&outline=<outline>&para=<n>]` (see `notecraft_doc::link`); they resolve by page id, else by title. Links are kept in `.one` files (HYPERLINK field runs), HTML exports (a section export points them at its own pages) and PDF exports (links to pages of the same PDF become page destinations).
+
+| id | shortcut | undo | params | effect / output |
+|---|---|---|---|---|
+| `link.set` | Mod+K | yes | `{"outline": guid, "start"?/"end"?/"at"?: pos, "url": string, "text"?: string, "page"?: guid} -> {"caret", "start", "end", "url"}` | Links the selection (with `text`, replaced by it); at a caret, inserts the text (default: the page title or the address) as a link. |
+| `link.remove` |  | yes | `{"outline": guid, "start"?/"end"?/"at"?: pos, "page"?: guid}` | Removes the links in the selection, or the link around a caret. |
+| `link.get` |  | — | `{"outline": guid, "at": pos, "page"?: guid} -> null \| {"url", "text", "start", "end"}` | The link at a caret. |
+| `link.follow` |  | — | `{"url": string} -> {"internal": true, "page", "outline"?, "para"?} \| {"external": string}` | Goes to a `notecraft:` link's page; other links come back checked for the front end to open. |
+| `link.toPage` |  | — | `{"id"?: guid} -> {"url"}` | Copy Link to Page. |
+| `link.toParagraph` |  | — | `{"outline": guid, "para"?: number \| "at"?: pos, "page"?: guid} -> {"url"}` | Copy Link to Paragraph. |
+| `link.wiki` |  | yes | `{"outline": guid, "at": pos, "page"?: guid} -> null \| {"caret", "page", "created": bool}` | `[[Page title]]` just before `at` becomes a link to that page of the notebook (any case), made in the section when there is none. The canvas runs it after `]` is typed. |
+| `file.exportAttachment` |  | — | `{"element": guid, "page"?: guid, "path"?: string} -> {"fileName", "mime", "bytesBase64", "size"} \| {"path", "size"}` | The file of an attached file, a picture or a printout (its original PDF), for Open and Save As. |
 
 ## Session lifecycle (Rust API, not commands)
 

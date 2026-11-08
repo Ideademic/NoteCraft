@@ -26,6 +26,7 @@ pub mod i18n;
 pub mod icons;
 pub mod keytips;
 pub mod panes;
+pub mod review;
 pub mod ribbon;
 pub mod ribbon_fit;
 pub mod services;

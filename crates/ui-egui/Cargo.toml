@@ -14,6 +14,8 @@ notecraft-doc = { workspace = true }
 notecraft-engine = { workspace = true }
 # Pictures as their rotated and cropped pixels, and HTML for the system clipboard.
 notecraft-formats = { workspace = true }
+# What kept content (equations, recordings…) is, for its placeholder on the page.
+notecraft-one = { workspace = true }
 # The Print page's preview (sheet pictures) and paper sizes.
 notecraft-pdf = { workspace = true }
 egui = { workspace = true, features = ["default_fonts"] }

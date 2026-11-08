@@ -6,3 +6,5 @@ plan/
 .DS_Store
 /.claude/
 *~
+# CRAFT_FONTS_DIR checkout (.github/actions/checkout-craft-fonts puts it here in CI)
+/craft-fonts/

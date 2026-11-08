@@ -186,7 +186,7 @@ fn text_box(ui: &mut Ui, app: &NoteApp, text: &mut String, hint: &str, id: Optio
         .hint_text(egui::RichText::new(hint).color(t.text_dim))
         .margin(vec2(6.0, 4.0))
         .font(regular(12.5))
-        .vertical_align(egui::Align::Center)
+        .align(egui::Align2::LEFT_CENTER)
         .desired_width(r.width() - 4.0);
     if let Some(id) = id {
         edit = edit.id(id);

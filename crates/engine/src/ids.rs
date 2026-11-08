@@ -140,6 +140,28 @@ pub const PAGE_NEW_FROM_TEMPLATE: &str = "page.newFromTemplate";
 pub const SECTION_DEFAULT_TEMPLATE: &str = "section.defaultTemplate";
 
 pub const VIEW_HIDE_PAGE_TITLE: &str = "view.hidePageTitle";
+pub const PROOF_CHECK: &str = "proof.check";
+pub const PROOF_SUGGESTIONS: &str = "proof.suggestions";
+pub const PROOF_APPLY: &str = "proof.apply";
+pub const PROOF_CHANGE_ALL: &str = "proof.changeAll";
+pub const PROOF_IGNORE: &str = "proof.ignore";
+pub const PROOF_IGNORE_ALL: &str = "proof.ignoreAll";
+pub const PROOF_ADD_TO_DICTIONARY: &str = "proof.addToDictionary";
+pub const PROOF_REMOVE_FROM_DICTIONARY: &str = "proof.removeFromDictionary";
+pub const PROOF_DICTIONARY: &str = "proof.dictionary";
+pub const PROOF_SET_LANGUAGE: &str = "proof.setLanguage";
+pub const PROOF_SET_DEFAULT_LANGUAGE: &str = "proof.setDefaultLanguage";
+pub const PROOF_LANGUAGES: &str = "proof.languages";
+pub const REVIEW_WORD_COUNT: &str = "review.wordCount";
+
+pub const LINK_SET: &str = "link.set";
+pub const LINK_REMOVE: &str = "link.remove";
+pub const LINK_GET: &str = "link.get";
+pub const LINK_FOLLOW: &str = "link.follow";
+pub const LINK_TO_PAGE: &str = "link.toPage";
+pub const LINK_TO_PARAGRAPH: &str = "link.toParagraph";
+pub const LINK_WIKI: &str = "link.wiki";
+pub const FILE_EXPORT_ATTACHMENT: &str = "file.exportAttachment";
 
 /// Every id above, for tests and tooling.
 pub const ALL: &[&str] = &[
@@ -260,4 +282,25 @@ pub const ALL: &[&str] = &[
     PAGE_NEW_FROM_TEMPLATE,
     SECTION_DEFAULT_TEMPLATE,
     VIEW_HIDE_PAGE_TITLE,
+    PROOF_CHECK,
+    PROOF_SUGGESTIONS,
+    PROOF_APPLY,
+    PROOF_CHANGE_ALL,
+    PROOF_IGNORE,
+    PROOF_IGNORE_ALL,
+    PROOF_ADD_TO_DICTIONARY,
+    PROOF_REMOVE_FROM_DICTIONARY,
+    PROOF_DICTIONARY,
+    PROOF_SET_LANGUAGE,
+    PROOF_SET_DEFAULT_LANGUAGE,
+    PROOF_LANGUAGES,
+    REVIEW_WORD_COUNT,
+    LINK_SET,
+    LINK_REMOVE,
+    LINK_GET,
+    LINK_FOLLOW,
+    LINK_TO_PAGE,
+    LINK_TO_PARAGRAPH,
+    LINK_WIKI,
+    FILE_EXPORT_ATTACHMENT,
 ];

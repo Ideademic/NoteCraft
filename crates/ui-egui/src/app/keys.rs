@@ -83,6 +83,15 @@ pub fn handle(app: &mut NoteApp, ctx: &egui::Context) {
     if take(ctx, KeyboardShortcut::new(Modifiers::COMMAND, Key::P)) {
         crate::backstage::open(app, crate::backstage::BackstagePage::Print);
     }
+    // Review › Spelling and Insert Link, also while typing in a note.
+    if !app.ui.backstage && app.ui.review.link.is_none() {
+        if take(ctx, KeyboardShortcut::new(Modifiers::NONE, Key::F7)) {
+            crate::panes::spelling::toggle(app);
+        }
+        if take(ctx, KeyboardShortcut::new(Modifiers::COMMAND, Key::K)) {
+            crate::review::open_link_dialog(app);
+        }
+    }
     if app.ui.backstage || typing {
         return;
     }

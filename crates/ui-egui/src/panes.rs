@@ -16,6 +16,7 @@ pub mod notebooks;
 pub mod pages;
 pub mod search;
 pub mod sections;
+pub mod spelling;
 pub mod tags;
 pub mod templates;
 
