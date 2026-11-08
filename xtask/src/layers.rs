@@ -41,6 +41,7 @@ pub const TABLE: &[(&str, Class)] = &[
     ("onepkg", Class::Layer(2)),
     ("formats", Class::Layer(2)),
     ("printout", Class::Layer(3)),
+    ("pdf", Class::Layer(3)),
     ("engine", Class::Layer(4)),
     ("ui-egui", Class::Layer(6)),
     ("testkit", Class::Testkit),

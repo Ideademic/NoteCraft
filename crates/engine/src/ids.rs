@@ -77,6 +77,7 @@ pub const FILE_EXPORT_ONEPKG: &str = "file.exportOnepkg";
 pub const FILE_EXPORT_HTML: &str = "file.exportHtml";
 pub const FILE_EXPORT_MARKDOWN: &str = "file.exportMarkdown";
 pub const FILE_EXPORT_TEXT: &str = "file.exportText";
+pub const FILE_EXPORT_PDF: &str = "file.exportPdf";
 pub const FILE_IMPORT_ONEPKG: &str = "file.importOnepkg";
 pub const FILE_IMPORT_ONE: &str = "file.importOne";
 
@@ -155,6 +156,7 @@ pub const ALL: &[&str] = &[
     FILE_EXPORT_HTML,
     FILE_EXPORT_MARKDOWN,
     FILE_EXPORT_TEXT,
+    FILE_EXPORT_PDF,
     FILE_IMPORT_ONEPKG,
     FILE_IMPORT_ONE,
     NAV_NOTEBOOK,

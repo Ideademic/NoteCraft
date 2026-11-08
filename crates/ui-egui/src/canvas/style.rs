@@ -221,56 +221,8 @@ pub fn bold_offset(size_px: f32) -> f32 {
     (size_px * 0.055).clamp(0.45, 3.0)
 }
 
-/// The list marker of a paragraph.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Marker {
-    /// Drawn in code: disc, circle, square, dash or arrow.
-    Bullet(ListStyle),
-    /// "1.", "a.", "IV." …
-    Number(String),
-}
-
-/// Each paragraph's marker. Numbers count per level and numbering style (as MS-ONE counts list
-/// items with the same format at the same level); a paragraph at a lower level, or another kind
-/// at the same level, starts the count again.
-pub fn markers(paras: &[Paragraph]) -> Vec<Option<Marker>> {
-    const LEVELS: usize = notecraft_doc::page::MAX_INDENT as usize + 1;
-    let mut counters = [0u32; LEVELS];
-    let mut styles: [Option<ListStyle>; LEVELS] = [None; LEVELS];
-    let mut out = Vec::with_capacity(paras.len());
-    for p in paras {
-        let level = usize::from(p.indent.min(notecraft_doc::page::MAX_INDENT));
-        // Deeper levels start again under this paragraph.
-        for c in counters.iter_mut().skip(level + 1) {
-            *c = 0;
-        }
-        let style = p.marker_style();
-        match (p.list, style) {
-            (Some(ListKind::Numbered), Some(st)) => {
-                let same = styles.get(level).copied().flatten() == Some(st);
-                let n = if same { counters.get(level).copied().unwrap_or(0).saturating_add(1) } else { 1 };
-                if let (Some(c), Some(s)) = (counters.get_mut(level), styles.get_mut(level)) {
-                    *c = n;
-                    *s = Some(st);
-                }
-                out.push(Some(Marker::Number(st.label(n))));
-            }
-            (Some(ListKind::Bullet), Some(st)) => {
-                if let Some(c) = counters.get_mut(level) {
-                    *c = 0;
-                }
-                out.push(Some(Marker::Bullet(st)));
-            }
-            _ => {
-                if let Some(c) = counters.get_mut(level) {
-                    *c = 0;
-                }
-                out.push(None);
-            }
-        }
-    }
-    out
-}
+/// List markers are a model rule: the PDF export draws the same ones.
+pub use notecraft_doc::page::{Marker, markers};
 
 /// "3." at level 0, "c." at level 1, "iii." at level 2, then again (the default numbering).
 pub fn number_label(n: u32, indent: u8) -> String {

@@ -459,6 +459,58 @@ impl ListStyle {
     }
 }
 
+/// A paragraph's list marker, as the canvas and the PDF draw it.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Marker {
+    /// Drawn as a shape: disc, circle, square, dash or arrow.
+    Bullet(ListStyle),
+    /// "1.", "a.", "IV." …
+    Number(String),
+}
+
+/// Each paragraph's marker. Numbers count per level and numbering style (as MS-ONE counts list
+/// items with the same NumberListFormat at the same level); a paragraph at a lower level, or
+/// another kind at the same level, starts the count again.
+pub fn markers(paras: &[Paragraph]) -> Vec<Option<Marker>> {
+    const LEVELS: usize = MAX_INDENT as usize + 1;
+    let mut counters = [0u32; LEVELS];
+    let mut styles: [Option<ListStyle>; LEVELS] = [None; LEVELS];
+    let mut out = Vec::with_capacity(paras.len());
+    for p in paras {
+        let level = usize::from(p.indent.min(MAX_INDENT));
+        // Deeper levels start again under this paragraph.
+        for c in counters.iter_mut().skip(level + 1) {
+            *c = 0;
+        }
+        match (p.list, p.marker_style()) {
+            (Some(ListKind::Numbered), Some(st)) => {
+                let same = styles.get(level).copied().flatten() == Some(st);
+                let n = if same { counters.get(level).copied().unwrap_or(0).saturating_add(1) } else { 1 };
+                if let (Some(c), Some(s)) = (counters.get_mut(level), styles.get_mut(level)) {
+                    *c = n;
+                    *s = Some(st);
+                }
+                out.push(Some(Marker::Number(st.label(n))));
+            }
+            (Some(ListKind::Bullet), Some(st)) => {
+                if let (Some(c), Some(s)) = (counters.get_mut(level), styles.get_mut(level)) {
+                    *c = 0;
+                    *s = None;
+                }
+                out.push(Some(Marker::Bullet(st)));
+            }
+            _ => {
+                if let (Some(c), Some(s)) = (counters.get_mut(level), styles.get_mut(level)) {
+                    *c = 0;
+                    *s = None;
+                }
+                out.push(None);
+            }
+        }
+    }
+    out
+}
+
 /// `1` → `a`, `26` → `z`, `27` → `aa` (at most 8 letters).
 fn letters(mut n: u32) -> String {
     let mut s = Vec::new();

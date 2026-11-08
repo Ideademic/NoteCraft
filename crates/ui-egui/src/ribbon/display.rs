@@ -1,7 +1,7 @@
 //! Ribbon display options, as in current Office versions but in the 2016/2019 skin: the ribbon's
 //! layout (Classic: tall groups with large buttons and captions; Simplified: one thin row) and
-//! how much of it shows (Always; Show tabs only, where a click on a tab shows the ribbon once;
-//! Full-screen mode, where tabs and ribbon hide behind a thin strip at the top of the window that
+//! how much of it shows (Always; Show tabs only, where a click on a tab brings the ribbon back
+//! for good; Full-screen mode, where tabs and ribbon hide behind a thin strip at the top of the window that
 //! shows them while needed).
 //!
 //! The choices are offered from the right-click menu on empty ribbon or tab-strip space and from
@@ -33,7 +33,8 @@ pub enum RibbonLayout {
 pub enum RibbonDisplay {
     /// Tabs and ribbon hide; a thin strip at the top shows them while needed.
     FullScreen,
-    /// Only the tabs show; a click on one shows the ribbon until a click elsewhere.
+    /// Only the tabs show; a click on one (or a KeyTip that opens one) switches back to
+    /// [`RibbonDisplay::Always`].
     TabsOnly,
     /// Tabs and ribbon always show.
     #[default]
@@ -62,7 +63,8 @@ pub fn set_layout(app: &mut NoteApp, l: RibbonLayout) {
     app.ui.ribbon_layout = l;
 }
 
-/// Ctrl+F1 and a double-click on a tab: Show tabs only, or Always show again.
+/// Ctrl+F1: Show tabs only, or Always show again. (A double-click on a tab doesn't do this: it was
+/// too easy to hide the ribbon by accident.)
 pub fn toggle_tabs_only(app: &mut NoteApp) {
     let next = if app.ui.ribbon_display == RibbonDisplay::Always { RibbonDisplay::TabsOnly } else { RibbonDisplay::Always };
     set_display(app, next);
@@ -190,7 +192,7 @@ fn reveal_button(ui: &mut Ui, app: &NoteApp, r: Rect) -> bool {
     resp.on_hover_text(tl!("Show the tabs and ribbon (Esc hides them)")).clicked()
 }
 
-/// After the ribbon is drawn: a ribbon shown once (Show tabs only, full-screen mode) goes away
+/// After the ribbon is drawn: a ribbon revealed in full-screen mode goes away
 /// after a click outside `area` (the title bar, tabs and ribbon) or Esc; Esc in full-screen mode
 /// with nothing else to cancel shows the ribbon again for good.
 pub fn end_frame(ui: &Ui, app: &mut NoteApp, area: Rect) {

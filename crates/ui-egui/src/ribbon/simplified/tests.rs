@@ -161,7 +161,7 @@ fn esc_leaves_full_screen_mode() {
 }
 
 #[test]
-fn show_tabs_only_peeks_at_a_clicked_tab() {
+fn show_tabs_only_returns_to_always_show_when_a_tab_is_clicked() {
     for layout in [RibbonLayout::Classic, RibbonLayout::Simplified] {
         let mut a = app();
         a.ui.ribbon_layout = layout;
@@ -173,18 +173,66 @@ fn show_tabs_only_peeks_at_a_clicked_tab() {
         let _ = h.get_by_label(OPTIONS_LABEL);
         h.get_by_label("Insert").click();
         h.run_steps(3);
-        assert!(h.state().ui.ribbon_peek, "{layout:?}");
+        assert_eq!(h.state().ui.ribbon_display, RibbonDisplay::Always, "{layout:?}: the click pins the ribbon");
+        assert!(!h.state().ui.ribbon_peek, "{layout:?}: no peek");
         let _ = h.get_by_label("Pictures");
-        // Another tab while peeking keeps the ribbon open on that tab.
+        // Using the ribbon and clicking the page leave it showing.
         h.get_by_label("View").click();
         h.run_steps(3);
-        assert!(h.state().ui.ribbon_peek, "{layout:?}: switching tabs keeps the peek");
         let _ = h.get_by_label("Page Width");
+        h.get_by_label("Page Width").click();
+        h.run_steps(3);
         let p = on_the_page(&h);
         click_at(&mut h, p, PointerButton::Primary);
-        assert!(!h.state().ui.ribbon_peek, "{layout:?}");
-        assert!(h.query_by_label("Page Width").is_none());
-        assert_eq!(h.state().ui.ribbon_display, RibbonDisplay::TabsOnly);
+        let _ = h.get_by_label("Page Width");
+        assert_eq!(h.state().ui.ribbon_display, RibbonDisplay::Always, "{layout:?}");
+    }
+}
+
+#[test]
+fn a_keytip_that_opens_a_tab_also_returns_to_always_show() {
+    let mut a = app();
+    a.ui.ribbon_display = RibbonDisplay::TabsOnly;
+    let mut h = harness(a);
+    h.run_steps(3);
+    // F10 shows the KeyTips; N opens Insert.
+    h.key_press(egui::Key::F10);
+    h.run_steps(2);
+    assert!(h.state().ui.keytips.active());
+    h.key_press(egui::Key::N);
+    h.run_steps(3);
+    assert_eq!(h.state().ui.ribbon_tab, RibbonTab::Insert);
+    assert_eq!(h.state().ui.ribbon_display, RibbonDisplay::Always);
+}
+
+#[test]
+fn double_clicking_a_tab_does_not_collapse_the_ribbon() {
+    for layout in [RibbonLayout::Classic, RibbonLayout::Simplified] {
+        let mut a = app();
+        a.ui.ribbon_layout = layout;
+        // Short frames, so the two clicks are well within the double-click delay.
+        let mut h = Harness::builder().with_size(egui::vec2(1440.0, 900.0)).with_step_dt(0.02).build_ui_state(
+            |ui, app: &mut NoteApp| {
+                let ctx = ui.ctx().clone();
+                app.logic(&ctx);
+                app.ui(ui);
+            },
+            a,
+        );
+        h.run_steps(3);
+        let p = h.get_by_label("Draw").rect().center();
+        h.event(egui::Event::PointerMoved(p));
+        h.step();
+        for _ in 0..2 {
+            for pressed in [true, false] {
+                h.event(egui::Event::PointerButton { pos: p, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+                h.step();
+            }
+        }
+        h.run_steps(3);
+        assert_eq!(h.state().ui.ribbon_tab, RibbonTab::Draw, "{layout:?}");
+        assert_eq!(h.state().ui.ribbon_display, RibbonDisplay::Always, "{layout:?}: still showing");
+        let _ = h.get_by_label("Lasso Select");
     }
 }
 

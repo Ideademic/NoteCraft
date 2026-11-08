@@ -25,9 +25,15 @@ log = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-rfd = { workspace = true }
+# File dialogs that never block the event loop (craft-libs; rfd underneath).
+craft-dialogs = { workspace = true }
+# The Windows update helper (`--finish-update`); the rest of the update flow is in the UI crate.
+craft-update = { workspace = true }
 # Pictures on the system clipboard (screenshots); egui's paste only carries text.
 arboard = { workspace = true, features = ["image-data"] }
+# File › Print: the printers and the spooler (CUPS `lp`, Windows), with craft-ui's printing panel.
+craft-print = { workspace = true }
+craft-ui = { workspace = true }
 
 [build-dependencies]
 # Icon + VERSIONINFO for notecraft.exe; build.rs only uses it when the target is Windows.

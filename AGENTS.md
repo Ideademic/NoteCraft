@@ -85,6 +85,7 @@ Dependencies must be within the allowlist above, and NoteCraft narrows it: MIT, 
 | L2 | `onepkg` | `.onepkg` (Cabinet) via `cab` |
 | L2 | `formats` | HTML / Markdown / text export; picture import |
 | L3 | `printout` | PDF → page pictures (craft-pdf `raster`) for File Printout |
+| L3 | `pdf` | pages → PDF (craft-pdf `write`): export and print output, text laid out with epaint as on the canvas |
 | L4 | `engine` | `Session`, command registry, snapshot undo, dirty tracking, I/O dispatch, `Storage`, autosave |
 | L6 | `ui-egui` | the egui front end (swappable) |
 | apps | `apps/notecraft`, `apps/notecraft-cli`, `apps/notecraft-web` | binaries |

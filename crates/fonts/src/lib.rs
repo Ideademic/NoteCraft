@@ -101,6 +101,11 @@ pub struct Resolved {
     pub substituted: bool,
     /// Where the face comes from.
     pub source: Source,
+    /// The face (as drawn, variation settings applied) is bold / italic.
+    pub face_bold: bool,
+    pub face_italic: bool,
+    /// The font's licence lets a document embed it (OS/2 `fsType` isn't "restricted").
+    pub embeddable: bool,
 }
 
 /// The kind of face a family name suggests, for picking a substitute.
@@ -175,21 +180,46 @@ impl Class {
     }
 }
 
-/// The metric-compatible stand-in for a font that isn't there: same advance widths, so lines
-/// break where they did.
-pub fn metric_substitute(family: &str) -> Option<&'static str> {
-    Some(match family.trim().to_ascii_lowercase().as_str() {
-        "calibri" | "calibri light" => "Carlito",
-        "cambria" => "Caladea",
-        "arial" | "helvetica" | "helvetica neue" | "arimo" => "Liberation Sans",
-        "times new roman" | "times" | "tinos" => "Liberation Serif",
-        "courier new" | "courier" | "cousine" => "Liberation Mono",
-        _ => return None,
-    })
+/// Families that set text in the same widths (or close), tried first when `family` isn't there:
+/// the metric-compatible faces craft-fonts bundles (Calibri → Carlito, Cambria → Caladea, Arial →
+/// Liberation Sans…), then their look-alikes on other systems.
+pub fn alternatives(family: &str) -> &'static [&'static str] {
+    match family.trim().to_ascii_lowercase().as_str() {
+        "calibri" | "calibri light" => &["Carlito"],
+        "cambria" => &["Caladea"],
+        "arial" | "helvetica" | "helvetica neue" | "arimo" => &["Liberation Sans", "Arimo", "Helvetica", "Arial"],
+        "times new roman" | "times" | "tinos" => &["Liberation Serif", "Tinos", "Times New Roman", "Times"],
+        "courier new" | "courier" | "cousine" => &["Liberation Mono", "Cousine", "Courier New", "Courier"],
+        "consolas" | "menlo" | "monaco" | "cascadia mono" | "cascadia code" => {
+            &["Consolas", "Menlo", "Cascadia Mono", "DejaVu Sans Mono", "Liberation Mono", "Courier New"]
+        }
+        "segoe ui" => &["Selawik", "Helvetica Neue", "Liberation Sans"],
+        "georgia" => &["Gelasio"],
+        _ => &[],
+    }
 }
 
-/// Faces of the same kind to try when a font and its metric substitute are both missing, in
-/// order: bundled ones first, then families most systems have.
+/// The first metric-compatible stand-in for `family` ([`alternatives`]).
+pub fn metric_substitute(family: &str) -> Option<&'static str> {
+    alternatives(family).first().copied()
+}
+
+/// Every family tried, in order, when `family` itself isn't there: its [`alternatives`], then
+/// faces of the same kind ([`Class`]). The canvas and the PDF export both resolve through it, so
+/// the screen and the PDF draw with the same face.
+pub fn fallback_chain(family: &str) -> Vec<&'static str> {
+    let own = family.trim();
+    let mut out: Vec<&'static str> = Vec::new();
+    for f in alternatives(family).iter().chain(class_fallbacks(Class::of(family))) {
+        if !f.eq_ignore_ascii_case(own) && !out.contains(f) {
+            out.push(f);
+        }
+    }
+    out
+}
+
+/// Faces of the same kind to try when a font and its alternatives are all missing, in order:
+/// bundled ones first, then families most systems have.
 fn class_fallbacks(class: Class) -> &'static [&'static str] {
     match class {
         Class::Sans => &["Carlito", "Liberation Sans", "Arial", "Helvetica", "Segoe UI", "DejaVu Sans", "Noto Sans", "Ubuntu"],
@@ -311,6 +341,12 @@ impl FontLibrary {
         }
     }
 
+    /// Read the installed fonts now if they haven't been (waits for a scan already running): for
+    /// work that must use them, such as a PDF export from the command line.
+    pub fn wait_until_ready(&self) {
+        let _ = self.catalog.families();
+    }
+
     /// Whether the installed fonts have been read (until then only bundled faces resolve).
     pub fn is_ready(&self) -> bool {
         self.catalog.is_ready()
@@ -400,11 +436,7 @@ impl FontLibrary {
         if let Some(r) = self.own(family, bold, italic) {
             return Some(r);
         }
-        let substitutes = metric_substitute(family).into_iter().chain(class_fallbacks(Class::of(family)).iter().copied());
-        for sub in substitutes {
-            if sub.eq_ignore_ascii_case(family) {
-                continue;
-            }
+        for sub in fallback_chain(family) {
             if let Some(mut r) = self.own(sub, bold, italic) {
                 r.substituted = true;
                 return Some(r);
@@ -413,8 +445,10 @@ impl FontLibrary {
         None
     }
 
-    /// `family`'s own face: installed or added first, then bundled.
-    fn own(&self, family: &str, bold: bool, italic: bool) -> Option<Resolved> {
+    /// `family`'s own face (no substitutes): installed or added first, then bundled. Never waits
+    /// for the scan. For callers that walk [`fallback_chain`] themselves (the PDF export, which
+    /// also skips faces whose licence forbids embedding).
+    pub fn own(&self, family: &str, bold: bool, italic: bool) -> Option<Resolved> {
         if self.catalog.is_ready()
             && let Some(r) = self.installed(family, bold, italic)
         {
@@ -464,10 +498,14 @@ impl FontLibrary {
             fake_italic: italic && !info.italic,
             substituted: false,
             source: info.source,
+            face_bold: is_bold,
+            face_italic: info.italic,
+            embeddable: info.fs_type & 0x000F != 0x0002,
         })
     }
 
-    fn bundled_face(&self, family: &str, bold: bool, italic: bool) -> Option<Resolved> {
+    /// `family`'s bundled face nearest to the style, if it is one of the bundled families.
+    pub fn bundled_face(&self, family: &str, bold: bool, italic: bool) -> Option<Resolved> {
         let faces: Vec<&Bundled> = self.bundled.iter().filter(|b| b.family.eq_ignore_ascii_case(family)).collect();
         let want = if bold { 700.0 } else { 400.0 };
         let best = faces.iter().min_by(|a, b| {
@@ -482,6 +520,10 @@ impl FontLibrary {
             fake_italic: italic && !best.italic,
             substituted: false,
             source: Source::Bundled,
+            face_bold: best.weight >= BOLD_WEIGHT,
+            face_italic: best.italic,
+            embeddable: true,
+
         })
     }
 
@@ -536,7 +578,12 @@ mod tests {
         assert_eq!(Class::of("Noto Sans"), Class::Sans);
         assert_eq!(metric_substitute("calibri"), Some("Carlito"));
         assert_eq!(metric_substitute("Times New Roman"), Some("Liberation Serif"));
-        assert_eq!(metric_substitute("Segoe UI"), None);
+        assert_eq!(metric_substitute("Wingdings"), None);
+        let chain = fallback_chain("Calibri");
+        assert_eq!(chain.first(), Some(&"Carlito"));
+        assert!(!chain.contains(&"Calibri") && chain.contains(&"Liberation Sans"), "{chain:?}");
+        assert_eq!(fallback_chain("Consolas").first().copied(), Some("Menlo"), "the family itself is skipped");
+        assert!(fallback_chain("Garamond").contains(&"Caladea"), "a serif falls back to serifs");
         assert_eq!(style_bits("Bold Italic"), (700.0, true));
         assert_eq!(style_bits("SemiBold"), (600.0, false));
     }

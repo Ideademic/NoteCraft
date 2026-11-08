@@ -29,9 +29,10 @@ pub mod ribbon;
 pub mod ribbon_fit;
 pub mod services;
 pub mod theme;
+pub mod updates;
 pub mod widgets;
 
 pub use app::{NoteApp, Prefs, UiState};
 pub use canvas::{CanvasState, Tool};
-pub use services::{ClipboardImage, Inbox, InboxFile, OpenPurpose, Services};
+pub use services::{ClipboardImage, FolderFor, Inbox, InboxFile, OpenPurpose, PathRequest, Printing, Services};
 pub use theme::{APP_COLOR, Appearance, Tokens};

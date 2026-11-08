@@ -51,6 +51,8 @@ fn hostile_params_never_panic() {
         json!({"align": "middle", "tag": 5, "style": ["x"], "value": "on"}),
         json!({"align": null, "tag": "\u{0}\u{FFFF}", "style": "\u{FFFD}.", "font": "x".repeat(10_000)}),
         json!({"align": "justify", "tag": null, "style": "upperRoman", "value": false}),
+        json!({"scope": "notebook", "paper": "A4", "landscape": "x", "pages": "1-, 3", "utcOffset": 1e30, "fonts": "bundled", "fitWidth": 3}),
+        json!({"scope": "section", "paper": 4, "pages": "-", "header": false, "pageNumbers": null, "fonts": 7}),
     ];
     for spec in registry().all() {
         // A notebook.open path that doesn't exist is fine to try; skip nothing.

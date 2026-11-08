@@ -72,13 +72,75 @@ Local test: `python3 -m http.server 8765` inside the folder, then open http://lo
 
 ## Where notebooks live
 
-The web build has no file system. Notebooks you create or open live in the page while it is open;
-download them (a `.onepkg` keeps a whole notebook) to keep a copy, and open that file again
-next time. The desktop apps autosave to real `.one` / `.onetoc2` files instead.
+The web build has no file system. On its own, NoteCraft keeps the open notebooks in the browser
+(`localStorage`, or IndexedDB once they outgrow it) and opens them again on the next visit. Export
+a `.onepkg` (File › Export) to keep a copy elsewhere. The desktop apps autosave to real `.one` /
+`.onetoc2` files instead.
 
-The `?host=parent` iframe bridge and the same-document host mode of the shared
+## Hosting NoteCraft in your own page (host bridge)
+
+A page can hand NoteCraft a notebook and store what it saves, for example to put notebooks in a
+file manager or a web app's own storage. NoteCraft speaks the shared
 [`craft-web-host`](https://github.com/storytold/craft-libs/tree/main/crates/web-host) contract,
-which other Craft apps implement, are not wired up in NoteCraft yet; see `ROADMAP.md`.
+the same messages as the other Craft apps' web builds, with the `notecraft:` prefix.
+
+There are two ways to host it:
+
+- **In an iframe:** add `?host=parent` to the `src`. The iframe must be on the **same origin** as
+  the page: NoteCraft only talks to a same-origin parent. Messages go through `postMessage`.
+  Without a parent, or with a parent on another origin, `?host=parent` is ignored and the app
+  behaves as usual.
+- **In the page's own document:** put `data-host="page"` on NoteCraft's canvas
+  (`<canvas id="notecraft_canvas" data-host="page">`). Messages are `CustomEvent`s dispatched on
+  the canvas, with the fields in `detail`.
+
+When both are present, `?host=parent` wins.
+
+| Message | Direction | Fields |
+|---|---|---|
+| `notecraft:ready` | app → host | `version` (the contract's, `"1"`), `appVersion` (NoteCraft's), `file: false` (send `bytes`) |
+| `notecraft:open` | host → app | `name`, `bytes` (an `ArrayBuffer` or `Uint8Array`) |
+| `notecraft:save` | app → host | `name`, `bytes` (an `ArrayBuffer`, transferred), `saveAs` |
+| `notecraft:dirty` | app → host | `dirty` |
+| `notecraft:failed` | app → host | `error` |
+
+- **A notebook travels as one `.onepkg`.** Send `notecraft:open` with a `.onepkg` once you get
+  `notecraft:ready`. (A single `.one` section or a NoteCraft `.json` opens too.) Files over
+  512 MB are refused.
+- NoteCraft has no Save button. Each autosave, a few seconds after a change, sends the whole
+  notebook as a `.onepkg` in `notecraft:save`:
+  - `saveAs: false` with the name you sent, for a notebook you sent as a `.onepkg`: overwrite
+    that file.
+  - `saveAs: true` with `<notebook name>.onepkg` the first time for a notebook you didn't send
+    that way (one made with File › New, or a `.one` you sent). It is a new file. Later saves of
+    it use the same name with `saveAs: false`.
+  - File › Export's files (HTML, Markdown, plain text, a `.onepkg` copy) also come as
+    `notecraft:save` with `saveAs: false`, instead of a browser download.
+- `notecraft:dirty` reports when unsaved changes appear and when they are saved. The host should
+  guard leaving the page while `dirty` is `true`. NoteCraft doesn't guard it in host mode.
+- Hosted, NoteCraft keeps no notebooks in browser storage, and it starts with none until the host
+  sends one. Its preferences (appearance, ribbon, language) are still kept per browser.
+
+A minimal same-origin iframe host:
+
+```html
+<iframe id="nc" src="/notecraft/?host=parent" style="width: 100%; height: 720px; border: 0;"></iframe>
+<script type="module">
+  const frame = document.getElementById("nc");
+  addEventListener("message", async (e) => {
+    if (e.origin !== location.origin || e.source !== frame.contentWindow) return;
+    const m = e.data;
+    if (m.type === "notecraft:ready") {
+      const bytes = new Uint8Array(await (await fetch("/files/Work.onepkg")).arrayBuffer());
+      frame.contentWindow.postMessage({ type: "notecraft:open", name: "Work.onepkg", bytes }, location.origin);
+    } else if (m.type === "notecraft:save") {
+      await fetch(`/files/${encodeURIComponent(m.name)}`, { method: "PUT", body: m.bytes });
+    } else if (m.type === "notecraft:dirty") {
+      window.unsavedNotes = m.dirty;
+    }
+  });
+</script>
+```
 
 ## Renderer selection and fallback flags
 

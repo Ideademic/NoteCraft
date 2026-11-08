@@ -1,0 +1,28 @@
+[package]
+name = "notecraft-pdf"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "NoteCraft PDF export and print output: pages as PDF (craft-pdf/Krilla) with vector ink, pictures, real embedded font subsets laid out like the canvas, links and bookmarks"
+
+[lints]
+workspace = true
+
+[dependencies]
+notecraft-geom = { workspace = true }
+notecraft-doc = { workspace = true }
+craft-pdf = { workspace = true }
+# CPU text layout only (no egui): the same line breaking the canvas uses. `default_fonts` gives
+# the bundled faces egui draws with, the fallback when a font isn't installed.
+epaint = { workspace = true, features = ["default_fonts"] }
+skrifa = { workspace = true }
+harfrust = { workspace = true }
+# The fonts the canvas draws with (installed, added, bundled) and its fallback chain.
+notecraft-fonts = { workspace = true }
+image = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+kurbo = { workspace = true }

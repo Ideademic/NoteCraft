@@ -4,9 +4,10 @@
 //! The body has two layouts ([`display::RibbonLayout`]): Classic, groups of large and small
 //! buttons with captions (OneNote 2016/2019), and Simplified, one thin row of small buttons with
 //! related commands in drop-downs ([`simplified`]). How much of the ribbon shows is a display
-//! option too ([`display::RibbonDisplay`]): always, tabs only (Ctrl+F1, or double-click a tab; a
-//! click on a tab then shows it once), or full-screen mode. Both are chosen from the right-click
-//! menu on empty ribbon space or the arrow at the ribbon's bottom-right corner.
+//! option too ([`display::RibbonDisplay`]): always, tabs only (Ctrl+F1 or the display options;
+//! a click on a tab then shows the ribbon for good), or full-screen mode. Both are chosen from the
+//! right-click menu on empty ribbon space or the arrow at the ribbon's bottom-right corner. A
+//! double-click on a tab doesn't hide the ribbon: that was too easy to do by accident.
 
 pub mod display;
 pub mod draw;
@@ -67,15 +68,19 @@ impl RibbonTab {
     }
 }
 
-/// Opens a tab (File opens the backstage); a hidden ribbon shows the tab once.
+/// Opens a tab (File opens the backstage). With only the tabs showing, opening one pins the
+/// ribbon again (Always show): a ribbon that hid itself after every button was more surprising
+/// than useful. In full-screen mode the tab shows while the tabs and ribbon are revealed.
 pub fn select(app: &mut NoteApp, tab: RibbonTab) {
     if tab == RibbonTab::File {
         app.ui.backstage = true;
         app.ui.keytips.off();
         return;
     }
-    if app.ui.ribbon_display != RibbonDisplay::Always {
-        app.ui.ribbon_peek = !(app.ui.ribbon_peek && app.ui.ribbon_tab == tab);
+    match app.ui.ribbon_display {
+        RibbonDisplay::Always => {}
+        RibbonDisplay::TabsOnly => display::set_display(app, RibbonDisplay::Always),
+        RibbonDisplay::FullScreen => app.ui.ribbon_peek = !(app.ui.ribbon_peek && app.ui.ribbon_tab == tab),
     }
     app.ui.ribbon_tab = tab;
 }
@@ -124,11 +129,9 @@ pub fn tab_strip(ui: &mut Ui, app: &mut NoteApp) {
             }
             ui.painter().text(r.center(), Align2::CENTER_CENTER, label, regular(12.5), t.tab_text);
         }
+        // A double-click is two clicks: it opens the tab, and never collapses the ribbon.
         if resp.clicked() {
             select(app, tab);
-        }
-        if resp.double_clicked() && tab != RibbonTab::File {
-            toggle_collapsed(app);
         }
         if tab != RibbonTab::File {
             resp.context_menu(|ui| display::context_menu(ui, app));
@@ -208,8 +211,16 @@ mod tests {
         toggle_collapsed(&mut app);
         assert!(!body_visible(&app));
         select(&mut app, RibbonTab::Home);
-        assert!(body_visible(&app), "a click on a tab shows a collapsed ribbon once");
+        assert!(app.ui.ribbon_display == RibbonDisplay::Always && body_visible(&app), "a click on a tab pins a collapsed ribbon");
+        assert!(!app.ui.ribbon_peek, "no peek that hides again");
         toggle_collapsed(&mut app);
-        assert!(app.ui.ribbon_display == RibbonDisplay::Always && body_visible(&app));
+        assert_eq!(app.ui.ribbon_display, RibbonDisplay::TabsOnly);
+        // File opens the backstage and leaves the display alone.
+        select(&mut app, RibbonTab::File);
+        assert_eq!(app.ui.ribbon_display, RibbonDisplay::TabsOnly);
+        // Full-screen mode keeps its reveal: a tab shows while revealed, the mode stays.
+        display::set_display(&mut app, RibbonDisplay::FullScreen);
+        select(&mut app, RibbonTab::Insert);
+        assert!(app.ui.ribbon_peek && app.ui.ribbon_display == RibbonDisplay::FullScreen);
     }
 }
