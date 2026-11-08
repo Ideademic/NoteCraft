@@ -8,7 +8,7 @@ use crate::backstage::BackstagePage;
 use crate::ribbon::RibbonTab;
 
 /// Every named state.
-pub const SHOTS: [&str; 12] = [
+pub const SHOTS: [&str; 13] = [
     "main",
     "tab-insert",
     "tab-draw",
@@ -17,6 +17,7 @@ pub const SHOTS: [&str; 12] = [
     "backstage-new",
     "backstage-open",
     "backstage-export",
+    "backstage-print",
     "backstage-options",
     "backstage-about",
     "panes-collapsed",
@@ -83,6 +84,7 @@ pub fn prepare(app: &mut NoteApp, shot: &str) {
             crate::backstage::open(app, BackstagePage::Open);
         }
         "backstage-export" => crate::backstage::open(app, BackstagePage::Export),
+        "backstage-print" => crate::backstage::open(app, BackstagePage::Print),
         "backstage-options" => crate::backstage::open(app, BackstagePage::Options),
         "backstage-about" => crate::backstage::open(app, BackstagePage::About),
         "panes-collapsed" => {

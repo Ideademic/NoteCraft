@@ -13,10 +13,10 @@ use crate::ids::FILE_EXPORT_PDF;
 use crate::{CmdError, CmdOutput, CmdResult, CommandSpec, Session, p};
 
 const PARAMS: &str = concat!(
-    r##"{"scope"?: "page" (default)|"section"|"notebook", "id"?: page, section or notebook guid (default: the current one), "#,
-    r##""paper"?: "fit" (default: one sheet per page, its content's size)|"letter"|"a4"|"legal"|"a5", "landscape"?: bool, "#,
-    r##""fitWidth"?: bool (default true: shrink wide pages to the paper's width), "header"?: bool (default true: title and date), "#,
-    r##""pageNumbers"?: bool (default true on paper), "pages"?: "1-3, 5" (sheets to keep), "utcOffset"?: minutes east of UTC for dates, "#,
+    r##"{"scope"?: "page" (default)|"section"|"notebook", "id"?: page, section or notebook guid (default: the current one), "##,
+    r##""paper"?: "fit" (default: one sheet per page, its content's size)|"letter"|"a4"|"legal"|"a5", "landscape"?: bool, "##,
+    r##""fitWidth"?: bool (default true: shrink wide pages to the paper's width), "header"?: bool (default true: title and date), "##,
+    r##""pageNumbers"?: bool (default true on paper), "pages"?: "1-3, 5" (sheets to keep), "utcOffset"?: minutes east of UTC for dates, "##,
     r##""fonts"?: "system" (default)|"bundled", "path"?: string} -> {"fileName", "mime", "bytesBase64", "size", "sheets"} | {"path", "size", "sheets"}"##
 );
 

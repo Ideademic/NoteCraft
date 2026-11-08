@@ -276,6 +276,8 @@ pub struct NoteApp {
     pub services: Services,
     pub ui: UiState,
     pub canvas: CanvasState,
+    /// File › Print: its settings, preview and the job being sent.
+    pub print: crate::backstage::print::PrintPage,
     pub tokens: Tokens,
     /// macOS: the title bar is drawn by us under AppKit's traffic lights (hidden system title bar,
     /// full-size content view).
@@ -301,6 +303,7 @@ impl NoteApp {
             services,
             ui,
             canvas: CanvasState::default(),
+            print: crate::backstage::print::PrintPage::default(),
             tokens: Tokens::light(),
             integrated_titlebar: false,
             window_buttons: None,
@@ -463,6 +466,7 @@ impl NoteApp {
         self.remember_open_notebooks();
         files::drain_inbox(self);
         keys::handle(self, ctx);
+        crate::backstage::print::poll(self, ctx);
         if let Some(hook) = &self.services.on_dirty {
             hook(self.session.is_dirty());
         }

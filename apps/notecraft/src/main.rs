@@ -9,6 +9,7 @@
 #![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod print;
 mod services;
 
 use std::io::Write as _;
@@ -157,6 +158,7 @@ impl eframe::App for App {
             Err(e) => log::error!("saving on exit failed: {e}"),
         }
         self.store_settings();
+        print::finish_pending_jobs();
     }
 }
 

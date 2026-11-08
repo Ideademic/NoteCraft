@@ -14,6 +14,8 @@ use crate::theme::{Appearance, RADIUS_SMALL, fit_text, paint_strong, regular};
 use crate::widgets::{self, flat_button};
 use crate::{NoteApp, tl};
 
+pub mod print;
+
 /// Width of the rail.
 pub const RAIL_W: f32 = 190.0;
 
@@ -25,17 +27,19 @@ pub enum BackstagePage {
     New,
     Open,
     Export,
+    Print,
     Import,
     Options,
     About,
 }
 
 impl BackstagePage {
-    pub const ALL: [BackstagePage; 7] = [
+    pub const ALL: [BackstagePage; 8] = [
         BackstagePage::Info,
         BackstagePage::New,
         BackstagePage::Open,
         BackstagePage::Export,
+        BackstagePage::Print,
         BackstagePage::Import,
         BackstagePage::Options,
         BackstagePage::About,
@@ -47,6 +51,7 @@ impl BackstagePage {
             BackstagePage::New => tl!("New"),
             BackstagePage::Open => tl!("Open"),
             BackstagePage::Export => tl!("Export"),
+            BackstagePage::Print => tl!("Print"),
             BackstagePage::Import => tl!("Import"),
             BackstagePage::Options => tl!("Options"),
             BackstagePage::About => tl!("About"),
@@ -59,6 +64,7 @@ impl BackstagePage {
             BackstagePage::New => Icon::NewNotebook,
             BackstagePage::Open => Icon::Open,
             BackstagePage::Export => Icon::Export,
+            BackstagePage::Print => Icon::Print,
             BackstagePage::Import => Icon::Import,
             BackstagePage::Options => Icon::Options,
             BackstagePage::About => Icon::About,
@@ -136,6 +142,7 @@ pub fn show(ui: &mut Ui, app: &mut NoteApp) {
                 BackstagePage::New => new_notebook(ui, app),
                 BackstagePage::Open => open_page(ui, app),
                 BackstagePage::Export => export(ui, app),
+                BackstagePage::Print => print::show(ui, app),
                 BackstagePage::Import => import(ui, app),
                 BackstagePage::Options => options(ui, app),
                 BackstagePage::About => about(ui, app),
@@ -424,11 +431,14 @@ fn export(ui: &mut Ui, app: &mut NoteApp) {
     );
     subheading(ui, tl!("2. Select Format"));
     let formats: Vec<(ExportFormat, &str, Icon)> = match scope {
-        ExportScope::Notebook => vec![(ExportFormat::Onepkg, tl!("OneNote Package (.onepkg)"), Icon::Notebook)],
+        ExportScope::Notebook => {
+            vec![(ExportFormat::Onepkg, tl!("OneNote Package (.onepkg)"), Icon::Notebook), (ExportFormat::Pdf, tl!("PDF (.pdf)"), Icon::Print)]
+        }
         _ => vec![
             (ExportFormat::Html, tl!("Web Page (.html)"), Icon::Export),
             (ExportFormat::Markdown, tl!("Markdown (.md)"), Icon::Export),
             (ExportFormat::Text, tl!("Plain Text (.txt)"), Icon::Export),
+            (ExportFormat::Pdf, tl!("PDF (.pdf)"), Icon::Print),
         ],
     };
     let default = formats.first().map_or(ExportFormat::Html, |f| f.0);

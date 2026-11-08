@@ -36,6 +36,6 @@ js-sys = { workspace = true }
 # On top of the workspace's features: storage, the file picker, the clipboard, the leave guard.
 web-sys = { workspace = true, features = [
   "BeforeUnloadEvent", "Clipboard", "ClipboardEvent", "ClipboardItem", "CssStyleDeclaration", "DataTransfer", "DomException",
-  "DomStringList", "Event", "EventTarget", "File", "FileList", "HtmlInputElement", "IdbDatabase", "IdbFactory", "IdbObjectStore",
+  "DomStringList", "Event", "HtmlIFrameElement", "EventTarget", "File", "FileList", "HtmlInputElement", "IdbDatabase", "IdbFactory", "IdbObjectStore",
   "IdbOpenDbRequest", "IdbRequest", "IdbTransaction", "IdbTransactionMode", "MediaQueryList", "Navigator",
 ] }

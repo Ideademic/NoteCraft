@@ -28,6 +28,9 @@ chrono = { workspace = true, features = ["clock"] }
 rfd = { workspace = true }
 # Pictures on the system clipboard (screenshots); egui's paste only carries text.
 arboard = { workspace = true, features = ["image-data"] }
+# File › Print: the printers and the spooler (CUPS `lp`, Windows), with craft-ui's printing panel.
+craft-print = { workspace = true }
+craft-ui = { workspace = true }
 
 [build-dependencies]
 # Icon + VERSIONINFO for notecraft.exe; build.rs only uses it when the target is Windows.

@@ -32,5 +32,5 @@ pub mod widgets;
 
 pub use app::{NoteApp, Prefs, UiState};
 pub use canvas::{CanvasState, Tool};
-pub use services::{ClipboardImage, Inbox, InboxFile, OpenPurpose, Services};
+pub use services::{ClipboardImage, Inbox, InboxFile, OpenPurpose, Printing, Services};
 pub use theme::{APP_COLOR, Appearance, Tokens};

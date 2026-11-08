@@ -25,6 +25,7 @@ pub enum ExportFormat {
     Markdown,
     Text,
     Onepkg,
+    Pdf,
 }
 
 impl ExportFormat {
@@ -34,6 +35,7 @@ impl ExportFormat {
             ExportFormat::Markdown => "md",
             ExportFormat::Text => "txt",
             ExportFormat::Onepkg => "onepkg",
+            ExportFormat::Pdf => "pdf",
         }
     }
 }
@@ -59,8 +61,13 @@ pub fn export_name(app: &NoteApp, scope: ExportScope, format: ExportFormat) -> S
 /// the browser as a download.
 pub fn export(app: &mut NoteApp, scope: ExportScope, format: ExportFormat) {
     let name = export_name(app, scope, format);
-    let (id, mut params) = match (scope, format) {
+    let (id, params) = match (scope, format) {
         (_, ExportFormat::Onepkg) => (ids::FILE_EXPORT_ONEPKG, json!({ "id": app.session.current.notebook })),
+        // One sheet per page, its content's size: the page as on screen (File › Print offers paper sizes).
+        (scope, ExportFormat::Pdf) => (
+            ids::FILE_EXPORT_PDF,
+            json!({ "scope": crate::backstage::print::scope_name(scope), "paper": "fit", "utcOffset": app.canvas.utc_offset_minutes }),
+        ),
         (ExportScope::Page, ExportFormat::Html) => (ids::FILE_EXPORT_HTML, json!({ "scope": "page" })),
         (_, ExportFormat::Html) => (ids::FILE_EXPORT_HTML, json!({ "scope": "section" })),
         (ExportScope::Page, ExportFormat::Markdown) => (ids::FILE_EXPORT_MARKDOWN, json!({ "scope": "page" })),
@@ -68,6 +75,12 @@ pub fn export(app: &mut NoteApp, scope: ExportScope, format: ExportFormat) {
         (ExportScope::Page, ExportFormat::Text) => ("file.exportText", json!({ "scope": "page" })),
         (_, ExportFormat::Text) => ("file.exportText", json!({ "scope": "section" })),
     };
+    export_with(app, name, id, params);
+}
+
+/// Runs export command `id` with `params`, saving its file as `name`: where the save dialog
+/// says (desktop, as `path`) or as a download (web). File › Export and Print › Save as PDF.
+pub fn export_with(app: &mut NoteApp, name: String, id: &str, mut params: Value) {
     if let Some(pick) = app.services.pick_save.as_ref() {
         let Some(path) = pick(&name) else { return };
         if let Some(m) = params.as_object_mut() {
