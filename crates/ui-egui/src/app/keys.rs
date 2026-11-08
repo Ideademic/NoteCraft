@@ -1,6 +1,6 @@
 //! Window-wide keyboard shortcuts: the engine's command shortcuts (`Mod+N` New Page, `Mod+T`
 //! New Section, `Mod+Z` Undo…) while no text box has the keyboard, plus the UI's own: Ctrl+E
-//! search, F11 Full Page View, Ctrl+F1 ribbon, Ctrl+Shift+[ / ] page list, KeyTips.
+//! search, Ctrl+F find on the page, Ctrl+P Print, F11 Full Page View, Ctrl+F1 ribbon, Ctrl+Shift+[ / ] page list, KeyTips.
 //!
 //! While the canvas edits text it owns the keyboard (egui's focus says so), so typing and its own
 //! shortcuts (Ctrl+B in a note) never reach these.
@@ -69,20 +69,37 @@ pub fn handle(app: &mut NoteApp, ctx: &egui::Context) {
         app.ui.backstage = false;
         app.ui.search_focus = true;
     }
+    // Find on the page, also while typing in a note.
+    if take(ctx, KeyboardShortcut::new(Modifiers::COMMAND, Key::F)) && app.session.current_page().is_some() {
+        crate::dialogs::find::open(app);
+    }
     if take(ctx, KeyboardShortcut::new(Modifiers::NONE, Key::F11)) {
         app.ui.full_page_view = !app.ui.full_page_view;
     }
     if take(ctx, KeyboardShortcut::new(Modifiers::COMMAND, Key::F1)) {
         crate::ribbon::toggle_collapsed(app);
     }
+    // Print, from anywhere (also while typing in a note).
+    if take(ctx, KeyboardShortcut::new(Modifiers::COMMAND, Key::P)) {
+        crate::backstage::open(app, crate::backstage::BackstagePage::Print);
+    }
+    // Review › Spelling and Insert Link, also while typing in a note.
+    if !app.ui.backstage && app.ui.review.link.is_none() {
+        if take(ctx, KeyboardShortcut::new(Modifiers::NONE, Key::F7)) {
+            crate::panes::spelling::toggle(app);
+        }
+        if take(ctx, KeyboardShortcut::new(Modifiers::COMMAND, Key::K)) {
+            crate::review::open_link_dialog(app);
+        }
+    }
     if app.ui.backstage || typing {
         return;
     }
     if take(ctx, KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::OpenBracket)) {
-        app.ui.page_list_open = !app.ui.page_list_open;
+        super::narrow::toggle(app, super::narrow::SidePane::Pages);
     }
     if take(ctx, KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::CloseBracket)) {
-        app.ui.notebook_pane_open = !app.ui.notebook_pane_open;
+        super::narrow::toggle(app, super::narrow::SidePane::Notebooks);
     }
     if take(ctx, KeyboardShortcut::new(Modifiers::COMMAND, Key::Plus)) || take(ctx, KeyboardShortcut::new(Modifiers::COMMAND, Key::Equals)) {
         app.canvas.set_zoom(notecraft_geom::zoom::zoom_in(app.canvas.zoom));

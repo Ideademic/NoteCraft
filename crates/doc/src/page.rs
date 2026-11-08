@@ -10,6 +10,7 @@ use chrono::{DateTime, Utc};
 use notecraft_geom::{Point, Rect, Size};
 use serde::{Deserialize, Serialize};
 
+use crate::table::Block;
 use crate::{Color, Guid, InkStroke};
 
 /// Deepest subpage level: 0 is a page, 1 and 2 are subpages.
@@ -120,6 +121,13 @@ pub struct Page {
     /// Page-level ink in page points, drawn above the elements, oldest first. See [`crate::ink`].
     #[serde(default)]
     pub ink: Vec<InkStroke>,
+    /// Earlier versions of the page, oldest first (History ▸ Page Versions). See
+    /// [`crate::history`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub versions: Vec<crate::PageVersion>,
+    /// View ▸ Hide Page Title: the title block isn't shown (kept per page).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hide_title: bool,
 }
 
 impl Page {
@@ -140,6 +148,8 @@ impl Page {
             background: PageBackground::default(),
             elements: Vec::new(),
             ink: Vec::new(),
+            versions: Vec::new(),
+            hide_title: false,
         }
     }
 
@@ -195,15 +205,15 @@ impl Page {
         self.ink.iter_mut().find(|s| s.id == id)
     }
 
-    /// The page's text: title, then each outline's paragraphs (one per line), in element order.
-    /// For search and plain-text export.
+    /// The page's text: title, then each outline's blocks (a line per paragraph and per table
+    /// row, cells separated by tabs), in element order. For search and plain-text export.
     pub fn plain_text(&self) -> String {
         let mut out = self.title.clone();
         for e in &self.elements {
             if let ElementKind::Outline(o) = &e.kind {
-                for p in &o.paragraphs {
+                for b in &o.blocks {
                     out.push('\n');
-                    out.push_str(&p.text());
+                    out.push_str(&b.text());
                 }
             }
         }
@@ -259,7 +269,7 @@ impl PageElement {
     /// (the canvas measures real text); an embedded file is an icon-sized box.
     pub fn bounds(&self) -> Option<Rect> {
         match &self.kind {
-            ElementKind::Outline(o) => Some(Rect::new(o.pos.x, o.pos.y, o.width, o.paragraphs.len().max(1) as f32 * 18.0)),
+            ElementKind::Outline(o) => Some(Rect::new(o.pos.x, o.pos.y, o.display_width(), o.estimated_height())),
             ElementKind::Image(i) => Some(Rect::from_min_size(i.pos, i.size)),
             ElementKind::Printout(p) => Some(p.bounds()),
             ElementKind::EmbeddedFile { pos, .. } => Some(Rect::from_min_size(*pos, Size::new(160.0, 40.0))),
@@ -286,7 +296,7 @@ pub enum ElementKind {
         bytes: Arc<Vec<u8>>,
         pos: Point,
     },
-    /// Content NoteCraft doesn't edit (tables, equations, audio…), kept as read so it can be
+    /// Content NoteCraft doesn't edit (equations, audio…), kept as read so it can be
     /// written back: the MS-ONE JCID of its root object and the format crate's encoding of it.
     Opaque {
         jcid: u32,
@@ -295,30 +305,103 @@ pub enum ElementKind {
     },
 }
 
-/// A note container: positioned, fixed width, paragraphs flowing down.
+/// A note container: positioned, fixed width, blocks (paragraphs and tables) flowing down.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Outline {
     /// Top-left corner, points.
     pub pos: Point,
-    /// Width, points.
+    /// Width, points (a wider table widens the container on screen: [`Outline::display_width`]).
     pub width: f32,
-    pub paragraphs: Vec<Paragraph>,
+    /// Paragraphs and tables, top to bottom. JSON written before tables calls it `paragraphs`.
+    #[serde(alias = "paragraphs")]
+    pub blocks: Vec<Block>,
 }
 
 impl Outline {
     /// An outline at `pos` holding `text` (one paragraph per line).
     pub fn with_text(pos: Point, text: &str) -> Outline {
-        Outline { pos: pos.sanitized(), width: DEFAULT_OUTLINE_WIDTH, paragraphs: text.split('\n').map(Paragraph::plain).collect() }
+        Outline::with_paragraphs(pos, text.split('\n').map(Paragraph::plain).collect())
     }
 
-    /// Paragraph texts joined with newlines.
+    /// An outline at `pos` holding `paragraphs`.
+    pub fn with_paragraphs(pos: Point, paragraphs: Vec<Paragraph>) -> Outline {
+        Outline { pos: pos.sanitized(), width: DEFAULT_OUTLINE_WIDTH, blocks: paragraphs.into_iter().map(Block::Paragraph).collect() }
+    }
+
+    /// Block texts joined with newlines (a table gives a line per row, cells tab-separated).
     pub fn text(&self) -> String {
-        self.paragraphs.iter().map(Paragraph::text).collect::<Vec<_>>().join("\n")
+        self.blocks.iter().map(Block::text).collect::<Vec<_>>().join("\n")
     }
 
+    /// No text anywhere (a table of empty cells counts as empty only when it is the only
+    /// block: a container holding a table is never cleaned up as empty).
     pub fn is_empty(&self) -> bool {
-        self.paragraphs.iter().all(|p| p.text().is_empty())
+        self.blocks.iter().all(|b| b.as_paragraph().is_some_and(|p| p.text().is_empty()))
+    }
+
+    /// Every paragraph in reading order: the outline's own and each table cell's.
+    pub fn paragraphs(&self) -> impl Iterator<Item = &Paragraph> {
+        self.blocks.iter().flat_map(Block::paragraphs)
+    }
+
+    /// Every paragraph, mutably, in reading order.
+    pub fn paragraphs_mut(&mut self) -> impl Iterator<Item = &mut Paragraph> {
+        self.blocks.iter_mut().flat_map(Block::paragraphs_mut)
+    }
+
+    /// The paragraph block at `i` (`None` for a table or past the end).
+    pub fn para(&self, i: usize) -> Option<&Paragraph> {
+        self.blocks.get(i).and_then(Block::as_paragraph)
+    }
+
+    pub fn para_mut(&mut self, i: usize) -> Option<&mut Paragraph> {
+        self.blocks.get_mut(i).and_then(Block::as_paragraph_mut)
+    }
+
+    /// The table block at `i`.
+    pub fn table(&self, i: usize) -> Option<&crate::Table> {
+        self.blocks.get(i).and_then(Block::as_table)
+    }
+
+    pub fn table_mut(&mut self, i: usize) -> Option<&mut crate::Table> {
+        self.blocks.get_mut(i).and_then(Block::as_table_mut)
+    }
+
+    /// Whether any block is a table.
+    pub fn has_tables(&self) -> bool {
+        self.blocks.iter().any(Block::is_table)
+    }
+
+    /// The width the container takes on the page: its own, or more when a table is wider.
+    pub fn display_width(&self) -> f32 {
+        let w = if self.width.is_finite() { self.width } else { DEFAULT_OUTLINE_WIDTH };
+        self.blocks.iter().filter_map(|b| b.as_table().map(|t| t.width() + f32::from(t.indent.min(MAX_INDENT)) * 18.0)).fold(w, f32::max)
+    }
+
+    /// A rough height (the canvas measures real text): 18 pt per line, table rows included.
+    pub fn estimated_height(&self) -> f32 {
+        let lines: usize = self
+            .blocks
+            .iter()
+            .map(|b| match b {
+                Block::Paragraph(_) => 1,
+                Block::Table { table } => table.rows.iter().map(|r| r.cells.iter().map(|c| c.paragraphs.len()).max().unwrap_or(1)).sum(),
+            })
+            .sum();
+        lines.max(1) as f32 * 18.0
+    }
+
+    /// Hostile-input bounds on every block: paragraphs sanitized, tables normalized, at most
+    /// [`MAX_PARAGRAPHS`] blocks.
+    pub fn sanitize(&mut self) {
+        self.blocks.truncate(MAX_PARAGRAPHS);
+        for b in &mut self.blocks {
+            match b {
+                Block::Paragraph(p) => p.indent = p.indent.min(MAX_INDENT),
+                Block::Table { table } => table.normalize(),
+            }
+        }
     }
 }
 
@@ -330,6 +413,263 @@ pub enum ListKind {
     Numbered,
 }
 
+/// How a list item's marker looks: a bullet shape or a numbering format. A paragraph without
+/// one ([`Paragraph::list_style`] `None`) takes its marker from its indent level (bullets: disc,
+/// circle, square; numbers: `1.`, `a.`, `i.`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ListStyle {
+    /// `•`
+    Disc,
+    /// `◦`
+    Circle,
+    /// `▪`
+    Square,
+    /// `–`
+    Dash,
+    /// `➢`
+    Arrow,
+    /// `1.` `2.` `3.`
+    Decimal,
+    /// `a.` `b.` `c.`
+    LowerAlpha,
+    /// `A.` `B.` `C.`
+    UpperAlpha,
+    /// `i.` `ii.` `iii.`
+    LowerRoman,
+    /// `I.` `II.` `III.`
+    UpperRoman,
+}
+
+impl ListStyle {
+    pub const BULLETS: [ListStyle; 5] = [ListStyle::Disc, ListStyle::Circle, ListStyle::Square, ListStyle::Dash, ListStyle::Arrow];
+    pub const NUMBERS: [ListStyle; 5] =
+        [ListStyle::Decimal, ListStyle::LowerAlpha, ListStyle::UpperAlpha, ListStyle::LowerRoman, ListStyle::UpperRoman];
+
+    /// Whether this is a bullet or a numbering format.
+    pub fn kind(self) -> ListKind {
+        if ListStyle::BULLETS.contains(&self) { ListKind::Bullet } else { ListKind::Numbered }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            ListStyle::Disc => "disc",
+            ListStyle::Circle => "circle",
+            ListStyle::Square => "square",
+            ListStyle::Dash => "dash",
+            ListStyle::Arrow => "arrow",
+            ListStyle::Decimal => "decimal",
+            ListStyle::LowerAlpha => "lowerAlpha",
+            ListStyle::UpperAlpha => "upperAlpha",
+            ListStyle::LowerRoman => "lowerRoman",
+            ListStyle::UpperRoman => "upperRoman",
+        }
+    }
+
+    /// By [`ListStyle::name`] (any case), or by a sample of the marker (`"1."`, `"a."`, `"I."`,
+    /// `"•"`).
+    pub fn parse(s: &str) -> Option<ListStyle> {
+        let t = s.trim();
+        if let Some(st) = ListStyle::BULLETS.into_iter().chain(ListStyle::NUMBERS).find(|x| x.name().eq_ignore_ascii_case(t)) {
+            return Some(st);
+        }
+        let sample = t.trim_end_matches(['.', ')']);
+        let mut chars = sample.chars();
+        if let (Some(c), None) = (chars.next(), chars.next())
+            && !c.is_ascii_alphanumeric()
+        {
+            return ListStyle::from_bullet_char(c);
+        }
+        Some(match sample {
+            "1" => ListStyle::Decimal,
+            "a" => ListStyle::LowerAlpha,
+            "A" => ListStyle::UpperAlpha,
+            "i" => ListStyle::LowerRoman,
+            "I" => ListStyle::UpperRoman,
+            "o" => ListStyle::Circle,
+            _ => return None,
+        })
+    }
+
+    /// The bullet character (bullets only).
+    pub fn bullet_char(self) -> Option<char> {
+        match self {
+            ListStyle::Disc => Some('\u{2022}'),
+            ListStyle::Circle => Some('\u{25E6}'),
+            ListStyle::Square => Some('\u{25AA}'),
+            ListStyle::Dash => Some('\u{2013}'),
+            ListStyle::Arrow => Some('\u{27A2}'),
+            _ => None,
+        }
+    }
+
+    /// The bullet for a character a file uses: the shapes NoteCraft draws, look-alikes, and the
+    /// private-use codes symbol fonts put bullets at. `None` for characters it doesn't recognise.
+    pub fn from_bullet_char(c: char) -> Option<ListStyle> {
+        Some(match c {
+            '\u{2022}' | '\u{25CF}' | '\u{F0B7}' | '\u{F06C}' | '\u{00B7}' | '\u{2219}' => ListStyle::Disc,
+            '\u{25E6}' | '\u{25CB}' | 'o' | '\u{F06F}' => ListStyle::Circle,
+            '\u{25AA}' | '\u{25A0}' | '\u{25FE}' | '\u{F0A7}' | '\u{F06E}' => ListStyle::Square,
+            '\u{2013}' | '\u{2014}' | '-' | '\u{2012}' => ListStyle::Dash,
+            '\u{27A2}' | '\u{2192}' | '\u{25B6}' | '\u{25BA}' | '\u{27A4}' | '>' | '\u{F0D8}' | '\u{F0E0}' => ListStyle::Arrow,
+            _ => return None,
+        })
+    }
+
+    /// The marker text of item `n` (from 1) in this numbering format, with its full stop:
+    /// `"3."`, `"c."`, `"III."`. Bullets give their character.
+    pub fn label(self, n: u32) -> String {
+        match self {
+            ListStyle::Decimal => format!("{n}."),
+            ListStyle::LowerAlpha => format!("{}.", letters(n)),
+            ListStyle::UpperAlpha => format!("{}.", letters(n).to_uppercase()),
+            ListStyle::LowerRoman => format!("{}.", roman(n)),
+            ListStyle::UpperRoman => format!("{}.", roman(n).to_uppercase()),
+            b => b.bullet_char().map(String::from).unwrap_or_default(),
+        }
+    }
+
+    /// The default style at indent level `indent`: bullets go disc, circle, square; numbers
+    /// `1.`, `a.`, `i.`; then again.
+    pub fn by_level(kind: ListKind, indent: u8) -> ListStyle {
+        match (kind, indent % 3) {
+            (ListKind::Bullet, 0) => ListStyle::Disc,
+            (ListKind::Bullet, 1) => ListStyle::Circle,
+            (ListKind::Bullet, _) => ListStyle::Square,
+            (ListKind::Numbered, 0) => ListStyle::Decimal,
+            (ListKind::Numbered, 1) => ListStyle::LowerAlpha,
+            (ListKind::Numbered, _) => ListStyle::LowerRoman,
+        }
+    }
+}
+
+/// A paragraph's list marker, as the canvas and the PDF draw it.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Marker {
+    /// Drawn as a shape: disc, circle, square, dash or arrow.
+    Bullet(ListStyle),
+    /// "1.", "a.", "IV." …
+    Number(String),
+}
+
+/// Each paragraph's marker. Numbers count per level and numbering style (as MS-ONE counts list
+/// items with the same NumberListFormat at the same level); a paragraph at a lower level, or
+/// another kind at the same level, starts the count again.
+pub fn markers(paras: &[Paragraph]) -> Vec<Option<Marker>> {
+    const LEVELS: usize = MAX_INDENT as usize + 1;
+    let mut counters = [0u32; LEVELS];
+    let mut styles: [Option<ListStyle>; LEVELS] = [None; LEVELS];
+    let mut out = Vec::with_capacity(paras.len());
+    for p in paras {
+        let level = usize::from(p.indent.min(MAX_INDENT));
+        // Deeper levels start again under this paragraph.
+        for c in counters.iter_mut().skip(level + 1) {
+            *c = 0;
+        }
+        match (p.list, p.marker_style()) {
+            (Some(ListKind::Numbered), Some(st)) => {
+                let same = styles.get(level).copied().flatten() == Some(st);
+                let n = if same { counters.get(level).copied().unwrap_or(0).saturating_add(1) } else { 1 };
+                if let (Some(c), Some(s)) = (counters.get_mut(level), styles.get_mut(level)) {
+                    *c = n;
+                    *s = Some(st);
+                }
+                out.push(Some(Marker::Number(st.label(n))));
+            }
+            (Some(ListKind::Bullet), Some(st)) => {
+                if let (Some(c), Some(s)) = (counters.get_mut(level), styles.get_mut(level)) {
+                    *c = 0;
+                    *s = None;
+                }
+                out.push(Some(Marker::Bullet(st)));
+            }
+            _ => {
+                if let (Some(c), Some(s)) = (counters.get_mut(level), styles.get_mut(level)) {
+                    *c = 0;
+                    *s = None;
+                }
+                out.push(None);
+            }
+        }
+    }
+    out
+}
+
+/// `1` → `a`, `26` → `z`, `27` → `aa` (at most 8 letters).
+fn letters(mut n: u32) -> String {
+    let mut s = Vec::new();
+    while n > 0 && s.len() < 8 {
+        let d = ((n - 1) % 26) as u8;
+        s.push(char::from(b'a' + d));
+        n = (n - 1) / 26;
+    }
+    s.iter().rev().collect()
+}
+
+/// Lower-case roman numerals for 1–3999, digits otherwise.
+fn roman(n: u32) -> String {
+    if n == 0 || n >= 4000 {
+        return n.to_string();
+    }
+    const TABLE: [(u32, &str); 13] = [
+        (1000, "m"),
+        (900, "cm"),
+        (500, "d"),
+        (400, "cd"),
+        (100, "c"),
+        (90, "xc"),
+        (50, "l"),
+        (40, "xl"),
+        (10, "x"),
+        (9, "ix"),
+        (5, "v"),
+        (4, "iv"),
+        (1, "i"),
+    ];
+    let mut out = String::new();
+    let mut n = n;
+    for (v, s) in TABLE {
+        while n >= v {
+            out.push_str(s);
+            n -= v;
+        }
+    }
+    out
+}
+
+/// Paragraph alignment (Home ▸ Paragraph Alignment).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Align {
+    #[default]
+    Left,
+    Center,
+    Right,
+    /// Word-wrapped lines fill the container's width (the last line stays on the left).
+    Justify,
+}
+
+impl Align {
+    pub const ALL: [Align; 4] = [Align::Left, Align::Center, Align::Right, Align::Justify];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Align::Left => "left",
+            Align::Center => "center",
+            Align::Right => "right",
+            Align::Justify => "justify",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Align> {
+        let t = s.trim();
+        if t.eq_ignore_ascii_case("centre") {
+            return Some(Align::Center);
+        }
+        Align::ALL.into_iter().find(|a| a.name().eq_ignore_ascii_case(t))
+    }
+}
+
 /// A note tag on a paragraph.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -337,6 +677,89 @@ pub enum Tag {
     ToDo { checked: bool },
     Important,
     Question,
+    RememberForLater,
+    Definition,
+    Highlight,
+    Contact,
+    Address,
+    Phone,
+    Idea,
+    Critical,
+}
+
+impl Tag {
+    /// Every tag in gallery order (To Do unchecked): the Mod+1…Mod+9 ones first.
+    pub const ALL: [Tag; 11] = [
+        Tag::ToDo { checked: false },
+        Tag::Important,
+        Tag::Question,
+        Tag::RememberForLater,
+        Tag::Definition,
+        Tag::Highlight,
+        Tag::Contact,
+        Tag::Address,
+        Tag::Phone,
+        Tag::Idea,
+        Tag::Critical,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Tag::ToDo { .. } => "toDo",
+            Tag::Important => "important",
+            Tag::Question => "question",
+            Tag::RememberForLater => "rememberForLater",
+            Tag::Definition => "definition",
+            Tag::Highlight => "highlight",
+            Tag::Contact => "contact",
+            Tag::Address => "address",
+            Tag::Phone => "phone",
+            Tag::Idea => "idea",
+            Tag::Critical => "critical",
+        }
+    }
+
+    /// The English label (menus, exports, the `.one` tag definition).
+    pub fn label(self) -> &'static str {
+        match self {
+            Tag::ToDo { .. } => "To Do",
+            Tag::Important => "Important",
+            Tag::Question => "Question",
+            Tag::RememberForLater => "Remember for later",
+            Tag::Definition => "Definition",
+            Tag::Highlight => "Highlight",
+            Tag::Contact => "Contact",
+            Tag::Address => "Address",
+            Tag::Phone => "Phone number",
+            Tag::Idea => "Idea",
+            Tag::Critical => "Critical",
+        }
+    }
+
+    /// By [`Tag::name`] or [`Tag::label`] (any case; spaces, `-` and `_` ignored); To Do comes
+    /// unchecked.
+    pub fn parse(s: &str) -> Option<Tag> {
+        let key: String = s.chars().filter(|c| !c.is_whitespace() && *c != '-' && *c != '_').collect::<String>().to_ascii_lowercase();
+        let key = match key.as_str() {
+            "phonenumber" => "phone",
+            k => k,
+        };
+        Tag::ALL.into_iter().find(|t| t.name().eq_ignore_ascii_case(key))
+    }
+
+    /// The colour a highlight tag paints behind the text; `None` for the tags with an icon.
+    pub fn highlight(self) -> Option<Color> {
+        match self {
+            Tag::RememberForLater | Tag::Highlight => Some(Color::rgb(0xFF, 0xF2, 0x00)),
+            Tag::Definition => Some(Color::rgb(0x92, 0xD0, 0x50)),
+            _ => None,
+        }
+    }
+
+    /// Whether the tag draws an icon before the text (the highlight tags don't).
+    pub fn has_icon(self) -> bool {
+        self.highlight().is_none()
+    }
 }
 
 /// Paragraph styles (Home ▸ Styles).
@@ -423,8 +846,26 @@ pub struct Paragraph {
     /// Indent level, 0..=[`MAX_INDENT`].
     pub indent: u8,
     pub list: Option<ListKind>,
+    /// The marker's look; `None` (or a style of the other list kind) takes the level's default
+    /// ([`Paragraph::marker_style`]).
+    pub list_style: Option<ListStyle>,
     pub tag: Option<Tag>,
     pub style: ParaStyle,
+    pub align: Align,
+    /// Proofing language (a BCP 47 tag such as `en-GB`); `None` uses the app's default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lang: Option<String>,
+}
+
+/// Longest language tag a paragraph keeps (hostile files and commands).
+pub const MAX_LANG_TAG: usize = 35;
+
+/// A language tag as a paragraph keeps it: trimmed, letters, digits and `-` only (`_` becomes
+/// `-`), at most [`MAX_LANG_TAG`] characters; `None` when nothing of it is left.
+pub fn clean_lang(tag: &str) -> Option<String> {
+    let t: String = tag.trim().chars().map(|c| if c == '_' { '-' } else { c }).filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+    let t = t.trim_matches('-');
+    (!t.is_empty() && t.len() <= MAX_LANG_TAG).then(|| t.to_owned())
 }
 
 impl Paragraph {
@@ -437,10 +878,18 @@ impl Paragraph {
         self.runs.iter().map(|r| r.text.as_str()).collect()
     }
 
-    /// Hostile-input bounds: indent clamped.
+    /// Hostile-input bounds: indent clamped, language tag cleaned.
     pub fn sanitized(mut self) -> Paragraph {
         self.indent = self.indent.min(MAX_INDENT);
+        self.lang = self.lang.as_deref().and_then(clean_lang);
         self
+    }
+
+    /// The list marker style in effect: the paragraph's own when it matches its list kind, else
+    /// the level's default. `None` outside a list.
+    pub fn marker_style(&self) -> Option<ListStyle> {
+        let kind = self.list?;
+        Some(self.list_style.filter(|s| s.kind() == kind).unwrap_or_else(|| ListStyle::by_level(kind, self.indent)))
     }
 }
 
@@ -539,6 +988,129 @@ pub struct ImageElement {
     /// Alt text.
     #[serde(default)]
     pub alt: String,
+    /// Rotation, flips and crop, applied when the picture is drawn (the file is kept as it is).
+    #[serde(default, skip_serializing_if = "PictureTransform::is_identity")]
+    pub transform: PictureTransform,
+}
+
+impl ImageElement {
+    /// The displayed rect (page points) the whole, uncropped picture would have at its current
+    /// scale: `pos`/`size` are the visible (cropped, rotated) part.
+    pub fn full_rect(&self) -> Rect {
+        let [l, t, r, b] = self.transform.sanitized().display_crop();
+        let (cw, ch) = ((r - l).max(0.01), (b - t).max(0.01));
+        let size = self.size.sanitized();
+        let (fw, fh) = (size.w / cw, size.h / ch);
+        let pos = self.pos.sanitized();
+        Rect::new(pos.x - l * fw, pos.y - t * fh, fw, fh)
+    }
+}
+
+/// A crop: the part of the picture kept, as fractions of the source image (0 = left/top edge,
+/// 1 = right/bottom edge).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Crop {
+    pub left: f32,
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+}
+
+/// Smallest crop, as a fraction of the picture each way.
+pub const MIN_CROP: f32 = 0.01;
+
+impl Crop {
+    /// Finite, inside 0..=1, ordered and at least [`MIN_CROP`] each way; `None` when it keeps the
+    /// whole picture.
+    pub fn sanitized(self) -> Option<Crop> {
+        let f = |v: f32, d: f32| if v.is_finite() { v.clamp(0.0, 1.0) } else { d };
+        let (mut l, mut r) = (f(self.left, 0.0), f(self.right, 1.0));
+        let (mut t, mut b) = (f(self.top, 0.0), f(self.bottom, 1.0));
+        if r < l {
+            std::mem::swap(&mut l, &mut r);
+        }
+        if b < t {
+            std::mem::swap(&mut t, &mut b);
+        }
+        let widen = |a: f32, z: f32| -> (f32, f32) {
+            if z - a >= MIN_CROP {
+                (a, z)
+            } else {
+                let a = a.min(1.0 - MIN_CROP);
+                (a, a + MIN_CROP)
+            }
+        };
+        let (l, r) = widen(l, r);
+        let (t, b) = widen(t, b);
+        let c = Crop { left: l, top: t, right: r, bottom: b };
+        let whole = l <= 1e-4 && t <= 1e-4 && r >= 1.0 - 1e-4 && b >= 1.0 - 1e-4;
+        (!whole).then_some(c)
+    }
+}
+
+/// How a picture is drawn: rotation by quarter turns, flips and a crop. The file isn't changed.
+/// Flips apply to the source image before the rotation; the crop is in source fractions.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct PictureTransform {
+    /// Quarter turns clockwise, 0..=3.
+    pub rotation: u8,
+    pub flip_h: bool,
+    pub flip_v: bool,
+    pub crop: Option<Crop>,
+}
+
+impl PictureTransform {
+    pub fn is_identity(&self) -> bool {
+        self.rotation.is_multiple_of(4) && !self.flip_h && !self.flip_v && self.crop.and_then(Crop::sanitized).is_none()
+    }
+
+    /// Rotation in 0..=3 and a sane crop.
+    pub fn sanitized(self) -> PictureTransform {
+        PictureTransform { rotation: self.rotation % 4, crop: self.crop.and_then(Crop::sanitized), ..self }
+    }
+
+    /// A source fraction (u, v) as a fraction of the displayed, uncropped box: flipped, then
+    /// turned clockwise.
+    pub fn to_display(&self, u: f32, v: f32) -> (f32, f32) {
+        let mut p = (if self.flip_h { 1.0 - u } else { u }, if self.flip_v { 1.0 - v } else { v });
+        for _ in 0..self.rotation % 4 {
+            p = (1.0 - p.1, p.0);
+        }
+        p
+    }
+
+    /// The inverse of [`PictureTransform::to_display`].
+    pub fn to_source(&self, x: f32, y: f32) -> (f32, f32) {
+        let mut p = (x, y);
+        for _ in 0..self.rotation % 4 {
+            p = (p.1, 1.0 - p.0);
+        }
+        (if self.flip_h { 1.0 - p.0 } else { p.0 }, if self.flip_v { 1.0 - p.1 } else { p.1 })
+    }
+
+    /// The crop as `[left, top, right, bottom]` fractions of the displayed box; the whole box
+    /// when uncropped.
+    pub fn display_crop(&self) -> [f32; 4] {
+        let Some(c) = self.crop.and_then(Crop::sanitized) else { return [0.0, 0.0, 1.0, 1.0] };
+        let a = self.to_display(c.left, c.top);
+        let b = self.to_display(c.right, c.bottom);
+        [a.0.min(b.0), a.1.min(b.1), a.0.max(b.0), a.1.max(b.1)]
+    }
+
+    /// Converts a crop in display fractions back to source fractions.
+    pub fn crop_from_display(&self, [l, t, r, b]: [f32; 4]) -> Option<Crop> {
+        let a = self.to_source(l, t);
+        let z = self.to_source(r, b);
+        Crop { left: a.0.min(z.0), top: a.1.min(z.1), right: a.0.max(z.0), bottom: a.1.max(z.1) }.sanitized()
+    }
+
+    /// Source texture coordinates of the displayed (visible) rect's corners: top-left,
+    /// top-right, bottom-right, bottom-left.
+    pub fn uv_corners(&self) -> [(f32, f32); 4] {
+        let [l, t, r, b] = self.display_crop();
+        [self.to_source(l, t), self.to_source(r, t), self.to_source(r, b), self.to_source(l, b)]
+    }
 }
 
 /// A file printout.
@@ -586,6 +1158,7 @@ mod tests {
             data: Arc::default(),
             format: ImageFormat::Png,
             alt: String::new(),
+            transform: Default::default(),
         };
         let pr =
             Printout { file_name: "a.pdf".into(), file_bytes: Arc::default(), pos: Point::new(40.0, 100.0), pages: vec![page(100.0), page(250.0)] };
@@ -600,6 +1173,45 @@ mod tests {
         el.set_pos(Point::new(f32::NAN, f32::INFINITY));
         let ElementKind::Printout(p) = &el.kind else { panic!("a printout") };
         assert!(p.pages.iter().all(|pg| pg.pos.x.is_finite() && pg.pos.y.is_finite()));
+    }
+
+    #[test]
+    fn picture_transforms_map_both_ways() {
+        let id = PictureTransform::default();
+        assert!(id.is_identity());
+        assert_eq!(id.uv_corners(), [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]);
+        // A quarter turn clockwise: the source's top-left corner is shown top-right.
+        let cw = PictureTransform { rotation: 1, ..Default::default() };
+        assert_eq!(cw.to_display(0.0, 0.0), (1.0, 0.0));
+        assert_eq!(cw.uv_corners()[0], (0.0, 1.0), "the shown top-left is the source's bottom-left");
+        for rotation in 0..4 {
+            for (flip_h, flip_v) in [(false, false), (true, false), (false, true), (true, true)] {
+                let t = PictureTransform { rotation, flip_h, flip_v, crop: Some(Crop { left: 0.1, top: 0.2, right: 0.6, bottom: 0.9 }) };
+                let (x, y) = t.to_display(0.3, 0.7);
+                let (u, v) = t.to_source(x, y);
+                assert!((u - 0.3).abs() < 1e-6 && (v - 0.7).abs() < 1e-6, "{t:?}");
+                let back = t.crop_from_display(t.display_crop()).unwrap();
+                assert!((back.left - 0.1).abs() < 1e-6 && (back.bottom - 0.9).abs() < 1e-6, "{t:?}");
+            }
+        }
+        // Junk crops are tamed; a whole-picture crop is none.
+        let c = Crop { left: f32::NAN, top: 0.5, right: -3.0, bottom: 0.5 }.sanitized().unwrap();
+        assert!(c.left <= c.right && c.bottom - c.top >= MIN_CROP - 1e-6);
+        assert!(Crop { left: 0.0, top: 0.0, right: 1.0, bottom: 1.0 }.sanitized().is_none());
+        assert_eq!(PictureTransform { rotation: 9, ..Default::default() }.sanitized().rotation, 1);
+        // The full rect of a picture cropped to its right half extends to the left.
+        let img = ImageElement {
+            pos: Point::new(100.0, 10.0),
+            size: Size::new(50.0, 40.0),
+            data: Arc::default(),
+            format: ImageFormat::Png,
+            alt: String::new(),
+            transform: PictureTransform { crop: Some(Crop { left: 0.5, top: 0.0, right: 1.0, bottom: 1.0 }), ..Default::default() },
+        };
+        assert_eq!(img.full_rect(), Rect::new(50.0, 10.0, 100.0, 40.0));
+        let j = serde_json::to_string(&img).unwrap();
+        assert!(j.contains("\"transform\""));
+        assert_eq!(serde_json::from_str::<ImageElement>(&j).unwrap(), img);
     }
 
     #[test]
@@ -649,6 +1261,7 @@ mod tests {
             data: Arc::new(vec![1, 2, 3]),
             format: ImageFormat::Png,
             alt: "a".into(),
+            transform: Default::default(),
         }));
         let opaque = PageElement::new(ElementKind::Opaque { jcid: 0x0006_0024, data: Arc::new(vec![9; 5]) });
         for e in [img, opaque] {
@@ -658,6 +1271,48 @@ mod tests {
         let para: Paragraph = serde_json::from_str(r#"{"runs":[{"text":"hi","bold":true}],"tag":{"type":"toDo","checked":true}}"#).unwrap();
         assert_eq!(para.tag, Some(Tag::ToDo { checked: true }));
         assert!(para.runs[0].bold);
+    }
+
+    #[test]
+    fn list_styles_tags_and_alignment_parse() {
+        for s in ListStyle::BULLETS.into_iter().chain(ListStyle::NUMBERS) {
+            assert_eq!(ListStyle::parse(s.name()), Some(s));
+            if let Some(c) = s.bullet_char() {
+                assert_eq!(ListStyle::from_bullet_char(c), Some(s));
+                assert_eq!(s.kind(), ListKind::Bullet);
+            } else {
+                assert_eq!(s.kind(), ListKind::Numbered);
+            }
+        }
+        assert_eq!(ListStyle::parse("I."), Some(ListStyle::UpperRoman));
+        assert_eq!(ListStyle::parse("a)"), Some(ListStyle::LowerAlpha));
+        assert_eq!(ListStyle::parse("\u{2022}"), Some(ListStyle::Disc));
+        assert_eq!(ListStyle::parse("nope"), None);
+        assert_eq!(ListStyle::UpperRoman.label(14), "XIV.");
+        assert_eq!(ListStyle::UpperAlpha.label(28), "AB.");
+        assert_eq!(ListStyle::Decimal.label(u32::MAX), format!("{}.", u32::MAX));
+        assert_eq!(ListStyle::LowerRoman.label(0), "0.");
+        let mut p = Paragraph { list: Some(ListKind::Numbered), indent: 1, ..Paragraph::plain("x") };
+        assert_eq!(p.marker_style(), Some(ListStyle::LowerAlpha));
+        p.list_style = Some(ListStyle::Square);
+        assert_eq!(p.marker_style(), Some(ListStyle::LowerAlpha), "a bullet style doesn't apply to a numbered item");
+        p.list_style = Some(ListStyle::UpperRoman);
+        assert_eq!(p.marker_style(), Some(ListStyle::UpperRoman));
+        for t in Tag::ALL {
+            assert_eq!(Tag::parse(t.name()), Some(t));
+            assert_eq!(Tag::parse(t.label()), Some(t));
+        }
+        assert_eq!(Tag::parse("to-do"), Some(Tag::ToDo { checked: false }));
+        assert!(Tag::Definition.highlight().is_some() && !Tag::Definition.has_icon() && Tag::Idea.has_icon());
+        for a in Align::ALL {
+            assert_eq!(Align::parse(a.name()), Some(a));
+        }
+        assert_eq!(Align::parse("Centre"), Some(Align::Center));
+        // Older JSON (no align, no list style) still reads.
+        let old: Paragraph = serde_json::from_str(r#"{"runs":[{"text":"x"}],"list":"bullet","tag":{"type":"idea"}}"#).unwrap();
+        assert_eq!((old.align, old.list_style, old.tag), (Align::Left, None, Some(Tag::Idea)));
+        let j = serde_json::to_string(&p).unwrap();
+        assert_eq!(serde_json::from_str::<Paragraph>(&j).unwrap(), p);
     }
 
     #[test]

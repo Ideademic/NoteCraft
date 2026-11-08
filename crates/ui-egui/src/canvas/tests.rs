@@ -138,7 +138,7 @@ fn enter_splits_and_backspace_joins() {
     h.key_press(Key::Enter);
     h.run_steps(2);
     let os = outlines(&h);
-    assert_eq!(os[0].paragraphs.len(), 2);
+    assert_eq!(os[0].blocks.len(), 2);
     assert_eq!(os[0].text(), "a\nb");
     assert_eq!(h.state().canvas.caret.as_ref().unwrap().head, TextPos::new(1, 0));
     h.key_press(Key::Backspace);
@@ -146,7 +146,7 @@ fn enter_splits_and_backspace_joins() {
     assert_eq!(outlines(&h)[0].text(), "ab");
     h.key_press(Key::Tab);
     h.run_steps(2);
-    assert_eq!(outlines(&h)[0].paragraphs[0].indent, 1, "Tab indents");
+    assert_eq!(outlines(&h)[0].para(0).unwrap().indent, 1, "Tab indents");
 }
 
 #[test]
@@ -161,7 +161,7 @@ fn ctrl_b_bolds_the_selection_and_sets_pending_style() {
     h.key_press_modifiers(Modifiers::COMMAND, Key::B);
     h.run_steps(2);
     let o = &outlines(&h)[0];
-    assert!(o.paragraphs[0].runs.iter().all(|r| r.bold), "{:?}", o.paragraphs[0].runs);
+    assert!(o.para(0).unwrap().runs.iter().all(|r| r.bold), "{:?}", o.para(0).unwrap().runs);
     assert_eq!(current_format(&h.state().canvas, &h.state().session).unwrap().bold, Some(true));
     // A collapsed caret at the end: Ctrl+I is pending, then applies to what is typed.
     h.key_press(Key::End);
@@ -171,10 +171,49 @@ fn ctrl_b_bolds_the_selection_and_sets_pending_style() {
     assert_eq!(h.state().canvas.pending_style.italic, Some(true));
     type_text(&mut h, "!");
     let o = &outlines(&h)[0];
-    let last = o.paragraphs[0].runs.last().unwrap();
+    let last = o.para(0).unwrap().runs.last().unwrap();
     assert!(last.italic && last.bold && last.text == "!", "{last:?}");
     let sel = selection_params(&h.state().canvas).unwrap();
     assert_eq!(sel["start"], json!({"para": 0, "char": 12}));
+}
+
+#[test]
+fn tag_shortcuts_and_centred_text() {
+    let mut h = harness(blank());
+    h.run_steps(2);
+    let p = at(&h, 100.0, 200.0);
+    click(&mut h, p);
+    type_text(&mut h, "remember this");
+    // Mod+4: Remember for later; Mod+4 again takes it off; Mod+9 Phone; Mod+0 removes it.
+    for (key, want) in [
+        (Key::Num4, Some(notecraft_doc::Tag::RememberForLater)),
+        (Key::Num4, None),
+        (Key::Num9, Some(notecraft_doc::Tag::Phone)),
+        (Key::Num0, None),
+        (Key::Num2, Some(notecraft_doc::Tag::Important)),
+    ] {
+        h.key_press_modifiers(Modifiers::COMMAND, key);
+        h.run_steps(2);
+        assert_eq!(outlines(&h)[0].para(0).unwrap().tag, want, "{key:?}");
+    }
+    // Centred text: the caret at the end sits right of the container's middle, the start left of it.
+    let id = h.state().canvas.caret.as_ref().map(|c| c.outline).unwrap();
+    let page = h.state().session.current.page;
+    h.state_mut().session.run(ids::FORMAT_ALIGN, &json!({"outline": id, "page": page, "align": "center"})).unwrap();
+    h.run_steps(3);
+    assert_eq!(outlines(&h)[0].para(0).unwrap().align, notecraft_doc::Align::Center);
+    let t = h.state();
+    let tokens = crate::theme::Tokens::light();
+    let rect = t.canvas.last_rect.unwrap();
+    let v = super::view::View::new(&t.canvas, super::page::sheet_rect(rect));
+    let lay = super::layout::page_layout(&h.ctx, &t.canvas, &t.session, &tokens, &v);
+    let o = lay.outline(id).unwrap();
+    // The middle of the text area (after the tag's room).
+    let r = o.rect(&v);
+    let mid = (r.left() + o.paras[0].text_x + r.right()) / 2.0;
+    let start = o.caret_rect(&v, notecraft_engine::TextPos::new(0, 0)).unwrap().left();
+    let end = o.caret_rect(&v, notecraft_engine::TextPos::new(0, 13)).unwrap().left();
+    assert!(start < mid && end > mid && ((start + end) / 2.0 - mid).abs() < 6.0, "{start} {mid} {end}");
 }
 
 fn add_outline(t: &mut T, x: f32, y: f32, paragraphs: Value) -> notecraft_doc::Guid {
@@ -195,10 +234,10 @@ fn clicking_a_to_do_box_ticks_it() {
     let b = layout::todo_box(lay.outline(id).unwrap(), &v, 0).unwrap();
     click(&mut h, b.center());
     let o = h.state().session.current_page().unwrap().outline(id).unwrap().clone();
-    assert_eq!(o.paragraphs[0].tag, Some(Tag::ToDo { checked: true }));
+    assert_eq!(o.para(0).unwrap().tag, Some(Tag::ToDo { checked: true }));
     click(&mut h, b.center());
     let o = h.state().session.current_page().unwrap().outline(id).unwrap().clone();
-    assert_eq!(o.paragraphs[0].tag, Some(Tag::ToDo { checked: false }));
+    assert_eq!(o.para(0).unwrap().tag, Some(Tag::ToDo { checked: false }));
 }
 
 #[test]

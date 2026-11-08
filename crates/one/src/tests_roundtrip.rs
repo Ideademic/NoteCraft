@@ -6,8 +6,8 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use notecraft_doc::page::CONTENT_ORIGIN;
 use notecraft_doc::{
-    Color, ElementKind, Guid, ImageElement, ImageFormat, InkPoint, InkStroke, InkTool, ListKind, Notebook, Outline, Page, PageBackground,
-    PageElement, ParaStyle, Paragraph, Point, Printout, RuleLines, Run, Section, SectionEntry, SectionGroup, Size, Tag,
+    Align, Color, ElementKind, Guid, ImageElement, ImageFormat, InkPoint, InkStroke, InkTool, ListKind, ListStyle, Notebook, Outline, Page,
+    PageBackground, PageElement, ParaStyle, Paragraph, Point, Printout, RuleLines, Run, Section, SectionEntry, SectionGroup, Size, Tag,
 };
 
 use super::*;
@@ -43,11 +43,38 @@ fn rich_outline() -> Outline {
         Paragraph { tag: Some(Tag::Question), style: ParaStyle::Code, ..Paragraph::plain("question?") },
         Paragraph::plain(""),
         Paragraph::plain("line one\nsoft break, ünïcödé ✓ 𝄞"),
+        // Proofing languages: one with an LCID, one without (don't check), US English kept as chosen.
+        Paragraph { lang: Some("en-GB".into()), ..Paragraph::plain("colour") },
+        Paragraph { lang: Some("zxx".into()), ..Paragraph::plain("qzxv") },
+        Paragraph { lang: Some("en-US".into()), ..Paragraph::plain("color") },
+        Paragraph {
+            runs: vec![
+                Run::plain("See "),
+                Run {
+                    text: "Plans".into(),
+                    link: Some("notecraft:page?id=0A1B2C3D-0000-4000-8000-000000000001&para=2&title=Plans%20%26%20ideas".into()),
+                    ..Run::default()
+                },
+            ],
+            lang: Some("pl-PL".into()),
+            ..Paragraph::default()
+        },
     ];
     for s in [ParaStyle::Heading2, ParaStyle::Heading3, ParaStyle::Heading4, ParaStyle::Heading5, ParaStyle::Heading6, ParaStyle::Title] {
         paragraphs.push(Paragraph { style: s, ..Paragraph::plain(s.name()) });
     }
-    Outline { pos: CONTENT_ORIGIN, width: 432.0, paragraphs }
+    for a in Align::ALL {
+        paragraphs.push(Paragraph { align: a, ..Paragraph::plain(a.name()) });
+    }
+    for st in ListStyle::BULLETS.into_iter().chain(ListStyle::NUMBERS) {
+        // A level's own default style reads back as no style, so each sits where it isn't one.
+        let indent = if st == ListStyle::by_level(st.kind(), 1) { 0 } else { 1 };
+        paragraphs.push(Paragraph { list: Some(st.kind()), list_style: Some(st), indent, ..Paragraph::plain(st.name()) });
+    }
+    for t in Tag::ALL.into_iter().skip(1) {
+        paragraphs.push(Paragraph { tag: Some(t), align: Align::Center, ..Paragraph::plain(t.label()) });
+    }
+    Outline { pos: CONTENT_ORIGIN, width: 432.0, blocks: paragraphs.into_iter().map(Into::into).collect() }
 }
 
 fn sample_section() -> Section {
@@ -62,9 +89,21 @@ fn sample_section() -> Section {
         data: png(),
         format: ImageFormat::Png,
         alt: "A small icon".into(),
+        transform: notecraft_doc::PictureTransform {
+            rotation: 3,
+            flip_h: true,
+            flip_v: false,
+            crop: Some(notecraft_doc::Crop { left: 0.125, top: 0.25, right: 0.875, bottom: 0.75 }),
+        },
     })));
-    let page_img =
-        |y: f32| ImageElement { pos: Point::new(36.0, y), size: Size::new(306.0, 396.0), data: png(), format: ImageFormat::Png, alt: String::new() };
+    let page_img = |y: f32| ImageElement {
+        pos: Point::new(36.0, y),
+        size: Size::new(306.0, 396.0),
+        data: png(),
+        format: ImageFormat::Png,
+        alt: String::new(),
+        transform: Default::default(),
+    };
     p.elements.push(PageElement::new(ElementKind::Printout(Printout {
         file_name: "report.pdf".into(),
         file_bytes: Arc::new(b"%PDF-1.7 fake".to_vec()),
@@ -89,10 +128,12 @@ fn sample_section() -> Section {
     for (i, level) in [1u8, 2, 0].into_iter().enumerate() {
         let mut sub = Page::new_at(format!("Page {i}"), at(1_700_100_000 + i as i64));
         sub.level = level;
+        sub.hide_title = i == 1;
         sub.elements.push(PageElement::new(ElementKind::Outline(Outline::with_text(Point::new(72.0, 144.0), "eggs\nmilk"))));
         s.pages.push(sub);
     }
     s.pages.push(Page::new_at("", at(1_700_200_000)));
+    s.default_template = Some("nc:meeting".into());
     s
 }
 
@@ -144,6 +185,34 @@ fn section_round_trip() {
 }
 
 #[test]
+fn picture_settings_hidden_titles_and_templates_round_trip() {
+    let back = read_section(&write_section(&sample_section()).unwrap()).unwrap();
+    assert_eq!(back.default_template.as_deref(), Some("nc:meeting"));
+    assert_eq!(back.pages.iter().filter(|p| p.hide_title).count(), 1);
+    let img = back.pages[0]
+        .elements
+        .iter()
+        .find_map(|e| match &e.kind {
+            ElementKind::Image(i) => Some(i.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(img.alt, "A small icon");
+    assert_eq!((img.transform.rotation, img.transform.flip_h, img.transform.flip_v), (3, true, false));
+    assert_eq!(img.transform.crop, Some(notecraft_doc::Crop { left: 0.125, top: 0.25, right: 0.875, bottom: 0.75 }));
+    // A picture drawn as it is writes no transform.
+    assert!(crate::write::transform_value(&notecraft_doc::PictureTransform::default()).is_none());
+    assert!(crate::write::transform_value(&notecraft_doc::PictureTransform { rotation: 4, ..Default::default() }).is_none());
+    assert!(crate::write::transform_value(&notecraft_doc::PictureTransform { flip_v: true, ..Default::default() }).is_some());
+    // Junk transform bytes read as something sane.
+    let mut set = notecraft_onestore::PropertySet::default();
+    set.push(ids::prop::NC_PICTURE_TRANSFORM, notecraft_onestore::PropertyValue::Bytes(vec![7, 0xFF, 1, 2]));
+    let t = crate::read::read_transform(&set);
+    assert_eq!(t.rotation, 3);
+    assert!(t.crop.is_none());
+}
+
+#[test]
 fn written_files_have_spec_header_values() {
     let s = sample_section();
     let toc_id = Guid::new();
@@ -173,6 +242,7 @@ fn toc_round_trip() {
             TocEntry::Group { folder_name: "Work".into() },
             TocEntry::Section { file_name: "Later.one".into(), color: None },
         ],
+        history_disabled: true,
     };
     assert_eq!(read_toc(&write_toc(&t).unwrap()).unwrap(), t);
     assert!(read_section(&write_toc(&t).unwrap()).is_err());
@@ -249,16 +319,85 @@ fn notebook_dir_round_trip() {
     std::fs::write(dir.join("Zebra.one.bak"), b"backup").unwrap();
     std::fs::write(dir.join(".notecraft-save-Zebra.one.tmp"), b"partial").unwrap();
     std::fs::write(dir.join("Broken.one"), b"not a section").unwrap();
-    let back = read_notebook_dir(&dir).unwrap();
+    let mut back = read_notebook_dir(&dir).unwrap();
     let _ = std::fs::remove_dir_all(&dir);
+    // A section in the recycle bin is read as deleted, not as a section of the notebook.
+    let bin = std::mem::take(&mut back.recycle_bin);
+    assert_eq!(bin.sections.len(), 1);
+    assert_eq!(bin.sections[0].section.name, "Old");
     assert_eq!(normalize_nb(back), as_loaded(nb));
+}
+
+#[test]
+fn page_versions_round_trip() {
+    let mut s = sample_section();
+    let page = s.pages.first_mut().unwrap();
+    let mut old = page.clone();
+    old.title = "Welcome (draft)".into();
+    old.elements.truncate(1);
+    old.modified = at(1_700_000_050);
+    let mut v1 = notecraft_doc::PageVersion::of(&old);
+    v1.saved = DateTime::from_timestamp(1_700_000_050, 123_400).unwrap();
+    old.title = "Welcome (second draft)".into();
+    old.modified = at(1_700_000_060);
+    let v2 = notecraft_doc::PageVersion::of(&old);
+    page.versions = vec![v1.clone(), v2.clone()];
+    let bytes = write_section(&s).unwrap();
+    // On disk: the version history context and one context per version.
+    let store = notecraft_onestore::read(&bytes).unwrap();
+    let space = store.spaces.iter().find(|sp| sp.id.guid == s.pages[0].id.0).unwrap();
+    assert_eq!(space.contexts.len(), 3);
+    assert!(space.context(crate::history_context()).is_some());
+    let back = read_section(&bytes).unwrap();
+    let vs = &back.pages[0].versions;
+    assert_eq!(vs.len(), 2);
+    assert_eq!((vs[0].id, vs[0].saved), (v1.id, v1.saved));
+    assert_eq!(vs[0].page.title, "Welcome (draft)");
+    assert_eq!(vs[0].page.elements.len(), 1);
+    assert_eq!(vs[1].page.title, "Welcome (second draft)");
+    assert!(vs[1].page.versions.is_empty());
+    // The page itself reads as before.
+    let mut plain = back.clone();
+    plain.pages[0].versions.clear();
+    let mut expected = s.clone();
+    expected.pages[0].versions.clear();
+    assert_eq!(read_section(&write_section(&plain).unwrap()).unwrap(), plain);
+    assert_eq!(plain.pages[0].title, expected.pages[0].title);
+    // Rewriting what was read keeps the versions.
+    assert_eq!(read_section(&write_section(&back).unwrap()).unwrap().pages[0].versions, back.pages[0].versions);
+}
+
+#[test]
+fn notebook_files_carry_the_recycle_bin_and_history_setting() {
+    let mut nb = sample_notebook();
+    nb.history_disabled = true;
+    let mut gone = Section::new("Gone", Color::WHITE);
+    gone.pages.push(Page::new_at("Lost page", at(1_700_000_000)));
+    nb.recycle_bin.sections.push(notecraft_doc::DeletedSection { section: gone, deleted: at(1_750_000_000), group_path: vec![], index: 1 });
+    nb.recycle_bin.pages.push(notecraft_doc::DeletedPage {
+        page: Page::new_at("Deleted page", at(1_700_000_000)),
+        deleted: at(1_760_000_000),
+        section: Guid::new(),
+        section_name: "Quick Notes".into(),
+        index: 0,
+    });
+    let files = notebook_files(&nb).unwrap();
+    let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+    assert!(paths.contains(&"OneNote_RecycleBin/Gone.one"), "{paths:?}");
+    assert!(paths.contains(&"OneNote_RecycleBin/OneNote_DeletedPages.one"));
+    let (back, _) = notebook_from_files(&files, "x").unwrap();
+    assert!(back.history_disabled);
+    assert_eq!(back.recycle_bin.sections.len(), 1);
+    assert_eq!(back.recycle_bin.sections[0].section.pages[0].title, "Lost page");
+    assert_eq!(back.recycle_bin.pages[0].page.title, "Deleted page");
+    assert_eq!(back.all_sections().len(), nb.all_sections().len(), "bin sections stay out of the notebook");
 }
 
 #[test]
 fn hostile_sections_never_panic() {
     let good = [
         write_section(&sample_section()).unwrap(),
-        write_toc(&NotebookToc { id: Guid::new(), name: "x".into(), color: Color::WHITE, entries: vec![] }).unwrap(),
+        write_toc(&NotebookToc { id: Guid::new(), name: "x".into(), color: Color::WHITE, entries: vec![], history_disabled: false }).unwrap(),
     ];
     let mut state = 0x2545_F491_4F6C_DD1Du64;
     let mut next = || {

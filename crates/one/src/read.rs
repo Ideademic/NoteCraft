@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use notecraft_doc::page::{DEFAULT_OUTLINE_WIDTH, MAX_ELEMENTS_PER_PAGE, MAX_INDENT, MAX_PAGE_LEVEL, MAX_PARAGRAPHS};
 use notecraft_doc::{
-    Color, ElementKind, Guid, ImageElement, ImageFormat, InkStroke, ListKind, Outline, Page, PageBackground, PageElement, ParaStyle, Paragraph,
-    Point, Printout, RuleLines, Run, Section, Size, SourceInfo, Tag,
+    Align, Block, Color, ElementKind, Guid, ImageElement, ImageFormat, InkStroke, ListKind, ListStyle, Outline, Page, PageBackground, PageElement,
+    ParaStyle, Paragraph, Point, Printout, RuleLines, Run, Section, Size, SourceInfo, Tag,
 };
 use notecraft_onestore::{ExtendedGuid, FileKind, Object, ObjectSpace, PropertySet, Store};
 
@@ -19,8 +19,6 @@ use crate::{Error, Result, ink, opaque};
 const MAX_PAGES: usize = 10_000;
 /// Deepest outline element nesting walked.
 const MAX_OE_DEPTH: usize = 64;
-/// Most cells flattened from one table.
-const MAX_TABLE_CELLS: usize = 10_000;
 
 /// An object space with an id index.
 pub(crate) struct View<'a> {
@@ -82,11 +80,15 @@ pub fn section(store: &Store, name: &str) -> Result<Section> {
         color,
         pages,
         source: SourceInfo { authored_by_notecraft: authored, unsupported_content: r.unsupported, file_name: None },
+        default_template: meta
+            .and_then(|m| string(m, prop::NC_SECTION_TEMPLATE))
+            .filter(|t| !t.trim().is_empty())
+            .map(|t| t.chars().take(256).collect()),
     })
 }
 
-struct Reader {
-    unsupported: bool,
+pub(crate) struct Reader {
+    pub(crate) unsupported: bool,
 }
 
 /// A printout being put together from its file and page pictures.
@@ -143,7 +145,7 @@ impl PageParts {
 }
 
 impl Reader {
-    fn page(&mut self, space: &ObjectSpace) -> Option<Page> {
+    pub(crate) fn page(&mut self, space: &ObjectSpace) -> Option<Page> {
         let v = View::new(space);
         let manifest = v.root(role::CONTENT)?;
         let node = v.children(&manifest.props, prop::CONTENT_CHILD_NODES).into_iter().find(|o| o.jcid == jcid::PAGE_NODE)?;
@@ -174,7 +176,9 @@ impl Reader {
             rule: string(np, prop::NC_RULE_LINES).and_then(|s| RuleLines::parse(&s)).unwrap_or_default(),
         };
         let (elements, ink) = parts.finish();
-        Some(Page { id, title, created, modified, level, background, elements, ink })
+        let versions = crate::versions::read(self, space, manifest);
+        let hide_title = np.bool(prop::NC_HIDE_TITLE) == Some(true);
+        Some(Page { id, title, created, modified, level, background, elements, ink, versions, hide_title })
     }
 
     fn title_text(&mut self, v: &View<'_>, title: &Object) -> String {
@@ -183,10 +187,10 @@ impl Reader {
             if outline.props.bool(prop::IS_TITLE_DATE) == Some(true) {
                 continue;
             }
-            let mut paras = Vec::new();
+            let mut blocks = Vec::new();
             let mut extra = PageParts::default();
-            self.outline_elements(v, &outline.props, (0, 0), Point::ZERO, &mut paras, &mut extra);
-            texts.extend(paras.iter().map(Paragraph::text).filter(|t| !t.is_empty()));
+            self.outline_elements(v, &outline.props, (0, 0), Point::ZERO, &mut blocks, &mut extra);
+            texts.extend(blocks.iter().map(Block::text).filter(|t| !t.is_empty()));
             if !texts.is_empty() {
                 break;
             }
@@ -204,13 +208,13 @@ impl Reader {
         match o.jcid {
             jcid::OUTLINE_NODE => {
                 let width = o.props.f32(prop::LAYOUT_MAX_WIDTH).map(hi_to_pt).filter(|w| *w > 1.0).unwrap_or(DEFAULT_OUTLINE_WIDTH);
-                let mut paragraphs = Vec::new();
+                let mut blocks = Vec::new();
                 let base = o.props.u32(prop::OUTLINE_ELEMENT_CHILD_LEVEL).unwrap_or(1).saturating_sub(1);
-                self.outline_elements(v, &o.props, (base, 0), pos, &mut paragraphs, parts);
-                if paragraphs.is_empty() {
-                    paragraphs.push(Paragraph::plain(""));
+                self.outline_elements(v, &o.props, (base, 0), pos, &mut blocks, parts);
+                if blocks.is_empty() {
+                    blocks.push(Paragraph::plain("").into());
                 }
-                parts.push(PageElement { id, kind: ElementKind::Outline(Outline { pos, width, paragraphs }) });
+                parts.push(PageElement { id, kind: ElementKind::Outline(Outline { pos, width, blocks }) });
             }
             jcid::IMAGE_NODE => self.image(v, o, id, pos, parts),
             jcid::EMBEDDED_FILE_NODE => self.embedded_file(v, o, id, pos, parts),
@@ -237,7 +241,14 @@ impl Reader {
             p.f32(prop::LAYOUT_MAX_HEIGHT).or_else(|| p.f32(prop::PICTURE_HEIGHT)).map(hi_to_pt).unwrap_or(0.0),
         );
         let size = if size.w > 0.0 && size.h > 0.0 { size } else { picture_size(&data).unwrap_or(Size::new(100.0, 100.0)) }.sanitized();
-        let img = ImageElement { pos, size, format: ImageFormat::sniff(&data), data, alt: string(p, prop::IMAGE_ALT_TEXT).unwrap_or_default() };
+        let img = ImageElement {
+            pos,
+            size,
+            format: ImageFormat::sniff(&data),
+            data,
+            alt: string(p, prop::IMAGE_ALT_TEXT).unwrap_or_default(),
+            transform: read_transform(p),
+        };
         if let Some((group, index)) = printout_tag(p) {
             if let Some(p) = parts.printout(group) {
                 p.pages.push((index, img));
@@ -266,15 +277,7 @@ impl Reader {
 
     /// Walks the outline elements under `parent` (an outline, outline group or outline element).
     /// `at` is the (indent, nesting depth) of the elements found.
-    fn outline_elements(
-        &mut self,
-        v: &View<'_>,
-        parent: &PropertySet,
-        at: (u32, usize),
-        pos: Point,
-        out: &mut Vec<Paragraph>,
-        parts: &mut PageParts,
-    ) {
+    fn outline_elements(&mut self, v: &View<'_>, parent: &PropertySet, at: (u32, usize), pos: Point, out: &mut Vec<Block>, parts: &mut PageParts) {
         let (indent, depth) = at;
         if depth > MAX_OE_DEPTH {
             self.unsupported = true;
@@ -288,7 +291,7 @@ impl Reader {
             let level = child.props.u32(prop::OUTLINE_ELEMENT_CHILD_LEVEL).unwrap_or(1).max(1);
             match child.jcid {
                 jcid::OUTLINE_ELEMENT_NODE => {
-                    self.outline_element(v, child, indent, pos, out, parts);
+                    self.outline_element(v, child, (indent, depth), pos, out, parts);
                     self.outline_elements(v, &child.props, (indent.saturating_add(level), depth + 1), pos, out, parts);
                 }
                 jcid::OUTLINE_GROUP => self.outline_elements(v, &child.props, (indent.saturating_add(level), depth + 1), pos, out, parts),
@@ -297,13 +300,18 @@ impl Reader {
         }
     }
 
-    /// One outline element's content as paragraphs.
-    fn outline_element(&mut self, v: &View<'_>, oe: &Object, indent: u32, pos: Point, out: &mut Vec<Paragraph>, parts: &mut PageParts) {
+    /// One outline element's content as a block (a paragraph or a table).
+    fn outline_element(&mut self, v: &View<'_>, oe: &Object, at: (u32, usize), pos: Point, out: &mut Vec<Block>, parts: &mut PageParts) {
+        let (indent, depth) = at;
         let indent = indent.min(u32::from(MAX_INDENT)) as u8;
-        let list = v.children(&oe.props, prop::LIST_NODES).first().map(|l| list_kind(&l.props));
+        let marker = v.children(&oe.props, prop::LIST_NODES).first().map(|l| list_marker(&l.props));
+        let list = marker.map(|(k, _)| k);
+        // A style that is the level's default stays implicit, so a NoteCraft paragraph reads back
+        // as it was written.
+        let list_style = marker.and_then(|(k, st)| st.filter(|st| *st != ListStyle::by_level(k, indent)));
         let content = v.children(&oe.props, prop::CONTENT_CHILD_NODES);
         let Some(c) = content.first() else {
-            out.push(Paragraph { indent, list, ..Paragraph::plain("") });
+            out.push(Paragraph { indent, list, list_style, ..Paragraph::plain("") }.into());
             return;
         };
         let here = Point::new(pos.x, pos.y + out.len() as f32 * 18.0);
@@ -312,11 +320,13 @@ impl Reader {
                 let mut para = self.rich_text(v, c);
                 para.indent = indent;
                 para.list = list;
-                out.push(para);
+                para.list_style = list_style;
+                out.push(para.into());
             }
             jcid::TABLE_NODE => {
-                self.unsupported = true;
-                self.table(v, c, indent, out);
+                let mut t = crate::table::read(self, v, c, depth);
+                t.indent = indent;
+                out.push(Block::table(t));
             }
             jcid::IMAGE_NODE => self.image(v, c, element_id(c.id), here, parts),
             jcid::EMBEDDED_FILE_NODE => self.embedded_file(v, c, element_id(c.id), here, parts),
@@ -324,23 +334,29 @@ impl Reader {
         }
     }
 
-    /// A table, flattened: one paragraph per row, cells separated by tabs (read-only).
-    fn table(&mut self, v: &View<'_>, table: &Object, indent: u8, out: &mut Vec<Paragraph>) {
-        let mut cells = 0usize;
-        for row in v.children(&table.props, prop::ELEMENT_CHILD_NODES) {
-            let mut texts = Vec::new();
-            for cell in v.children(&row.props, prop::ELEMENT_CHILD_NODES) {
-                cells += 1;
-                if cells > MAX_TABLE_CELLS || out.len() >= MAX_PARAGRAPHS {
-                    return;
-                }
-                let mut paras = Vec::new();
-                let mut extra = PageParts::default();
-                self.outline_elements(v, &cell.props, (0, MAX_OE_DEPTH / 2), Point::ZERO, &mut paras, &mut extra);
-                texts.push(paras.iter().map(Paragraph::text).collect::<Vec<_>>().join(" "));
-            }
-            out.push(Paragraph { indent, ..Paragraph::plain(&texts.join("\t")) });
+    /// A table cell's outline elements as paragraphs. Tables don't nest in NoteCraft: a table
+    /// inside the cell becomes a paragraph per row, cells separated by tabs (and the section is
+    /// marked as holding content NoteCraft can't keep). Pictures and files in cells are dropped
+    /// the same way.
+    pub(crate) fn cell_paragraphs(&mut self, v: &View<'_>, cell: &PropertySet, depth: usize) -> Vec<Paragraph> {
+        let mut blocks = Vec::new();
+        let mut extra = PageParts::default();
+        self.outline_elements(v, cell, (0, depth.saturating_add(1)), Point::ZERO, &mut blocks, &mut extra);
+        if !extra.elements.is_empty() || !extra.ink.is_empty() {
+            self.unsupported = true;
         }
+        let mut out = Vec::with_capacity(blocks.len());
+        for b in blocks {
+            match b {
+                Block::Paragraph(p) => out.push(p),
+                Block::Table { table } => {
+                    self.unsupported = true;
+                    let indent = table.indent;
+                    out.extend(table.texts().iter().map(|row| Paragraph { indent, ..Paragraph::plain(&row.join("\t")) }));
+                }
+            }
+        }
+        out
     }
 
     fn rich_text(&mut self, v: &View<'_>, rt: &Object) -> Paragraph {
@@ -390,14 +406,25 @@ impl Reader {
         if runs.is_empty() {
             runs.push(formats.first().map(|o| run_format(&o.props)).unwrap_or_default());
         }
-        let style = v
-            .children(p, prop::PARAGRAPH_STYLE)
-            .first()
-            .and_then(|s| string(&s.props, prop::PARAGRAPH_STYLE_ID))
-            .map_or(ParaStyle::Normal, |s| para_style(&s));
+        let style_obj = v.children(p, prop::PARAGRAPH_STYLE);
+        let style = style_obj.first().and_then(|s| string(&s.props, prop::PARAGRAPH_STYLE_ID)).map_or(ParaStyle::Normal, |s| para_style(&s));
         let style = string(p, prop::NC_PARA_STYLE).and_then(|s| ParaStyle::parse(&s)).unwrap_or(style);
+        // ParagraphAlignment on the paragraph, else on its style (§2.2.44).
+        let aligned = p.uint(prop::PARAGRAPH_ALIGNMENT).or_else(|| style_obj.first().and_then(|s| s.props.uint(prop::PARAGRAPH_ALIGNMENT)));
+        let align = match (p.uint(prop::NC_PARA_ALIGN), aligned) {
+            (Some(3), _) => Align::Justify,
+            (_, Some(1)) => Align::Center,
+            (_, Some(2)) => Align::Right,
+            _ => Align::Left,
+        };
         let tag = self.note_tag(v, p);
-        Paragraph { runs, indent: 0, list: None, tag, style }
+        // NoteCraft's own tag, else RichEditTextLangID (or the first run's LanguageID); US
+        // English, OneNote's and NoteCraft's default, stays the default.
+        let lang = string(p, prop::NC_PARA_LANG).and_then(|t| notecraft_doc::page::clean_lang(&t)).or_else(|| {
+            let id = p.uint(prop::RICH_EDIT_TEXT_LANG_ID).or_else(|| formats.first().and_then(|f| f.props.uint(prop::LANGUAGE_ID)))?;
+            crate::lcid::to_tag(u32::try_from(id).ok()?).filter(|t| *t != "en-US").map(str::to_owned)
+        });
+        Paragraph { runs, indent: 0, list: None, list_style: None, tag, style, align, lang }
     }
 
     fn note_tag(&mut self, v: &View<'_>, p: &PropertySet) -> Option<Tag> {
@@ -405,18 +432,31 @@ impl Reader {
         for state in p.sets(prop::NOTE_TAG_STATES) {
             let def = v.children(state, prop::NOTE_TAG_DEFINITION_OID).first().map(|o| &o.props);
             let shape = def.and_then(|d| d.uint(prop::NOTE_TAG_SHAPE)).or_else(|| state.uint(prop::NOTE_TAG_SHAPE)).unwrap_or(0);
-            let label = def.and_then(|d| string(d, prop::NOTE_TAG_LABEL)).unwrap_or_default().to_lowercase();
+            let raw_label = def.and_then(|d| string(d, prop::NOTE_TAG_LABEL)).unwrap_or_default();
+            let label = raw_label.to_lowercase();
             let task = state.uint(prop::ACTION_ITEM_TYPE).is_some_and(|t| (100..=105).contains(&t));
             let done = state.uint(prop::ACTION_ITEM_STATUS).is_some_and(|s| s & 1 == 1);
-            let tag = match shape {
+            let own = def.and_then(|d| string(d, prop::NC_TAG)).and_then(|n| Tag::parse(&n));
+            let highlight = def.and_then(|d| d.u32(prop::NOTE_TAG_HIGHLIGHT_COLOR)).and_then(from_colorref);
+            let tag = match (own, shape) {
+                (Some(Tag::ToDo { .. }), _) => Some(Tag::ToDo { checked: done }),
+                (Some(t), _) => Some(t),
                 _ if task => Some(Tag::ToDo { checked: done }),
-                1..=12 | 28 | 30 | 32 | 48 | 50 | 52 | 69 | 71 | 73 | 89..=99 => Some(Tag::ToDo { checked: done }),
-                13 | 34 | 40 | 54 | 61 | 75 => Some(Tag::Important),
-                15 | 111 => Some(Tag::Question),
+                // NoteTagShape (§2.3.86): every check box is a To Do here.
+                (_, 1..=12 | 28 | 30 | 32 | 48 | 50 | 52 | 69 | 71 | 73 | 89..=99) => Some(Tag::ToDo { checked: done }),
+                (_, 13 | 34 | 40 | 54 | 61 | 75) => Some(Tag::Important),
+                (_, 15 | 111) => Some(Tag::Question),
+                (_, 17 | 115) => Some(Tag::Critical),
+                (_, 18 | 114 | 118) => Some(Tag::Contact),
+                (_, 21) => Some(Tag::Idea),
+                (_, 23) => Some(Tag::Address),
+                (_, 109 | 110) => Some(Tag::Phone),
                 _ if label.contains("to do") => Some(Tag::ToDo { checked: done }),
-                _ if label.contains("important") => Some(Tag::Important),
-                _ if label.contains("question") => Some(Tag::Question),
-                _ => None,
+                _ => Tag::parse(&raw_label).or_else(|| {
+                    // A highlight tag in another language: by its colour, green for Definition.
+                    let c = highlight.filter(|_| shape == 0)?;
+                    Some(if c.g > c.r && c.g > c.b { Tag::Definition } else { Tag::Highlight })
+                }),
             };
             match (found, tag) {
                 (None, Some(t)) => found = Some(t),
@@ -472,10 +512,29 @@ pub(crate) fn para_style(id: &str) -> ParaStyle {
     }
 }
 
-/// NumberListFormat ([MS-ONE] §2.3.20): numbered when it holds U+FFFD.
-fn list_kind(p: &PropertySet) -> ListKind {
-    let numbered = p.bytes(prop::NUMBER_LIST_FORMAT).is_some_and(|b| b.as_chunks::<2>().0.iter().skip(1).any(|c| *c == [0xFD, 0xFF]));
-    if numbered { ListKind::Numbered } else { ListKind::Bullet }
+/// NumberListFormat ([MS-ONE] §2.3.20): numbered when it holds U+FFFD, whose next character is
+/// the MSONFC number format ([MS-OSHARED] §2.2.1.3); otherwise a bullet, whose character gives
+/// its shape. The style is `None` for formats NoteCraft doesn't draw.
+fn list_marker(p: &PropertySet) -> (ListKind, Option<ListStyle>) {
+    let units: Vec<u16> =
+        p.bytes(prop::NUMBER_LIST_FORMAT).map(|b| b.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect()).unwrap_or_default();
+    let chars = units.get(1..).unwrap_or_default();
+    if let Some(i) = chars.iter().position(|u| *u == 0xFFFD) {
+        let style = match chars.get(i + 1) {
+            Some(0) => Some(ListStyle::Decimal),
+            Some(1) => Some(ListStyle::UpperRoman),
+            Some(2) => Some(ListStyle::LowerRoman),
+            Some(3) => Some(ListStyle::UpperAlpha),
+            Some(4) => Some(ListStyle::LowerAlpha),
+            _ => None,
+        };
+        return (ListKind::Numbered, style);
+    }
+    let style = char::decode_utf16(chars.iter().copied())
+        .filter_map(std::result::Result::ok)
+        .find(|c| !c.is_whitespace())
+        .and_then(ListStyle::from_bullet_char);
+    (ListKind::Bullet, style)
 }
 
 /// NoteCraft's printout tag on a picture or embedded file: the group and page index.
@@ -518,6 +577,19 @@ fn jpeg_size(d: &[u8]) -> Option<(u32, u32)> {
     None
 }
 
+/// [`prop::NC_PICTURE_TRANSFORM`], tolerant: a short or junk value gives what it can.
+pub(crate) fn read_transform(p: &PropertySet) -> notecraft_doc::PictureTransform {
+    let Some(b) = p.bytes(prop::NC_PICTURE_TRANSFORM) else { return notecraft_doc::PictureTransform::default() };
+    let rotation = b.first().copied().unwrap_or(0) % 4;
+    let flags = b.get(1).copied().unwrap_or(0);
+    let f = |i: usize| b.get(2 + i * 4..6 + i * 4).and_then(|s| <[u8; 4]>::try_from(s).ok()).map(f32::from_le_bytes);
+    let crop = match (f(0), f(1), f(2), f(3)) {
+        (Some(left), Some(top), Some(right), Some(bottom)) => notecraft_doc::Crop { left, top, right, bottom }.sanitized(),
+        _ => None,
+    };
+    notecraft_doc::PictureTransform { rotation, flip_h: flags & 1 != 0, flip_v: flags & 2 != 0, crop }.sanitized()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -527,6 +599,24 @@ mod tests {
         assert_eq!(hyperlink_target("HYPERLINK \"https://example.com/a?b=1\""), Some("https://example.com/a?b=1".into()));
         assert_eq!(hyperlink_target("HYPERLINK nope"), None);
         assert_eq!(hyperlink_target("PAGE"), None);
+    }
+
+    #[test]
+    fn number_list_formats_of_other_writers() {
+        let fmt = |units: &[u16]| {
+            let mut p = PropertySet::default();
+            p.push(prop::NUMBER_LIST_FORMAT, notecraft_onestore::PropertyValue::Bytes(units.iter().flat_map(|u| u.to_le_bytes()).collect()));
+            list_marker(&p)
+        };
+        // A symbol font's private-use bullet, an "(a)" number, a format NoteCraft doesn't draw.
+        assert_eq!(fmt(&[1, 0xF0B7]), (ListKind::Bullet, Some(ListStyle::Disc)));
+        assert_eq!(fmt(&[4, u16::from(b'('), 0xFFFD, 4, u16::from(b')')]), (ListKind::Numbered, Some(ListStyle::LowerAlpha)));
+        assert_eq!(fmt(&[3, 0xFFFD, 0x17, u16::from(b'.')]), (ListKind::Numbered, None));
+        assert_eq!(fmt(&[1, u16::from(b'*')]), (ListKind::Bullet, None));
+        // Truncated or empty data is a plain bullet, never a panic.
+        assert_eq!(fmt(&[]), (ListKind::Bullet, None));
+        assert_eq!(fmt(&[9, 0xFFFD]), (ListKind::Numbered, None));
+        assert_eq!(fmt(&[2, 0xD800, 0xDC00]), (ListKind::Bullet, None));
     }
 
     #[test]

@@ -32,6 +32,12 @@ pub mod jcid {
     pub const NOTE_TAG_DEFINITION: u32 = 0x0012_0043;
     pub const REVISION_METADATA: u32 = 0x0002_0044;
     pub const PARAGRAPH_STYLE: u32 = 0x0012_004D;
+    /// The content root of a page's version history object space ([MS-ONE] §2.2.37).
+    pub const VERSION_HISTORY_CONTENT: u32 = 0x0006_003C;
+    /// One version history page ([MS-ONE] §2.2.38).
+    pub const VERSION_PROXY: u32 = 0x0006_003D;
+    /// The metadata root of a version history object space ([MS-ONE] §2.2.40).
+    pub const VERSION_HISTORY_METADATA: u32 = 0x0002_0046;
     /// *Observed*: an ink drawing placed on the page (in `ElementChildNodesOfPage`).
     pub const INK_NODE: u32 = 0x0006_0014;
     /// *Observed*: the strokes of an ink drawing.
@@ -106,6 +112,16 @@ pub mod prop {
     pub const PAGE_MARGIN_ORIGIN_Y: u32 = 0x1400_1D10;
     pub const IS_BACKGROUND: u32 = 0x0800_1D13;
     pub const CACHED_TITLE_STRING_FROM_PAGE: u32 = 0x1C00_1D3C;
+    /// jcidTableNode ([MS-ONE] §2.2.27): rows, columns, borders, column widths (a count byte,
+    /// then a float per column in half-inches) and locked columns (a count byte, then one bit
+    /// per column).
+    pub const ROW_COUNT: u32 = 0x1400_1D57;
+    pub const COLUMN_COUNT: u32 = 0x1400_1D58;
+    pub const TABLE_BORDERS_VISIBLE: u32 = 0x0800_1D5E;
+    pub const TABLE_COLUMN_WIDTHS: u32 = 0x1C00_1D66;
+    pub const TABLE_COLUMNS_LOCKED: u32 = 0x1C00_1D7D;
+    /// jcidTableCellNode: the cell's background, a COLORREF.
+    pub const CELL_SHADING_COLOR: u32 = 0x1400_1E26;
     pub const STRUCTURE_ELEMENT_CHILD_NODES: u32 = 0x2400_1D5F;
     pub const CHILD_GRAPH_SPACE_ELEMENT_NODES: u32 = 0x2C00_1D63;
     pub const META_DATA_OBJECTS_ABOVE_GRAPH_SPACE: u32 = 0x2400_3442;
@@ -131,12 +147,18 @@ pub mod prop {
     pub const PARAGRAPH_STYLE_ID: u32 = 0x1C00_345A;
     pub const ACTION_ITEM_TYPE: u32 = 0x1000_3463;
     pub const NOTE_TAG_SHAPE: u32 = 0x1000_3464;
+    /// [MS-ONE] NoteTagHighlightColor (on the tag definition): a COLORREF painted behind the
+    /// tagged text.
+    pub const NOTE_TAG_HIGHLIGHT_COLOR: u32 = 0x1400_3465;
     pub const NOTE_TAG_PROPERTY_STATUS: u32 = 0x1400_3467;
     pub const NOTE_TAG_LABEL: u32 = 0x1C00_3468;
     pub const NOTE_TAG_CREATED: u32 = 0x1400_346E;
     pub const NOTE_TAG_COMPLETED: u32 = 0x1400_346F;
     pub const ACTION_ITEM_STATUS: u32 = 0x1000_3470;
     pub const ACTION_ITEM_SCHEMA_VERSION: u32 = 0x0C00_3473;
+    /// [MS-ONE] §2.3.94 ParagraphAlignment (on jcidRichTextOENode and jcidParagraphStyleObject):
+    /// 0 left, 1 center, 2 right. (BodyTextAlignment, §2.3.17, is always 0 and ignored.)
+    pub const PARAGRAPH_ALIGNMENT: u32 = 0x0C00_3477;
     pub const NOTE_TAG_DEFINITION_OID: u32 = 0x2000_3488;
     /// MS-ONE's table prints 0x04003489; MS-ONE §2.2.88 and the sample files make it an array
     /// of property values (type 0x10).
@@ -193,6 +215,23 @@ pub mod prop {
     pub const NC_FONT_SIZE: u32 = 0x17FC_0009;
     /// Paragraph: the NoteCraft paragraph style name (UTF-16).
     pub const NC_PARA_STYLE: u32 = 0x1FFC_000A;
+    /// Paragraph: 3 for justified (ParagraphAlignment has no such value; it says left then).
+    pub const NC_PARA_ALIGN: u32 = 0x0FFC_000B;
+    /// Note tag definition: the NoteCraft tag name ([`notecraft_doc::Tag::name`], UTF-16), so a
+    /// tag reads back exactly even where its shape and label are shared or translated.
+    pub const NC_TAG: u32 = 0x1FFC_000C;
+    /// Picture: how it is drawn, `[rotation, flags]` (quarter turns clockwise; bit 0 flips
+    /// horizontally, bit 1 vertically, both in the source image before the rotation) and, when
+    /// cropped, four little-endian f32 (left, top, right, bottom fractions of the source).
+    /// MS-ONE has no rotation, flip or crop properties.
+    pub const NC_PICTURE_TRANSFORM: u32 = 0x1FFC_0040;
+    /// Page node: View ▸ Hide Page Title is on for the page (written only when true).
+    pub const NC_HIDE_TITLE: u32 = 0x0BFC_0041;
+    /// Section metadata: the page template new pages start from (a template id, UTF-16).
+    pub const NC_SECTION_TEMPLATE: u32 = 0x1FFC_0042;
+    /// Paragraph: the proofing language NoteCraft keeps (a BCP 47 tag, UTF-16), for tags without
+    /// an LCID (`zxx`) and so a language chosen on purpose reads back as chosen.
+    pub const NC_PARA_LANG: u32 = 0x1FFC_000D;
 
     // .onetoc2 (MS-ONE names these without numbering them; NoteCraft-chosen, see README).
     /// TOC: the entries (sections and section groups) in order.
@@ -205,7 +244,38 @@ pub mod prop {
     pub const NC_TOC_NAME: u32 = 0x1FFC_0013;
     /// TOC entry: position in the notebook.
     pub const NC_TOC_ORDER: u32 = 0x17FC_0014;
+
+    // Page versions ([MS-ONE] §2.1.17, §2.1.18): see `versions.rs`.
+    /// Page manifest: the version history object space's context (an array of one ContextID).
+    pub const VERSION_HISTORY_GRAPH_SPACE_CONTEXT_NODES: u32 = 0x3400_347B;
+    /// TOC: whether version history pages can be kept for the notebook (default true).
+    pub const ENABLE_HISTORY: u32 = 0x0800_1E1E;
+    /// Version history content: NoteCraft's version proxies, in order. MS-ONE links a proxy to its
+    /// version through VersionContextNodes, which it names without numbering, so NoteCraft
+    /// leaves the documented ElementChildNodes empty (as OneNote's own files have it when there
+    /// are no versions) and lists its proxies here.
+    pub const NC_VERSION_PROXIES: u32 = 0x27FC_0020;
+    /// Version proxy: the version's context (an array of one ContextID), standing in for
+    /// VersionContextNodes.
+    pub const NC_VERSION_CONTEXT: u32 = 0x37FC_0021;
+
+    // The recycle bin (`OneNote_RecycleBin/`): see `recycle.rs`.
+    /// Section metadata of a deleted section, page metadata of a deleted page: when it was
+    /// deleted (FILETIME).
+    pub const NC_DELETED_TIME: u32 = 0x1BFC_0022;
+    /// Deleted section: the section groups it was in (16-byte GUIDs, root first).
+    pub const NC_DELETED_GROUP_PATH: u32 = 0x1FFC_0023;
+    /// Deleted section or page: its position in its group or section.
+    pub const NC_DELETED_INDEX: u32 = 0x17FC_0024;
+    /// Deleted page: the section it was in (16-byte GUID).
+    pub const NC_DELETED_SECTION: u32 = 0x1FFC_0025;
+    /// Deleted page: that section's name (UTF-16).
+    pub const NC_DELETED_SECTION_NAME: u32 = 0x1FFC_0026;
 }
+
+/// The context of a page's version history object space ([MS-ONE] §2.1.18):
+/// {7111497f-1b6b-4209-9491-c98b04cf4c5a}, 1, on-disk byte order.
+pub const VERSION_HISTORY_CONTEXT: [u8; 16] = [0x7F, 0x49, 0x11, 0x71, 0x6B, 0x1B, 0x09, 0x42, 0x94, 0x91, 0xC9, 0x8B, 0x04, 0xCF, 0x4C, 0x5A];
 
 /// Root roles ([MS-ONE] §2.1.8).
 pub mod role {

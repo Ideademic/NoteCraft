@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::page::{CONTENT_ORIGIN, ElementKind, Outline, PageElement};
-use crate::{Color, Guid, InkPoint, InkStroke, InkTool, Page};
+use crate::{Color, Guid, InkPoint, InkStroke, InkTool, Page, RecycleBin};
 
 /// Deepest section-group nesting walked (hostile files): deeper entries are ignored by the
 /// helpers here and should be refused by readers.
@@ -23,6 +23,13 @@ pub struct Notebook {
     pub color: Color,
     /// Sections and section groups, in tab order.
     pub sections: Vec<SectionEntry>,
+    /// Deleted sections and pages (History ▸ Notebook Recycle Bin).
+    #[serde(default, skip_serializing_if = "RecycleBin::is_empty")]
+    pub recycle_bin: RecycleBin,
+    /// History ▸ Disable History for this Notebook: no page versions are kept (MS-ONE
+    /// EnableHistory false in the table of contents).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub history_disabled: bool,
 }
 
 /// A section or a section group.
@@ -90,6 +97,9 @@ pub struct Section {
     pub pages: Vec<Page>,
     #[serde(default)]
     pub source: SourceInfo,
+    /// The page template new pages in this section start from (a template id), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_template: Option<String>,
 }
 
 impl Section {
@@ -101,6 +111,7 @@ impl Section {
             color,
             pages: Vec::new(),
             source: SourceInfo { authored_by_notecraft: true, ..SourceInfo::default() },
+            default_template: None,
         }
     }
 
@@ -138,15 +149,24 @@ pub struct SearchHit {
     pub snippet: String,
 }
 
-/// The welcome page's pen underline: from x, to x, at y (points).
-const UNDERLINE: (f32, f32, f32) = (35.0, 352.0, 128.0);
-/// The welcome page's highlighter sweep: from x, to x, at y (points).
-const SWEEP: (f32, f32, f32) = (33.0, 377.0, 156.5);
+/// The welcome page's pen underline: from x, to x, at y (points). Measured on the default font,
+/// Calibri, or its metric-compatible stand-in Carlito, which every release build embeds.
+const UNDERLINE: (f32, f32, f32) = (35.0, 325.0, 128.0);
+/// The welcome page's highlighter sweep: from x, to x, at y (points), over the second line of
+/// the intro in Calibri metrics, like [`UNDERLINE`].
+const SWEEP: (f32, f32, f32) = (33.0, 349.0, 158.5);
 
 impl Notebook {
     /// An empty notebook.
     pub fn new(name: impl Into<String>) -> Notebook {
-        Notebook { id: Guid::new(), name: name.into(), color: Color::NOTECRAFT, sections: Vec::new() }
+        Notebook {
+            id: Guid::new(),
+            name: name.into(),
+            color: Color::NOTECRAFT,
+            sections: Vec::new(),
+            recycle_bin: RecycleBin::default(),
+            history_disabled: false,
+        }
     }
 
     /// The notebook a first start opens: "My Notebook" ▸ "Quick Notes" ▸ "Welcome to NoteCraft",
@@ -167,7 +187,7 @@ impl Notebook {
              Sketch something with the Pen on the Draw tab\n\
              Add a section with the + next to the section tabs",
         );
-        for (i, p) in outline.paragraphs.iter_mut().enumerate() {
+        for (i, p) in outline.paragraphs_mut().enumerate() {
             match i {
                 0 => p.style = crate::ParaStyle::Heading2,
                 5 => p.style = crate::ParaStyle::Heading3,
@@ -429,17 +449,18 @@ mod tests {
         assert_eq!(p.title, "Welcome to NoteCraft");
         assert_eq!(p.elements.len(), 1);
         assert_eq!(p.ink.len(), 2);
-        // The highlighter sweeps the whole sentence, the pen underlines the heading.
+        // The highlighter sweeps the whole sentence, the pen underlines the heading (in Calibri
+        // metrics the sentence ends near 342 pt and the heading near 321 pt).
         let hl = p.ink.iter().find(|s| s.tool == InkTool::Highlighter).unwrap();
         let xs = |s: &InkStroke| s.points.iter().map(|q| q.x).fold((f32::MAX, f32::MIN), |(a, b), x| (a.min(x), b.max(x)));
         let (from, to) = xs(hl);
-        assert!(from <= 36.0 && to >= 370.0, "{from}..{to}");
+        assert!(from <= 36.0 && to >= 345.0, "{from}..{to}");
         assert!(hl.points.len() > 2, "a sweep, not a ruler line");
         let pen = p.ink.iter().find(|s| s.tool == InkTool::Pen).unwrap();
-        assert!(xs(pen).1 - xs(pen).0 > 300.0);
+        assert!(xs(pen).0 <= 36.0 && xs(pen).1 >= 322.0);
         let ElementKind::Outline(o) = &p.elements[0].kind else { panic!("an outline") };
-        assert_eq!(o.paragraphs.iter().filter(|q| matches!(q.tag, Some(crate::Tag::ToDo { .. }))).count(), 4);
-        assert_eq!(o.paragraphs[0].style, crate::ParaStyle::Heading2);
+        assert_eq!(o.paragraphs().filter(|q| matches!(q.tag, Some(crate::Tag::ToDo { .. }))).count(), 4);
+        assert_eq!(o.para(0).unwrap().style, crate::ParaStyle::Heading2);
     }
 
     #[test]

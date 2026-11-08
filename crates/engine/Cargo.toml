@@ -15,9 +15,20 @@ notecraft-one = { workspace = true }
 notecraft-onepkg = { workspace = true }
 notecraft-formats = { workspace = true }
 notecraft-printout = { workspace = true }
+notecraft-pdf = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
 chrono = { workspace = true }
 base64 = { workspace = true }
+# Review › Spelling: the proofing commands (`proof.*`).
+craft-proof = { workspace = true }
+# Link addresses are checked as the PDF export does (`craft_pdf::safe_url`).
+craft-pdf = { workspace = true }
+# The spelling queue's time budget in the browser.
+web-time = { workspace = true }
+
+[dev-dependencies]
+# Geometry types of craft-pdf's interpreter (the 0.2.0 test reads an exported PDF's text back).
+kurbo = { workspace = true }

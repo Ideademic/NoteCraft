@@ -58,36 +58,49 @@
 ## A tour
 
 <p align="center">
-  <img src="docs/images/hero.png" alt="NoteCraft with a notebook open: section tabs across the top, the page list on the right and a page with a note container and handwriting" width="100%">
+  <img src="docs/images/hero.png" alt="NoteCraft with a notebook open: section tabs across the top, the notebook pane on the left, the page list on the right and the welcome page with a pen underline and a highlighter" width="100%">
 </p>
 
 <table>
 <tr>
-<td width="50%" valign="top"><img src="docs/images/ink.png" alt="The Draw tab: tools, pen gallery and colour and thickness" width="100%"><p align="center"><sub><b>Draw.</b> Pen, pencil and highlighter with pressure, eraser and lasso.</sub></p></td>
-<td width="50%" valign="top"><img src="docs/images/printout.png" alt="A page with headings, lists, To Do tags, ink and a picture on college-ruled paper" width="100%"><p align="center"><sub><b>Write anywhere.</b> Note containers, lists, tags, ink and pictures on ruled paper.</sub></p></td>
+<td width="50%" valign="top"><img src="docs/images/ink.png" alt="The Draw tab with a page of shapes drawn with the pen" width="100%"><p align="center"><sub><b>Draw.</b> Pen, pencil and highlighter with pressure, shapes and Ink to Shape.</sub></p></td>
+<td width="50%" valign="top"><img src="docs/images/tables.png" alt="A page with a shaded table, To Do, Question and Important tags, and the Table tab open" width="100%"><p align="center"><sub><b>Tables and tags.</b> Real tables with a Table tab, and tags you can summarize.</sub></p></td>
 </tr>
 <tr>
-<td colspan="2"><img src="docs/images/dark.png" alt="The same page in dark mode" width="100%"><p align="center"><sub><b>Dark mode.</b></sub></p></td>
+<td colspan="2"><img src="docs/images/dark.png" alt="A page in dark mode showing fonts, alignment, bullet and number styles and every tag" width="100%"><p align="center"><sub><b>Dark mode.</b> Real fonts, alignment, list styles and tags.</sub></p></td>
 </tr>
 </table>
 
 ## What works today
 
-Version 0.1.1 (see [CHANGELOG.md](CHANGELOG.md)):
+Version 0.2.0 (see [CHANGELOG.md](CHANGELOG.md)):
 
 | Area | Highlights |
 |---|---|
-| **Notebooks** | Notebooks, section groups, sections and pages, with colours; subpages; rename, reorder and delete |
-| **Pages** | Click anywhere and type: note containers placed freely on the page; page titles with date and time; page colour and rule lines |
-| **Text** | Rich text (bold, italic, underline, colour, highlight and more), paragraph styles, bullets and numbering, indent levels, To Do tags (Important and Question tags in opened notebooks are shown and kept) |
-| **Ink** | Pen, pencil and highlighter with pressure, colours and widths; stroke eraser; lasso select; Ink to Shape mode (rough lines, arrows, rectangles, circles and polygons are redrawn clean as you draw; handwriting is left alone) |
-| **Shapes** | Draw › Shapes gallery: lines, arrows, rectangles, rounded rectangles, ellipses, triangles, parallelograms, trapezoids, diamonds, pentagons, hexagons and graph axes; drag to place, Shift for squares, circles and 45° lines; saved as ink in `.one` files |
-| **Insert** | Pictures; PDF file printouts, placed as page images you can ink over |
-| **Files** | `.one` sections and `.onetoc2` notebooks as the native format (a notebook is a folder; OneNote 2010–2016 desktop files; OneDrive-packaged files are refused); `.onepkg` import and export; HTML, Markdown and plain-text export |
+| **Notebooks** | Notebooks, section groups, sections and pages, with colours; subpages; rename, reorder and delete; a Recycle Bin that keeps deleted pages and sections for 60 days |
+| **Pages** | Click anywhere and type: note containers placed freely on the page; page titles with date and time (or hidden); page colour and rule lines; page templates, your own included; Insert Space |
+| **Text** | Rich text in your installed fonts (or ones you add), bold, italic, underline, colour, highlight; paragraph styles, alignment, bullet and number styles, indent levels; Format Painter; Find and Replace on the page |
+| **Tables** | Insert › Table and a Table tab: rows, columns, shading, hidden borders, sort, convert to text; Tab and the arrow keys move through cells; saved as real `.one` tables |
+| **Tags** | To Do, Important, Question and eight more, with Ctrl+1…9; a Tags Summary of a page, section or notebook |
+| **Links** | Web links, links to pages and paragraphs, `[[wiki links]]`; Ctrl+click to follow |
+| **Ink** | Pen, pencil and highlighter with pressure, colours and widths; stroke eraser; lasso select; rotate and flip; Ink to Shape (rough lines, arrows, rectangles, circles and polygons redrawn clean as you draw) |
+| **Shapes** | Draw › Shapes: lines, arrows, rectangles, ellipses, triangles, polygons and graph axes; saved as ink |
+| **Insert** | Pictures (rotate, flip, crop, alt text, arrange); PDF file printouts you can ink over; file attachments; date and time |
+| **History** | Page versions you can view and restore; unread pages and Next Unread; Recent Edits |
+| **Review** | Spelling as you type with suggestions and a Spelling pane (English built in; other languages through installed Hunspell dictionaries); Word Count; proofing language per paragraph |
+| **Clipboard** | Copy and paste formatted text, pictures, containers and ink; HTML and pictures from other apps; paste as plain text |
+| **Files** | `.one` sections and `.onetoc2` notebooks as the native format (a notebook is a folder; OneNote 2010–2016 desktop files; OneDrive-packaged files are refused); `.onepkg` import and export; HTML, Markdown, plain-text and PDF export |
+| **Printing** | File › Print with a preview, paper sizes and sheet ranges; Save as PDF |
 | **Saving** | No Save button: changes autosave; crash recovery |
-| **Search** | Page titles and text across every open notebook |
-| **Looks** | Light and dark mode; a flat, purple ribbon, Classic or Simplified (single row), with Full-screen mode, Show tabs only and Always show ribbon |
-| **Everywhere** | Desktop on macOS, Windows, Linux and FreeBSD; the browser via WebAssembly; a command-line tool |
+| **Search** | Page titles and text in a section, section group, notebook or every open notebook (Ctrl+F finds on the page) |
+| **Looks** | Light and dark mode; a flat, purple ribbon, Classic or Simplified (single row), with Full-screen mode, Show tabs only and Always show ribbon; right-click menus throughout |
+| **Everywhere** | Desktop on macOS, Windows, Linux and FreeBSD, with update checks; the browser via WebAssembly, with a host mode for embedding; a command-line tool |
+
+Not there yet: nested tables, merged cells and pictures in table cells; equations; audio and
+video; handwriting recognition (Ink to Text); interface translations (the app is English only
+until craft-i18n's catalogs ship). Content NoteCraft can't show yet is kept in the file and shown
+as a placeholder. `.one` files NoteCraft writes are still **unverified in Microsoft OneNote**, and
+builds are **not code-signed**.
 
 The honest picture, area by area, is in [ROADMAP.md](ROADMAP.md).
 
@@ -135,12 +148,14 @@ file gives an error, never a crash.
 | Layer | Crate | Job |
 |---|---|---|
 | L0 | `notecraft-geom` | points, half-inches, ink units, zoom, rectangles |
-| L1 | `notecraft-doc` | the model: notebook ▸ section groups and sections ▸ pages ▸ note containers, pictures, printouts and page ink |
+| L0 | `notecraft-fonts` | installed fonts, the bundled [craft-fonts](https://github.com/storytold/craft-fonts) faces, fonts you add |
+| L1 | `notecraft-doc` | the model: notebook ▸ section groups and sections ▸ pages ▸ note containers (paragraphs and tables), pictures, printouts, attachments and page ink; page versions and the recycle bin |
 | L2 | `notecraft-onestore` | the [MS-ONESTORE] revision store: header, file node lists, property sets, transaction log, CRCs |
 | L2 | `notecraft-one` | [MS-ONE] mapping between the store and the model; `.onetoc2`; notebook folders |
 | L2 | `notecraft-onepkg` | `.onepkg` (Cabinet) import and export |
-| L2 | `notecraft-formats` | HTML, Markdown and text export; picture import |
+| L2 | `notecraft-formats` | HTML, Markdown and text export; the HTML clipboard; picture import |
 | L3 | `notecraft-printout` | PDF pages to pictures for file printouts ([craft-pdf](https://github.com/storytold/craft-libs)) |
+| L3 | `notecraft-pdf` | pages to PDF for export and printing ([craft-pdf](https://github.com/storytold/craft-libs)) |
 | L4 | `notecraft-engine` | session, commands, undo, autosave, storage |
 | L6 | `notecraft-ui-egui` | the egui front end (swappable) |
 | apps | `notecraft`, `notecraft-cli`, `notecraft-web` | desktop, command line, browser |
@@ -154,8 +169,8 @@ build. Contributor and agent instructions: [AGENTS.md](AGENTS.md) and
 ## Roadmap
 
 NoteCraft is in **early alpha**. Next up: verifying `.one` writing against real Microsoft OneNote,
-search, tables in note containers, printing and PDF export, and signed releases. Details:
-[ROADMAP.md](ROADMAP.md).
+more of what real OneNote files hold (merged and nested table cells, equations, audio), interface
+translations, and signed releases. Details: [ROADMAP.md](ROADMAP.md).
 
 ## Downloads
 

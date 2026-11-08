@@ -15,11 +15,13 @@ pub enum OutKind {
     Html,
     Markdown,
     Text,
+    /// A PDF (`notecraft-pdf`).
+    Pdf,
     /// A notebook folder: `Open Notebook.onetoc2` plus one `.one` per section.
     Folder,
 }
 
-pub const OUTPUTS: &str = ".onepkg, .json, .one, .html, .md, .txt, or a folder (a path ending in / or Open Notebook.onetoc2)";
+pub const OUTPUTS: &str = ".onepkg, .json, .one, .html, .md, .txt, .pdf, or a folder (a path ending in / or Open Notebook.onetoc2)";
 
 impl OutKind {
     pub fn of(out: &str) -> Result<OutKind, Fail> {
@@ -37,6 +39,7 @@ impl OutKind {
             "html" | "htm" => Ok(OutKind::Html),
             "md" | "markdown" => Ok(OutKind::Markdown),
             "txt" => Ok(OutKind::Text),
+            "pdf" => Ok(OutKind::Pdf),
             "onetoc2" => Ok(OutKind::Folder),
             e => Err(Fail::usage(format!("can't write `.{}` files: write {OUTPUTS}", e.chars().take(20).collect::<String>()))),
         }
@@ -107,6 +110,7 @@ pub fn to_bytes(nb: &Notebook, kind: OutKind) -> Result<Vec<u8>, Fail> {
         OutKind::Html => notecraft_formats::section_to_html(&all_pages(nb)).map_err(|e| fail(&e))?.into_bytes(),
         OutKind::Markdown => join_pages(nb, "\n\n---\n\n", notecraft_formats::page_to_markdown)?.into_bytes(),
         OutKind::Text => join_pages(nb, "\n\n", notecraft_formats::page_to_text)?.into_bytes(),
+        OutKind::Pdf => pdf_bytes(nb, &PdfArgs::default())?,
         OutKind::Folder => return Err(Fail::new("a folder isn't one file")),
     })
 }
@@ -114,6 +118,55 @@ pub fn to_bytes(nb: &Notebook, kind: OutKind) -> Result<Vec<u8>, Fail> {
 /// Writes `nb` to `out` by its extension (a folder for a path ending in `/` or `.onetoc2`, or an
 /// existing folder). Returns what was written, for the message.
 pub fn write(nb: &Notebook, out: &str) -> Result<String, Fail> {
+    write_with(nb, out, &PdfArgs::default())
+}
+
+/// How `convert` writes a PDF (`--scope`, `--paper`, `--landscape`, `--no-header`,
+/// `--bundled-fonts`).
+#[derive(Clone, Debug, Default)]
+pub struct PdfArgs {
+    /// `page` (the first page), `section` (the first section) or `notebook` (default: every page).
+    pub scope: Option<String>,
+    pub options: notecraft_pdf::Options,
+    pub bundled_fonts: bool,
+}
+
+impl PdfArgs {
+    /// From `convert`'s options.
+    pub fn parse(scope: Option<&str>, paper: Option<&str>, landscape: bool, no_header: bool, bundled: bool) -> Result<PdfArgs, Fail> {
+        if let Some(s) = scope
+            && !matches!(s, "page" | "section" | "notebook")
+        {
+            return Err(Fail::usage(format!("--scope is page, section or notebook, not `{}`", s.chars().take(20).collect::<String>())));
+        }
+        let mut options = notecraft_pdf::Options::default();
+        if let Some(p) = paper {
+            options.paper = notecraft_pdf::Paper::parse(p)
+                .ok_or_else(|| Fail::usage(format!("--paper is fit, letter, a4, legal or a5, not `{}`", p.chars().take(20).collect::<String>())))?;
+        }
+        options.landscape = landscape;
+        options.header = !no_header;
+        Ok(PdfArgs { scope: scope.map(str::to_owned), options, bundled_fonts: bundled })
+    }
+}
+
+/// `nb` as a PDF: every page with a bookmark per section and page, or only the first page or
+/// section by `--scope`.
+pub fn pdf_bytes(nb: &Notebook, args: &PdfArgs) -> Result<Vec<u8>, Fail> {
+    let fonts: &dyn notecraft_pdf::FontSource = if args.bundled_fonts { &notecraft_pdf::BundledFonts } else { &notecraft_pdf::SystemFonts };
+    let first_section = || nb.all_sections().into_iter().find(|s| !s.pages.is_empty());
+    let doc = match args.scope.as_deref() {
+        Some("page") => {
+            notecraft_pdf::Doc::page(first_section().and_then(|s| s.pages.first()).ok_or_else(|| Fail::new("the notebook has no pages"))?)
+        }
+        Some("section") => notecraft_pdf::Doc::section(first_section().ok_or_else(|| Fail::new("the notebook has no pages"))?),
+        _ => notecraft_pdf::Doc::notebook(nb),
+    };
+    notecraft_pdf::export(&doc, &args.options, fonts).map_err(|e| Fail::new(e.to_string()))
+}
+
+/// [`write`] with the PDF settings.
+pub fn write_with(nb: &Notebook, out: &str, pdf: &PdfArgs) -> Result<String, Fail> {
     let kind = OutKind::of(out)?;
     if kind == OutKind::Folder {
         let dir = if out.to_ascii_lowercase().ends_with(".onetoc2") { Path::new(out).parent().unwrap_or(Path::new(".")) } else { Path::new(out) };
@@ -121,7 +174,7 @@ pub fn write(nb: &Notebook, out: &str) -> Result<String, Fail> {
         let n = nb.all_sections().len();
         return Ok(format!("{} ({n} section{})", dir.display(), if n == 1 { "" } else { "s" }));
     }
-    let bytes = to_bytes(nb, kind)?;
+    let bytes = if kind == OutKind::Pdf { pdf_bytes(nb, pdf)? } else { to_bytes(nb, kind)? };
     if let Some(parent) = Path::new(out).parent().filter(|p| !p.as_os_str().is_empty() && !p.exists()) {
         std::fs::create_dir_all(parent).map_err(|e| Fail::new(format!("{}: {e}", parent.display())))?;
     }

@@ -1,6 +1,7 @@
-//! Pages: new, new subpage, delete, rename, move, indent / outdent (make subpage).
+//! Pages: new, new subpage, delete (to the recycle bin), rename, move, indent / outdent (make
+//! subpage).
 
-use notecraft_doc::{Page, Section, page::MAX_PAGE_LEVEL};
+use notecraft_doc::{DeletedPage, Page, Section, page::MAX_PAGE_LEVEL};
 use serde_json::{Value, json};
 
 use super::{has_page, has_section, id_or};
@@ -9,7 +10,10 @@ use crate::{CmdError, CmdOutput, CmdResult, CommandSpec, Session, p};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        CommandSpec::new(PAGE_NEW, "New Page", new).key("Mod+N").when(has_section).params(r##"{"section"?: guid, "title"?: string}"##),
+        CommandSpec::new(PAGE_NEW, "New Page", new)
+            .key("Mod+N")
+            .when(has_section)
+            .params(r##"{"section"?: guid, "title"?: string, "blank"?: bool (ignore the section's default template)}"##),
         CommandSpec::new(PAGE_NEW_SUBPAGE, "New Subpage", new_subpage).key("Mod+Shift+Alt+N").when(has_page).params(r##"{"title"?: string}"##),
         CommandSpec::new(PAGE_DELETE, "Delete Page", delete).when(has_page).params(r##"{"id"?: guid}"##),
         CommandSpec::new(PAGE_RENAME, "Rename Page", rename).when(has_page).params(r##"{"id"?: guid, "title": string}"##),
@@ -20,7 +24,7 @@ pub fn specs() -> Vec<CommandSpec> {
 }
 
 /// Titles keep to one line and 1000 characters.
-fn clean_title(t: &str) -> String {
+pub(crate) fn clean_title(t: &str) -> String {
     t.chars().map(|c| if c.is_control() { ' ' } else { c }).take(1000).collect()
 }
 
@@ -38,10 +42,14 @@ pub(crate) fn normalize_levels(section: &mut Section) {
 /// Inserts a new page with `level` after the current page's family (or at the end), makes it
 /// current.
 fn insert_page(s: &mut Session, section_id: Option<notecraft_doc::Guid>, title: String, sub: bool) -> CmdResult {
+    insert_built_page(s, section_id, Page::new(title), sub)
+}
+
+/// [`insert_page`] with the page already made (from a template).
+pub(crate) fn insert_built_page(s: &mut Session, section_id: Option<notecraft_doc::Guid>, mut page: Page, sub: bool) -> CmdResult {
     let cur_page = s.current.page;
     let sec_id = section_id.or(s.current.section).ok_or_else(|| CmdError::Disabled("no section is open".into()))?;
     let sec = s.section_mut(sec_id).ok_or_else(|| CmdError::Params(format!("no section {sec_id}")))?;
-    let mut page = Page::new(title);
     let at = match cur_page.and_then(|id| sec.page_index(id)) {
         Some(i) => {
             if sub {
@@ -60,8 +68,27 @@ fn insert_page(s: &mut Session, section_id: Option<notecraft_doc::Guid>, title: 
 }
 
 fn new(s: &mut Session, params: &Value) -> CmdResult {
-    let title = clean_title(p::str(params, "title").unwrap_or(""));
-    insert_page(s, p::guid(params, "section")?, title, false)
+    let title = p::str(params, "title").map(clean_title);
+    let section = p::guid(params, "section")?;
+    // The section's default template (Insert › Page Templates), unless asked for a blank page.
+    let template = match p::bool(params, "blank") {
+        Some(true) => None,
+        _ => section
+            .or(s.current.section)
+            .and_then(|id| s.notebooks.iter().find_map(|n| n.section(id)))
+            .and_then(|sec| sec.default_template.clone())
+            .and_then(|id| super::template::find(s, &id)),
+    };
+    match template {
+        Some(t) => {
+            let mut page = t.instantiate();
+            if let Some(title) = title {
+                page.title = title;
+            }
+            insert_built_page(s, section, page, false)
+        }
+        None => insert_page(s, section, title.unwrap_or_default(), false),
+    }
 }
 
 fn new_subpage(s: &mut Session, params: &Value) -> CmdResult {
@@ -69,15 +96,20 @@ fn new_subpage(s: &mut Session, params: &Value) -> CmdResult {
     insert_page(s, None, title, true)
 }
 
-/// Deletes one page (its subpages stay, one level up where needed).
+/// Deletes one page (its subpages stay, one level up where needed) into the notebook's recycle
+/// bin (History ▸ Notebook Recycle Bin).
 fn delete(s: &mut Session, params: &Value) -> CmdResult {
     let id = id_or(params, s.current.page, "page")?;
-    let sec = s.notebooks.iter_mut().find_map(|n| n.all_sections_mut().into_iter().find(|x| x.page(id).is_some()));
-    let sec = sec.ok_or_else(|| CmdError::Params(format!("no page {id}")))?;
+    let now = s.now();
+    let nb = s.notebooks.iter_mut().find(|n| n.find_page(id).is_some()).ok_or_else(|| CmdError::Params(format!("no page {id}")))?;
+    let sec = nb.all_sections_mut().into_iter().find(|x| x.page(id).is_some()).ok_or_else(|| CmdError::Params(format!("no page {id}")))?;
     let i = sec.page_index(id).ok_or_else(|| CmdError::Params(format!("no page {id}")))?;
-    sec.pages.remove(i);
+    let page = sec.pages.remove(i);
     normalize_levels(sec);
+    let deleted = DeletedPage { page, deleted: now, section: sec.id, section_name: sec.name.clone(), index: i };
     let next = sec.pages.get(i).or_else(|| i.checked_sub(1).and_then(|j| sec.pages.get(j))).map(|p| p.id);
+    nb.recycle_bin.pages.push(deleted);
+    nb.recycle_bin.cap();
     if s.current.page == Some(id) {
         s.current.page = next;
     }

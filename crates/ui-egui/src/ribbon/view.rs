@@ -29,7 +29,7 @@ pub fn show(ui: &mut Ui, app: &mut NoteApp) {
             app.ui.full_page_view = !app.ui.full_page_view;
         }
         let b =
-            Btn::new(Icon::DockDesktop, tl!("Dock to\nDesktop")).tip(tl!("Dock to Desktop")).enabled(false).help(tl!("Not available in NoteCraft."));
+            Btn::new(Icon::DockDesktop, tl!("Dock to\nDesktop")).tip(tl!("Dock to Desktop")).coming_soon().help(tl!("Not available in NoteCraft."));
         widgets::big(ui, app, b);
     });
     widgets::group(ui, app, tl!("Page Setup"), Icon::PageColor, |ui, app| {
@@ -38,9 +38,12 @@ pub fn show(ui: &mut Ui, app: &mut NoteApp) {
         widgets::big_menu(ui, app, b, page_color_menu);
         let b = Btn::new(Icon::RuleLines, tl!("Rule\nLines")).tip(tl!("Rule Lines")).enabled(app.can(ids::VIEW_RULE_LINES));
         widgets::big_menu(ui, app, b, rule_lines_menu);
-        let b = Btn::new(Icon::HideTitle, tl!("Hide\nPage Title")).tip(tl!("Hide Page Title")).checked(app.ui.hide_page_title).enabled(has_page);
+        let b = Btn::new(Icon::HideTitle, tl!("Hide\nPage Title"))
+            .tip(tl!("Hide Page Title"))
+            .checked(crate::ribbon::editing::title_hidden(app))
+            .enabled(has_page);
         if widgets::big(ui, app, b) {
-            app.ui.hide_page_title = !app.ui.hide_page_title;
+            crate::ribbon::editing::toggle_page_title(app);
         }
     });
     widgets::group(ui, app, tl!("Zoom"), Icon::ZoomIn, |ui, app| {
@@ -84,7 +87,7 @@ pub fn fit_page_width(app: &mut NoteApp) {
     }
 }
 
-fn page_color_menu(ui: &mut Ui, app: &mut NoteApp) {
+pub fn page_color_menu(ui: &mut Ui, app: &mut NoteApp) {
     let current = app.session.current_page().and_then(|p| p.background.color).map(color32);
     if crate::widgets::check_item(ui, current.is_none(), tl!("No Color")) {
         app.act(ids::VIEW_PAGE_COLOR, json!({ "color": null }));
@@ -108,7 +111,7 @@ pub fn rule_label(r: RuleLines) -> &'static str {
     }
 }
 
-fn rule_lines_menu(ui: &mut Ui, app: &mut NoteApp) {
+pub fn rule_lines_menu(ui: &mut Ui, app: &mut NoteApp) {
     let current = app.session.current_page().map(|p| p.background.rule).unwrap_or_default();
     widgets::menu_heading(ui, tl!("Rule Lines"));
     for r in [RuleLines::Narrow, RuleLines::College, RuleLines::Standard, RuleLines::Wide] {

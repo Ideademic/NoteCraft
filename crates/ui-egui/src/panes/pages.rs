@@ -1,7 +1,9 @@
 //! The page list on the right: "+ Add Page" at the top, then the section's pages (subpages
 //! indented), tinted with the section's colour, the current page in a stronger tint. Drag a page
 //! to reorder (its subpages come along); right-click for New Page, New Subpage, Rename, Delete,
-//! Make Subpage and Promote Subpage. It collapses to a thin bar.
+//! Make Subpage and Promote Subpage. Unread pages (changed since last seen) are bold; with History ▸
+//! Page Versions on, each page's versions follow it in a lighter style. It collapses to a thin
+//! bar.
 
 use egui::{Align2, Rect, Sense, Stroke, Ui, pos2, vec2};
 use notecraft_doc::Guid;
@@ -62,7 +64,7 @@ pub fn page_list(ui: &mut Ui, app: &mut NoteApp) {
     }
     let fold = Rect::from_center_size(pos2(header.max.x - 18.0, header.center().y), vec2(24.0, 24.0));
     if super::icon_button(ui, app, fold, Icon::ChevronRight, tl!("Collapse Page Tabs")) {
-        app.ui.page_list_open = false;
+        crate::app::narrow::fold(app, crate::app::narrow::SidePane::Pages);
     }
     ui.painter()
         .line_segment([pos2(full.min.x, header.max.y), pos2(full.max.x, header.max.y)], Stroke::new(1.0, crate::theme::mix(bg, t.text, 0.12)));
@@ -70,7 +72,10 @@ pub fn page_list(ui: &mut Ui, app: &mut NoteApp) {
         .session
         .current_section()
         .map(|s| {
-            s.pages.iter().map(|p| Row { id: p.id, title: p.title.clone(), level: p.level, when: p.created.format("%d/%m/%Y").to_string() }).collect()
+            s.pages
+                .iter()
+                .map(|p| Row { id: p.id, title: p.title.clone(), level: p.level, when: p.created.format("%b %-d, %Y").to_string() })
+                .collect()
         })
         .unwrap_or_default();
     let list = Rect::from_min_max(pos2(full.min.x + 1.0, header.max.y + 1.0), full.max);
@@ -80,6 +85,7 @@ pub fn page_list(ui: &mut Ui, app: &mut NoteApp) {
             ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
             for (i, row) in rows.iter().enumerate() {
                 row_rects.push(draw_row(ui, app, row, i, &rows));
+                super::history::version_rows(ui, app, row.id, row.level);
             }
             if rows.is_empty() {
                 ui.add_space(12.0);
@@ -96,7 +102,8 @@ fn draw_row(ui: &mut Ui, app: &mut NoteApp, row: &Row, index: usize, rows: &[Row
     let t = app.tokens.clone();
     let color = app.session.current_section().map(|s| s.color);
     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click_and_drag());
-    let current = app.session.current.page == Some(row.id);
+    // While one of its versions is open, the version row is the selected one.
+    let current = app.session.current.page == Some(row.id) && app.session.viewing_version.is_none();
     let title = if row.title.trim().is_empty() { tl!("Untitled page") } else { row.title.as_str() };
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, current, title));
     if current {
@@ -114,7 +121,8 @@ fn draw_row(ui: &mut Ui, app: &mut NoteApp, row: &Row, index: usize, rows: &[Row
         let font = regular(if row.level == 0 { 13.0 } else { 12.5 });
         let shown = fit_text(ui.ctx(), title, &font, (r.max.x - x - 8.0).max(0.0));
         let color = if row.title.trim().is_empty() { t.text_dim } else { t.text };
-        if current {
+        // Bold: the current page, and pages changed since the user last saw them (History).
+        if current || app.session.is_unread(row.id) {
             paint_strong(ui.painter(), pos2(x, r.center().y), Align2::LEFT_CENTER, &shown, font, color);
         } else {
             ui.painter().text(pos2(x, r.center().y), Align2::LEFT_CENTER, &shown, font, color);
@@ -158,6 +166,13 @@ fn page_menu(ui: &mut Ui, app: &mut NoteApp, id: Guid, can_indent: bool, can_pro
     }
     if widgets::menu_item(ui, Some(Icon::Delete), tl!("Delete"), true) {
         app.act(ids::PAGE_DELETE, json!({ "id": id }));
+    }
+    if widgets::menu_item(ui, Some(Icon::Link), tl!("Copy Link to Page"), true)
+        && let Ok(out) = app.run(ids::LINK_TO_PAGE, json!({ "id": id }))
+        && let Some(url) = out.value.get("url").and_then(serde_json::Value::as_str)
+    {
+        ui.ctx().copy_text(url.to_owned());
+        app.set_status(tl!("Link copied."), false);
     }
     ui.separator();
     if widgets::menu_item(ui, Some(Icon::Indent), tl!("Make Subpage"), can_indent) {
@@ -212,7 +227,7 @@ pub fn page_bar(ui: &mut Ui, app: &mut NoteApp) {
     ui.painter().line_segment([full.left_top(), full.left_bottom()], Stroke::new(1.0, t.border));
     let open = Rect::from_center_size(pos2(full.center().x, full.min.y + 16.0), vec2(22.0, 24.0));
     if super::icon_button(ui, app, open, Icon::ChevronLeft, tl!("Expand Page Tabs")) {
-        app.ui.page_list_open = true;
+        crate::app::narrow::unfold(app, crate::app::narrow::SidePane::Pages);
     }
     let add = Rect::from_center_size(pos2(full.center().x, full.min.y + 44.0), vec2(22.0, 24.0));
     if app.can(ids::PAGE_NEW) && super::icon_button(ui, app, add, Icon::Plus, tl!("Add Page")) {

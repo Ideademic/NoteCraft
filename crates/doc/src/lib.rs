@@ -12,19 +12,25 @@
 mod b64;
 pub mod color;
 pub mod guid;
+pub mod history;
 pub mod ink;
+pub mod link;
 pub mod notebook;
 pub mod page;
+pub mod table;
 
 pub use color::Color;
 pub use guid::Guid;
+pub use history::{DeletedPage, DeletedSection, PageVersion, RecycleBin};
 pub use ink::{InkPoint, InkStroke, InkTool};
 pub use notebook::{EntryPath, Notebook, SearchHit, Section, SectionEntry, SectionGroup, SourceInfo};
 pub use notecraft_geom as geom;
 pub use notecraft_geom::{Point, Rect, Size};
 pub use page::{
-    ElementKind, ImageElement, ImageFormat, ListKind, Outline, Page, PageBackground, PageElement, ParaStyle, Paragraph, Printout, RuleLines, Run, Tag,
+    Align, Crop, ElementKind, ImageElement, ImageFormat, ListKind, ListStyle, Outline, Page, PageBackground, PageElement, ParaStyle, Paragraph,
+    PictureTransform, Printout, RuleLines, Run, Tag,
 };
+pub use table::{Block, Cell, Row, Table};
 
 use chrono::{DateTime, Utc};
 

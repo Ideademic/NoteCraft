@@ -1,5 +1,6 @@
-//! The browser shell: web [`Services`], keeping the session in browser storage, drag and drop,
-//! the leave-page guard and the eframe web runner.
+//! The browser shell: web [`Services`], keeping the session in browser storage (or, hosted,
+//! handing it to the hosting page: [`crate::host`]), drag and drop, the leave-page guard and the
+//! eframe web runner.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -8,8 +9,9 @@ use notecraft_ui_egui::app::SaveState;
 use notecraft_ui_egui::{Inbox, InboxFile, NoteApp, OpenPurpose, Services};
 use wasm_bindgen::JsCast as _;
 
-use crate::persist::{self, Backend, BrowserStorage, Debounce, IDB_MARKER, LOCATION_KEY, PREFS_KEY, SESSION_KEY};
-use crate::{browser, open, prefs};
+use crate::host::{HostFiles, HostStorage, Opened};
+use crate::persist::{self, Backend, BrowserStorage, Debounce, IDB_MARKER, LOCATION_KEY, PREFS_KEY, SESSION_KEY, TEMPLATES_KEY};
+use crate::{browser, host, open, prefs};
 
 const CANVAS_ID: &str = "notecraft_canvas";
 const LOADING_ID: &str = "notecraft_loading";
@@ -31,16 +33,25 @@ pub fn start() {
             log::error!("missing <canvas id=\"{CANVAS_ID}\">");
             return;
         };
+        // Host modes (`craft-web-host`): `?host=parent`, a same-origin page framing NoteCraft, or
+        // `data-host="page"` on the canvas, a page running it in its own document. The host sends
+        // the notebook and keeps what is saved, and guards leaving the page; unframed,
+        // `?host=parent` stays the normal app.
+        let bridge = host::Bridge::detect(&canvas);
         // `?fresh` starts with a new notebook, leaving what is stored alone until the next save
         // replaces it (a way out should the stored session ever be the problem).
         let fresh = browser::query().contains("fresh");
-        let blob = if fresh { None } else { load_session().await };
-        let location = browser::local_get(LOCATION_KEY);
+        let blob = if fresh || bridge.is_some() { None } else { load_session().await };
+        let location = if bridge.is_some() { None } else { browser::local_get(LOCATION_KEY) };
         let stored_prefs = browser::local_get(PREFS_KEY);
+        let stored_templates = browser::local_get(TEMPLATES_KEY);
         let unsaved = Rc::new(Cell::new(false));
-        if let Err(e) = browser::guard_unload(unsaved.clone()) {
+        if bridge.is_none()
+            && let Err(e) = browser::guard_unload(unsaved.clone())
+        {
             log::error!("no unsaved-changes guard: {e}");
         }
+        let app_bridge = bridge.clone();
         let mut options = eframe::WebOptions::default();
         if browser::query().contains("webgl")
             && let eframe::egui_wgpu::WgpuSetup::CreateNew(create) = &mut options.wgpu_options.wgpu_setup
@@ -55,9 +66,20 @@ pub fn start() {
                     if let Some(rs) = &cc.wgpu_render_state {
                         log::info!("notecraft-web: wgpu backend {:?}", rs.adapter.get_info().backend);
                     }
-                    let (mut session, notice) = persist::restore(blob.as_deref(), location.as_deref());
                     let wanted = Rc::new(Cell::new(false));
-                    session.storage = Some(Box::new(BrowserStorage { wanted: wanted.clone() }));
+                    let (mut session, notice) = match &app_bridge {
+                        // The host sends the notebook to edit; none until then.
+                        Some(_) => (notecraft_engine::Session::empty(), None),
+                        None => persist::restore(blob.as_deref(), location.as_deref()),
+                    };
+                    let hosted = app_bridge.as_ref().map(|b| {
+                        let h = Hosted { opened: Opened::default(), files: Rc::new(RefCell::new(HostFiles::default())) };
+                        session.storage = Some(Box::new(HostStorage { files: h.files.clone(), post: b.post() }));
+                        h
+                    });
+                    if hosted.is_none() {
+                        session.storage = Some(Box::new(BrowserStorage { wanted: wanted.clone() }));
+                    }
                     let revision = session.revision;
                     let ctx = cc.egui_ctx.clone();
                     let inbox = Inbox::default();
@@ -71,9 +93,22 @@ pub fn start() {
                     }) {
                         log::error!("pasting pictures is unavailable: {e}");
                     }
-                    let services = services(&ctx, &inbox, &batches, &pastes);
+                    let pasted_html: PastedHtml = Rc::default();
+                    if let Err(e) = browser::listen_for_pasted_html(pasted_html.clone()) {
+                        log::error!("pasting with formatting is unavailable: {e}");
+                    }
+                    let mut services = services(&ctx, &inbox, &batches, &pastes, &pasted_html);
+                    if let (Some(b), Some(h)) = (&app_bridge, &hosted) {
+                        b.connect(&mut services, h.opened.clone(), ctx.clone());
+                    }
                     let mut app = NoteApp::new(session, services);
+                    // Fonts added on earlier visits.
+                    crate::font_store::load_all(ctx.clone());
                     prefs::restore(&mut app, stored_prefs.as_deref());
+                    if let Some(t) = stored_templates.as_deref() {
+                        app.load_templates(t);
+                    }
+                    let templates_revision = app.ui.templates_revision;
                     if let Some(n) = notice {
                         app.set_status(n, true);
                     }
@@ -84,6 +119,7 @@ pub fn start() {
                         pastes,
                         pasted_now: false,
                         prefs: prefs::PrefsSync::new(stored_prefs),
+                        templates_revision,
                         wanted,
                         debounce: Debounce::new(revision),
                         writer: Writer::default(),
@@ -91,10 +127,18 @@ pub fn start() {
                         location: None,
                         unsaved,
                         title: String::new(),
+                        hosted,
                     }))
                 }),
             )
             .await;
+        // Ready only once the runner is up: starting can still fail after the app is made.
+        if let Some(bridge) = &bridge {
+            match &result {
+                Ok(()) => bridge.post_ready(),
+                Err(e) => bridge.post_failed(&format!("{e:?}")),
+            }
+        }
         if let Some(el) = document.get_element_by_id(LOADING_ID) {
             match result {
                 Ok(()) => el.remove(),
@@ -141,6 +185,7 @@ fn accept(purpose: OpenPurpose) -> &'static str {
         OpenPurpose::Picture => ".png,.jpg,.jpeg,.jfif,.gif,.bmp,.webp,image/*",
         OpenPurpose::Printout => ".pdf,.png,.jpg,.jpeg",
         OpenPurpose::Attachment => "",
+        OpenPurpose::Font => ".ttf,.otf,.ttc,.woff,.woff2",
     }
 }
 
@@ -182,14 +227,18 @@ fn deliver(files: Vec<web_sys::File>, purpose: Option<OpenPurpose>, inbox: Inbox
     });
 }
 
-fn services(ctx: &egui::Context, inbox: &Inbox, batches: &Batches, pastes: &Pastes) -> Services {
+/// The HTML the last paste event carried ([`browser::listen_for_pasted_html`]).
+type PastedHtml = Rc<RefCell<Option<String>>>;
+
+fn services(ctx: &egui::Context, inbox: &Inbox, batches: &Batches, pastes: &Pastes, pasted_html: &PastedHtml) -> Services {
+    let html = pasted_html.clone();
     let (open_ctx, open_inbox, open_batches) = (ctx.clone(), inbox.clone(), batches.clone());
     let (paste_ctx, paste_queue) = (ctx.clone(), pastes.clone());
     let (pic_ctx, pic_inbox) = (ctx.clone(), inbox.clone());
     Services {
         open_async: Some(Box::new(move |purpose| {
             let (ctx, inbox, batches) = (open_ctx.clone(), open_inbox.clone(), open_batches.clone());
-            let many = matches!(purpose, OpenPurpose::Notebook | OpenPurpose::NotebookFolder | OpenPurpose::Import);
+            let many = matches!(purpose, OpenPurpose::Notebook | OpenPurpose::NotebookFolder | OpenPurpose::Import | OpenPurpose::Font);
             let picked = browser::pick_files(accept(purpose), many, move |files| deliver(files, Some(purpose), inbox, batches, ctx));
             if let Err(e) = picked {
                 log::error!("file picker: {e}");
@@ -197,6 +246,8 @@ fn services(ctx: &egui::Context, inbox: &Inbox, batches: &Batches, pastes: &Past
         })),
         inbox: Some(inbox.clone()),
         download: Some(Box::new(browser::download)),
+        open_external: Some(Box::new(browser::open_link)),
+        print: Some(notecraft_ui_egui::Printing::Browser(Box::new(crate::print::print_pdf))),
         // Reading the clipboard is asynchronous in a browser: the text arrives a frame later
         // (`WebShell::raw_input_hook`). Ctrl+V needs none of this: eframe pastes it.
         clipboard_text: Some(Box::new(move || {
@@ -220,7 +271,10 @@ fn services(ctx: &egui::Context, inbox: &Inbox, batches: &Batches, pastes: &Past
             None
         })),
         set_clipboard_text: Some(Box::new(browser::set_clipboard_text)),
+        set_clipboard_rich: Some(Box::new(browser::set_clipboard_rich)),
+        clipboard_html: Some(Box::new(move || html.try_borrow_mut().ok().and_then(|mut h| h.take()))),
         prefers_dark: Some(browser::prefers_dark()),
+        keep_font: Some(Box::new(crate::font_store::store)),
         ..Services::default()
     }
 }
@@ -293,8 +347,15 @@ impl Writer {
     }
 }
 
+/// Host mode's state: files the host sent, and which host file each notebook is saved as.
+struct Hosted {
+    opened: Opened,
+    files: Rc<RefCell<HostFiles>>,
+}
+
 /// Wraps the app: opens picked and dropped notebooks, pastes clipboard text the ribbon asked for,
-/// and keeps the session, where the user is and the preferences in browser storage.
+/// and keeps the session, where the user is and the preferences in browser storage (hosted, the
+/// host keeps the notebooks).
 struct WebShell {
     app: NoteApp,
     inbox: Inbox,
@@ -303,6 +364,8 @@ struct WebShell {
     /// Clipboard text was pasted this frame (clear the "nothing to paste" hint).
     pasted_now: bool,
     prefs: prefs::PrefsSync,
+    /// The user's page templates were last stored at this revision.
+    templates_revision: u64,
     /// Raised by the session's storage when autosave saved.
     wanted: Rc<Cell<bool>>,
     debounce: Debounce,
@@ -315,9 +378,27 @@ struct WebShell {
     unsaved: Rc<Cell<bool>>,
     /// The tab's title last set.
     title: String,
+    /// Hosted by a page ([`crate::host`]).
+    hosted: Option<Hosted>,
 }
 
 impl WebShell {
+    /// Opens the files the hosting page sent.
+    fn open_hosted(&mut self) {
+        let Some(h) = &self.hosted else { return };
+        let files = std::mem::take(&mut *h.opened.borrow_mut());
+        for (name, bytes) in files {
+            let msg = match h.files.try_borrow_mut() {
+                Ok(mut f) => host::open_hosted(&mut self.app.session, &mut f, &name, bytes),
+                Err(_) => continue,
+            };
+            if let Some((msg, error)) = msg {
+                self.app.set_status(msg, error);
+            }
+            self.app.ui.backstage = false;
+        }
+    }
+
     fn open_batches(&mut self) {
         let batches = std::mem::take(&mut *self.batches.borrow_mut());
         for batch in batches {
@@ -354,14 +435,16 @@ impl WebShell {
         }
         let now = ctx.input(|i| i.time);
         let (revision, dirty) = (self.app.session.revision, self.app.session.is_dirty());
-        if self.debounce.due(revision, dirty, self.wanted.replace(false), now) {
+        // Hosted, autosave hands each notebook to the host; nothing is kept in the browser.
+        let hosted = self.hosted.is_some();
+        if !hosted && self.debounce.due(revision, dirty, self.wanted.replace(false), now) {
             let result = self.app.session.to_blob().map_err(|e| e.to_string()).and_then(|blob| self.writer.write(blob, ctx));
             self.report(result);
-        } else if self.debounce.pending() {
+        } else if !hosted && self.debounce.pending() {
             ctx.request_repaint_after(std::time::Duration::from_secs_f64(persist::QUIET_SECS));
         }
         let s = &self.app.session;
-        if self.location != Some(s.current) {
+        if !hosted && self.location != Some(s.current) {
             self.location = Some(s.current);
             if let Ok(json) = serde_json::to_string(&s.current)
                 && let Err(e) = browser::local_set(LOCATION_KEY, &json)
@@ -373,6 +456,12 @@ impl WebShell {
             && let Err(e) = browser::local_set(PREFS_KEY, &json)
         {
             log::warn!("preferences not stored: {e}");
+        }
+        if self.templates_revision != self.app.ui.templates_revision {
+            self.templates_revision = self.app.ui.templates_revision;
+            if let Err(e) = browser::local_set(TEMPLATES_KEY, &self.app.templates_json()) {
+                self.app.set_status(format!("Couldn't keep your page templates in this browser: {e}"), true);
+            }
         }
         // eframe's web runner doesn't apply the window title; the tab shows the page, as the
         // desktop title bar does.
@@ -399,6 +488,7 @@ impl eframe::App for WebShell {
     }
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.open_hosted();
         self.open_batches();
         if std::mem::take(&mut self.pasted_now) && !self.app.ui.status_error {
             self.app.ui.status = None;

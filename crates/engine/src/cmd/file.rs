@@ -39,7 +39,7 @@ pub fn specs() -> Vec<CommandSpec> {
 }
 
 /// Hands an exported file back: bytes as base64, or written to `params.path`.
-fn deliver(params: &Value, file_name: String, mime: &str, bytes: Vec<u8>) -> CmdResult {
+pub(crate) fn deliver(params: &Value, file_name: String, mime: &str, bytes: Vec<u8>) -> CmdResult {
     let size = bytes.len();
     if let Some(path) = p::str(params, "path") {
         return write_to(path, &bytes).map(|()| CmdOutput::query(json!({"path": path, "size": size})));
@@ -48,12 +48,12 @@ fn deliver(params: &Value, file_name: String, mime: &str, bytes: Vec<u8>) -> Cmd
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn write_to(path: &str, bytes: &[u8]) -> Result<(), CmdError> {
+pub(crate) fn write_to(path: &str, bytes: &[u8]) -> Result<(), CmdError> {
     crate::io::safe_save::write(std::path::Path::new(path), bytes).map_err(|e| CmdError::Failed(format!("{path}: {e}")))
 }
 
 #[cfg(target_arch = "wasm32")]
-fn write_to(_: &str, _: &[u8]) -> Result<(), CmdError> {
+pub(crate) fn write_to(_: &str, _: &[u8]) -> Result<(), CmdError> {
     Err(CmdError::Disabled("the web app downloads exports".into()))
 }
 

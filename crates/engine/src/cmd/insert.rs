@@ -50,7 +50,7 @@ fn push(page: &mut Page, kind: ElementKind) -> Result<notecraft_doc::Guid, CmdEr
     Ok(id)
 }
 
-fn image(s: &mut Session, params: &Value) -> CmdResult {
+pub(crate) fn image(s: &mut Session, params: &Value) -> CmdResult {
     let file = file_input(params, notecraft_formats::MAX_IMAGE_BYTES)?;
     let mut img = notecraft_formats::import_image(&file.bytes).map_err(|e| CmdError::Failed(e.to_string()))?;
     img.alt = p::str(params, "alt").map(|a| a.chars().filter(|c| !c.is_control()).take(1000).collect()).unwrap_or_default();
@@ -120,7 +120,7 @@ fn date_time(s: &mut Session, params: &Value) -> CmdResult {
             (e, e)
         });
         let at: TextPos = text::delete(o, a, b);
-        let fmt = o.paragraphs.get(at.para).map(|pg| text::format_at(pg, at.char)).unwrap_or_default();
+        let fmt = text::Flow::para(o, at.para).map(|pg| text::format_at(pg, at.char)).unwrap_or_default();
         let caret = text::insert(o, at, &txt, &fmt);
         page.touch();
         return Ok(CmdOutput::value(json!({"caret": caret.to_json(), "text": txt})));

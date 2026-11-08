@@ -1,0 +1,43 @@
+name: "Check out craft-fonts"
+description: >-
+  Checks out the Latin faces NoteCraft embeds from storytold/craft-fonts (fonts/latin-manifest.txt,
+  Carlito, Caladea and Liberation Sans/Serif/Mono, all OFL-1.1) for builds that set CRAFT_FONTS_DIR.
+  Adapted from storytold/craft-common-actions' actions/checkout-craft-fonts
+
+# The default ref is NoteCraft's craft-fonts pin: bump it here, and only here. It is not the
+# shared pipeline's pin (bfcbf714), which predates fonts/latin-manifest.txt, so a build with
+# CRAFT_FONTS_REQUIRED=1 would fail on it.
+#
+# The checkout is sparse: crates/fonts/build.rs embeds only these families, and packaging/env.sh
+# and packaging/windows/package.ps1 ship every fonts/*/OFL.txt in the checkout, so a full checkout
+# would download about 73 MB of fonts NoteCraft does not embed and ship their licences anyway.
+# Add a family here when crates/fonts/build.rs embeds it.
+inputs:
+  ref:
+    description: "The git commit SHA of storytold/craft-fonts (empty: skip the checkout)"
+    required: false
+    default: "aced4137c022f1f587624d48e81ec77e1914a9cc"
+  path:
+    description: "Directory path to check out craft-fonts into, relative to the workspace"
+    required: false
+    default: "craft-fonts"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Check out craft-fonts
+      if: inputs.ref != ''
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        repository: storytold/craft-fonts
+        ref: ${{ inputs.ref }}
+        path: ${{ inputs.path }}
+        persist-credentials: false
+        sparse-checkout-cone-mode: false
+        sparse-checkout: |
+          /fonts/latin-manifest.txt
+          /fonts/carlito/
+          /fonts/caladea/
+          /fonts/liberation-sans/
+          /fonts/liberation-serif/
+          /fonts/liberation-mono/

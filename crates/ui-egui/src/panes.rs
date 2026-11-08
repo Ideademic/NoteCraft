@@ -6,14 +6,19 @@
 //!   joins the band over the page), a "+" tab, section group tabs, and the search box at the
 //!   right end ([`search`]);
 //! - [`pages`]: the page list on the right, tinted with the section's colour (subpages indented,
-//!   Add Page at the top), which collapses too.
+//!   Add Page at the top), which collapses too;
+//! - [`tags`] and [`templates`]: the Tags Summary and Templates task panes on the right.
 //!
 //! Everything changes the notebooks through commands; renames happen in place.
 
+pub mod history;
 pub mod notebooks;
 pub mod pages;
 pub mod search;
 pub mod sections;
+pub mod spelling;
+pub mod tags;
+pub mod templates;
 
 use egui::{Rect, Sense, Ui, vec2};
 use notecraft_doc::{Guid, SectionEntry};

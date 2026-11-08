@@ -161,6 +161,7 @@ pub fn build_printout(file_name: &str, bytes: Arc<Vec<u8>>, pos: Point, dpi: f32
             data: Arc::new(r.png),
             format: ImageFormat::Png,
             alt: format!("{}, page {}", file_name, i + 1),
+            transform: Default::default(),
         });
         y += size.h + PAGE_GAP;
     }

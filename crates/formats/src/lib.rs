@@ -10,9 +10,10 @@
 //!   to a sensible size on the page.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod clip;
 mod html;
 mod markdown;
-mod picture;
+pub mod picture;
 mod svg;
 
 use notecraft_doc::Page;
@@ -38,6 +39,22 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// The text symbol an export puts before a tagged paragraph: `★` for Important, `?` for
+/// Question… `None` for To Do (a checkbox) and the highlight tags (a background colour).
+pub fn tag_symbol(tag: notecraft_doc::Tag) -> Option<&'static str> {
+    use notecraft_doc::Tag;
+    match tag {
+        Tag::Important => Some("\u{2605}"),
+        Tag::Question => Some("?"),
+        Tag::Idea => Some("\u{1F4A1}"),
+        Tag::Critical => Some("\u{2757}"),
+        Tag::Contact => Some("\u{1F464}"),
+        Tag::Address => Some("\u{1F3E0}"),
+        Tag::Phone => Some("\u{260E}"),
+        Tag::ToDo { .. } | Tag::RememberForLater | Tag::Definition | Tag::Highlight => None,
+    }
+}
+
 /// One page as plain text: the title, then each outline's paragraphs, one per line.
 pub fn page_to_text(page: &Page) -> Result<String> {
     Ok(page.plain_text())
@@ -56,3 +73,6 @@ mod tests {
         assert!(page_to_markdown(&p).unwrap().starts_with("# Hello"));
     }
 }
+
+#[cfg(test)]
+mod tests_tables;

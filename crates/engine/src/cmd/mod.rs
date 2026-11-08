@@ -1,18 +1,32 @@
 //! The commands, by ribbon area. Each module's `specs()` lists its commands; [`all`] joins them.
 
+pub mod arrange;
+pub mod attachment;
+pub mod clip;
 pub mod draw;
 pub mod edit;
 pub mod file;
+pub mod find;
 pub mod format;
+pub mod history;
 pub mod ink_shape;
 pub mod insert;
+pub mod link;
 pub mod nav;
 pub mod notebook;
 pub mod outline;
 pub mod page;
+pub mod painter;
+pub mod pdf;
+pub mod picture;
+pub mod proof;
 pub mod search;
 pub mod section;
 pub mod shapes;
+pub mod space;
+pub mod table;
+pub mod tags;
+pub mod template;
 pub mod text;
 pub mod view;
 
@@ -37,8 +51,22 @@ pub fn all() -> Vec<CommandSpec> {
     v.extend(view::specs());
     v.extend(edit::specs());
     v.extend(file::specs());
+    v.extend(pdf::specs());
     v.extend(nav::specs());
     v.extend(search::specs());
+    v.extend(history::specs());
+    v.extend(table::specs());
+    v.extend(picture::specs());
+    v.extend(arrange::specs());
+    v.extend(space::specs());
+    v.extend(find::specs());
+    v.extend(tags::specs());
+    v.extend(painter::specs());
+    v.extend(clip::specs());
+    v.extend(template::specs());
+    v.extend(proof::specs());
+    v.extend(link::specs());
+    v.extend(attachment::specs());
     v
 }
 

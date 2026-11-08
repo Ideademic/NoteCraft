@@ -17,8 +17,8 @@
 //! ```
 //!
 //! See `README.md` for what is supported and what is uncertain. Covered: Section / PageSeries / PageManifest / Page / PageMetaData /
-//! Title / Outline / OutlineElement / RichTextOE / Image / NumberList / Table (read-only,
-//! flattened) / EmbeddedFile, ink (InkContainer / InkData / InkStroke / StrokeProperties, ISF
+//! Title / Outline / OutlineElement / RichTextOE / Image / NumberList / Table / TableRow /
+//! TableCell / EmbeddedFile, ink (InkContainer / InkData / InkStroke / StrokeProperties, ISF
 //! multibyte delta encoding), and the `.onetoc2` TOC. Unknown objects are kept as
 //! [`notecraft_doc::ElementKind::Opaque`] and written back where possible; reading one sets
 //! [`notecraft_doc::SourceInfo::unsupported_content`].
@@ -28,11 +28,15 @@ mod build;
 mod icon;
 pub mod ids;
 mod ink;
+mod lcid;
 mod notebook;
 mod opaque;
 mod read;
+mod recycle;
+mod table;
 mod toc;
 mod util;
+mod versions;
 mod write;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -44,6 +48,11 @@ use notecraft_doc::{Color, Guid, Section};
 use notecraft_doc::Notebook;
 
 pub use notebook::{NotebookFile, notebook_files, notebook_from_files};
+pub use opaque::{OpaqueInfo, OpaqueKind, describe as describe_opaque};
+pub use recycle::{
+    DELETED_PAGES_FILE, RECYCLE_BIN_FOLDER, read_recycle_bin, recycle_bin_files, recycle_bin_names, write_deleted_pages, write_deleted_section,
+};
+pub use versions::history_context;
 pub use write::WRITER_NAME;
 
 /// The table of contents' file name in a notebook folder and in each section group folder.
@@ -74,6 +83,9 @@ pub struct NotebookToc {
     pub name: String,
     pub color: Color,
     pub entries: Vec<TocEntry>,
+    /// History ▸ Disable History for this Notebook: MS-ONE EnableHistory false (only the
+    /// notebook's own table of contents carries it).
+    pub history_disabled: bool,
 }
 
 /// One entry of a [`NotebookToc`], in tab order.

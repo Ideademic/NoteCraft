@@ -9,8 +9,11 @@
 //! tabs do.
 
 pub mod draw;
+pub mod history;
 pub mod home;
 pub mod insert;
+pub mod review;
+pub mod table;
 pub mod view;
 
 use std::collections::HashMap;
@@ -50,7 +53,10 @@ pub fn segments(tab: RibbonTab) -> &'static [Segment] {
         RibbonTab::File | RibbonTab::Home => &home::SEGMENTS,
         RibbonTab::Insert => &insert::SEGMENTS,
         RibbonTab::Draw => &draw::SEGMENTS,
+        RibbonTab::History => &history::SEGMENTS,
+        RibbonTab::Review => &review::SEGMENTS,
         RibbonTab::View => &view::SEGMENTS,
+        RibbonTab::Table => &table::SEGMENTS,
     }
 }
 

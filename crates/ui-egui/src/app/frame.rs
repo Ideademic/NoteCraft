@@ -7,7 +7,7 @@
 use egui::{CentralPanel, Frame, Panel, Ui};
 use serde_json::json;
 
-use super::{MAC_TITLE_BAR_HEIGHT, NOTEBOOK_BAR_WIDTH, NOTEBOOK_PANE_WIDTH, NoteApp, PAGE_LIST_WIDTH, Prompt, TITLE_BAR_HEIGHT};
+use super::{MAC_TITLE_BAR_HEIGHT, NOTEBOOK_BAR_WIDTH, NoteApp, Prompt, TITLE_BAR_HEIGHT, narrow};
 use crate::theme::regular;
 use crate::widgets::flat_button;
 use crate::{backstage, canvas, chrome, panes, ribbon, tl};
@@ -75,51 +75,82 @@ pub fn show(app: &mut NoteApp, ui: &mut Ui) {
         .show_separator_line(false)
         .frame(Frame::NONE.fill(t.status_bar))
         .show(ui, |ui| chrome::status_bar(ui, app));
+    let mut notebook_bar = None;
+    let mut page_bar = None;
     if !app.ui.full_page_view {
-        if app.ui.notebook_pane_open {
-            Panel::left("nc_notebooks")
-                .default_size(NOTEBOOK_PANE_WIDTH)
-                .size_range(160.0..=480.0)
-                .resizable(true)
-                .show_separator_line(false)
-                .frame(Frame::NONE.fill(t.notebook_pane))
-                .show(ui, |ui| panes::notebook_pane(ui, app));
+        // A narrow window folds the panes for room, for now ([`narrow`]).
+        narrow::plan(app, ui);
+        let n = app.ui.narrow;
+        if app.ui.notebook_pane_open && !n.notebooks_folded {
+            narrow::side_panel(ui, true, narrow::NOTEBOOKS, t.notebook_pane, n.notebooks_cap, |ui| panes::notebook_pane(ui, app));
         } else {
-            Panel::left("nc_notebook_bar")
+            let r = Panel::left("nc_notebook_bar")
                 .exact_size(NOTEBOOK_BAR_WIDTH)
                 .resizable(false)
                 .show_separator_line(false)
                 .frame(Frame::NONE.fill(t.notebook_pane))
                 .show(ui, |ui| panes::notebook_bar(ui, app));
+            notebook_bar = Some(r.response.rect);
+        }
+        panes::history::fix_bin_view(app);
+        if app.ui.templates_pane.is_some() {
+            narrow::side_panel(ui, false, narrow::TEMPLATES, t.panel, n.share, |ui| panes::templates::pane(ui, app));
+        }
+        if app.ui.tags_pane.is_some() {
+            narrow::side_panel(ui, false, narrow::TAGS, t.panel, n.share, |ui| panes::tags::pane(ui, app));
+        }
+        if app.ui.recent_edits.is_some() {
+            narrow::side_panel(ui, false, narrow::RECENT_EDITS, t.panel, n.share, |ui| panes::history::recent_edits_pane(ui, app));
+        }
+        if app.ui.review.spelling.is_some() {
+            narrow::side_panel(ui, false, narrow::SPELLING, t.panel, n.share, |ui| panes::spelling::pane(ui, app));
         }
         let tint = app.session.current_section().map_or(t.page_list, |s| t.section_tint(s.color));
-        if app.ui.page_list_open {
-            Panel::right("nc_pages")
-                .default_size(PAGE_LIST_WIDTH)
-                .size_range(150.0..=480.0)
-                .resizable(true)
+        if app.ui.bin_view.is_some() {
+            narrow::side_panel(ui, false, narrow::BIN_PAGES, t.page_list, n.share, |ui| panes::history::bin_page_list(ui, app));
+        } else if app.ui.page_list_open && !n.pages_folded {
+            narrow::side_panel(ui, false, narrow::PAGES, tint, n.pages_cap, |ui| panes::page_list(ui, app));
+        } else {
+            let r = Panel::right("nc_page_bar")
+                .exact_size(narrow::PAGE_BAR_WIDTH)
+                .resizable(false)
                 .show_separator_line(false)
                 .frame(Frame::NONE.fill(tint))
-                .show(ui, |ui| panes::page_list(ui, app));
-        } else {
-            Panel::right("nc_page_bar").exact_size(28.0).resizable(false).show_separator_line(false).frame(Frame::NONE.fill(tint)).show(ui, |ui| {
-                panes::page_bar(ui, app);
-            });
+                .show(ui, |ui| panes::page_bar(ui, app));
+            page_bar = Some(r.response.rect);
         }
     }
     // The page area: section tabs, then the page on a band of the section's colour.
     let band = app.session.current_section().map_or(t.canvas, |s| t.section_tint(s.color));
     CentralPanel::default().frame(Frame::NONE.fill(band)).show(ui, |ui| {
         ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-        if !app.ui.full_page_view {
-            panes::section_tabs(ui, app);
+        if app.ui.bin_view.is_some() {
+            panes::history::bin_tabs(ui, app);
+            panes::history::bin_page_banner(ui, app);
+        } else {
+            if !app.ui.full_page_view {
+                panes::section_tabs(ui, app);
+            }
+            panes::history::banner(ui, app);
+            crate::dialogs::find::bar(ui, app);
         }
         app.canvas_rect = Some(ui.available_rect_before_wrap());
         let mut tokens = app.tokens.clone();
-        tokens.canvas = band;
-        app.canvas.hide_title = app.ui.hide_page_title;
-        canvas::show(ui, &mut app.canvas, &mut app.session, &tokens, &app.services);
+        tokens.canvas = if app.ui.bin_view.is_some() { t.canvas } else { band };
+        // View › Hide Page Title is kept with each page.
+        let hide = app.session.current_page().is_some_and(|p| p.hide_title);
+        app.ui.hide_page_title = hide;
+        app.canvas.hide_title = hide;
+        if !panes::history::preview(ui, app, &tokens) {
+            canvas::show(ui, &mut app.canvas, &mut app.session, &tokens, &app.services);
+        }
     });
+    let bar = match app.ui.narrow.overlay {
+        Some(narrow::SidePane::Notebooks) => notebook_bar,
+        Some(narrow::SidePane::Pages) => page_bar,
+        None => None,
+    };
+    narrow::overlay(app, ui, bar);
     finish(app, ui);
 }
 
@@ -127,7 +158,12 @@ pub fn show(app: &mut NoteApp, ui: &mut Ui) {
 fn finish(app: &mut NoteApp, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     panes::remember_page(&ctx, app);
+    crate::review::dialogs(&ctx, app);
     prompt(&ctx, app);
+    crate::ribbon::table::dialog(&ctx, app);
+    crate::dialogs::alt_text::show(&ctx, app);
+    crate::updates::show(app, &ctx);
+    crate::toast::show(&ctx, &mut app.ui.toast, &app.tokens);
     app.ui.keytips.paint(&ctx, &app.tokens);
     app.ui.keytips.end_frame();
 }
@@ -139,7 +175,7 @@ fn prompt(ctx: &egui::Context, app: &mut NoteApp) {
     let (title, body, yes, no) = match &p {
         Prompt::DeleteSection { name, .. } => (
             crate::i18n::fmt_plain(tl!("Delete \u{201c}{name}\u{201d}?"), &[("name", name)]),
-            tl!("The section and all its pages are deleted. You can undo this with Ctrl+Z.").to_owned(),
+            tl!("The section and its pages go to the Notebook Recycle Bin (History tab) for 60 days. You can undo this with Ctrl+Z.").to_owned(),
             tl!("Delete"),
             Some(tl!("Cancel")),
         ),
@@ -159,6 +195,7 @@ fn prompt(ctx: &egui::Context, app: &mut NoteApp) {
             Some(tl!("Discard")),
         ),
         Prompt::Message { title, body } => (title.clone(), body.clone(), tl!("OK"), None),
+        Prompt::Confirm { title, body, yes, .. } => (title.clone(), body.clone(), yes.as_str(), Some(tl!("Cancel"))),
     };
     let mut answer: Option<bool> = None;
     let modal = egui::Modal::new(egui::Id::unique("nc_prompt")).backdrop_color(egui::Color32::TRANSPARENT).frame(
@@ -196,6 +233,10 @@ fn prompt(ctx: &egui::Context, app: &mut NoteApp) {
             app.ui.info_notebook = None;
         }
         Prompt::Recovery { .. } => app.ui.recovery_answer = Some(yes),
+        Prompt::Confirm { command, params, .. } if yes => {
+            app.act(&command, params);
+            panes::history::fix_bin_view(app);
+        }
         _ => {}
     }
 }

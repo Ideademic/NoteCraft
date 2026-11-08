@@ -14,8 +14,14 @@
 //!
 //! URL flags: `?webgl` forces WebGL2; `?fresh` starts with a new notebook, leaving the stored one
 //! until the next save replaces it.
+//!
+//! Hosted (`?host=parent` in a same-origin `<iframe>`, or `data-host="page"` on the canvas), a
+//! page sends the notebook to edit and stores what NoteCraft saves, each notebook as one
+//! `.onepkg` ([`host`]).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+#[cfg(any(target_arch = "wasm32", test))]
+mod host;
 #[cfg(any(target_arch = "wasm32", test))]
 mod open;
 #[cfg(any(target_arch = "wasm32", test))]
@@ -25,6 +31,10 @@ mod prefs;
 
 #[cfg(target_arch = "wasm32")]
 mod browser;
+#[cfg(target_arch = "wasm32")]
+mod font_store;
+#[cfg(target_arch = "wasm32")]
+mod print;
 #[cfg(target_arch = "wasm32")]
 mod web;
 

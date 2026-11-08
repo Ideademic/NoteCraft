@@ -34,10 +34,22 @@ pub enum Icon {
     AlignLeft,
     AlignCenter,
     AlignRight,
+    Justify,
     // Tags
     ToDo,
     Important,
     Question,
+    /// Remember for later: text on a yellow highlight.
+    RememberForLater,
+    /// Definition: text on a green highlight.
+    Definition,
+    /// The Highlight tag: text on a yellow highlight with a marker.
+    HighlightTag,
+    Contact,
+    Address,
+    Phone,
+    Idea,
+    Critical,
     // Insert
     InsertSpace,
     Table,
@@ -63,6 +75,20 @@ pub enum Icon {
     Delete,
     Arrange,
     Rotate,
+    // Pictures, arrange, find (editing)
+    BringToFront,
+    BringForward,
+    SendBackward,
+    SendToBack,
+    RotateRight,
+    RotateLeft,
+    FlipHorizontal,
+    FlipVertical,
+    Crop,
+    AltText,
+    ResetPicture,
+    FindTags,
+    Templates,
     // View
     NormalView,
     FullPageView,
@@ -100,11 +126,41 @@ pub enum Icon {
     Info,
     Open,
     Export,
+    Print,
     Import,
     Options,
     About,
     Close,
     Rename,
+    // History
+    History,
+    RecycleBin,
+    PageVersions,
+    Unread,
+    MarkRead,
+    RecentEdits,
+    // Table (the Table tab)
+    InsertAbove,
+    InsertBelow,
+    InsertLeft,
+    InsertRight,
+    DeleteTable,
+    DeleteRows,
+    DeleteColumns,
+    SelectCell,
+    SelectRow,
+    SelectColumn,
+    SelectTable,
+    Borders,
+    Shading,
+    SortAscending,
+    SortDescending,
+    ConvertToText,
+    // Review
+    Spelling,
+    WordCount,
+    Language,
+    Link,
     // Window buttons
     Minimize,
     Maximize,
@@ -133,9 +189,18 @@ impl Icon {
         Icon::AlignLeft,
         Icon::AlignCenter,
         Icon::AlignRight,
+        Icon::Justify,
         Icon::ToDo,
         Icon::Important,
         Icon::Question,
+        Icon::RememberForLater,
+        Icon::Definition,
+        Icon::HighlightTag,
+        Icon::Contact,
+        Icon::Address,
+        Icon::Phone,
+        Icon::Idea,
+        Icon::Critical,
         Icon::InsertSpace,
         Icon::Table,
         Icon::Printout,
@@ -158,6 +223,19 @@ impl Icon {
         Icon::Delete,
         Icon::Arrange,
         Icon::Rotate,
+        Icon::BringToFront,
+        Icon::BringForward,
+        Icon::SendBackward,
+        Icon::SendToBack,
+        Icon::RotateRight,
+        Icon::RotateLeft,
+        Icon::FlipHorizontal,
+        Icon::FlipVertical,
+        Icon::Crop,
+        Icon::AltText,
+        Icon::ResetPicture,
+        Icon::FindTags,
+        Icon::Templates,
         Icon::NormalView,
         Icon::FullPageView,
         Icon::DockDesktop,
@@ -191,11 +269,38 @@ impl Icon {
         Icon::Info,
         Icon::Open,
         Icon::Export,
+        Icon::Print,
         Icon::Import,
         Icon::Options,
         Icon::About,
         Icon::Close,
         Icon::Rename,
+        Icon::History,
+        Icon::RecycleBin,
+        Icon::PageVersions,
+        Icon::Unread,
+        Icon::MarkRead,
+        Icon::RecentEdits,
+        Icon::InsertAbove,
+        Icon::InsertBelow,
+        Icon::InsertLeft,
+        Icon::InsertRight,
+        Icon::DeleteTable,
+        Icon::DeleteRows,
+        Icon::DeleteColumns,
+        Icon::SelectCell,
+        Icon::SelectRow,
+        Icon::SelectColumn,
+        Icon::SelectTable,
+        Icon::Borders,
+        Icon::Shading,
+        Icon::SortAscending,
+        Icon::SortDescending,
+        Icon::ConvertToText,
+        Icon::Spelling,
+        Icon::WordCount,
+        Icon::Language,
+        Icon::Link,
         Icon::Minimize,
         Icon::Maximize,
         Icon::Restore,
@@ -302,7 +407,15 @@ fn drawing(icon: Icon, style: Style) -> Drawing {
         Icon::AlignLeft => D::AlignLeft,
         Icon::AlignCenter => D::AlignCenter,
         Icon::AlignRight => D::AlignRight,
+        Icon::Justify => D::Justify,
         Icon::Table => D::Table,
+        Icon::InsertAbove => D::InsertAbove,
+        Icon::InsertBelow => D::InsertBelow,
+        Icon::InsertLeft => D::InsertLeft,
+        Icon::InsertRight => D::InsertRight,
+        Icon::DeleteTable => D::DeleteTable,
+        Icon::Borders => D::Borders,
+        Icon::Shading => D::Shading,
         Icon::Printout => D::Object,
         Icon::Picture => D::Picture,
         Icon::Date => D::DateTime,
@@ -317,6 +430,19 @@ fn drawing(icon: Icon, style: Style) -> Drawing {
         Icon::InkToText => D::InkToText,
         Icon::Shapes => D::Shapes,
         Icon::Rotate => D::Rotate,
+        Icon::BringToFront => D::BringToFront,
+        Icon::BringForward => D::BringForward,
+        Icon::SendBackward => D::SendBackward,
+        Icon::SendToBack => D::SendToBack,
+        Icon::RotateRight => D::RotateRight,
+        Icon::RotateLeft => D::RotateLeft,
+        Icon::FlipHorizontal => D::FlipH,
+        Icon::FlipVertical => D::FlipV,
+        Icon::Crop => D::Crop,
+        Icon::AltText => D::AltText,
+        Icon::ResetPicture => D::ResetPicture,
+        Icon::FindTags => D::SelectionPane,
+        Icon::Templates => D::Layout,
         Icon::NormalView => D::ViewNormal,
         Icon::FullPageView => D::FitToWindow,
         Icon::PageColor => D::FormatBackground,
@@ -340,9 +466,14 @@ fn drawing(icon: Icon, style: Style) -> Drawing {
         Icon::Info => D::Info,
         Icon::Open => D::OpenFolder,
         Icon::Export => D::Export,
+        Icon::Print => D::Print,
         Icon::Options => D::Settings,
         Icon::About => D::Help,
         Icon::Close => D::Close,
+        Icon::Spelling => D::Spelling,
+        Icon::WordCount => D::SlideNumber,
+        Icon::Language => D::Language,
+        Icon::Link => D::Link,
         _ => return extra_drawing(icon, style),
     };
     Drawing::Deck(d)
@@ -353,6 +484,14 @@ fn extra_drawing(icon: Icon, style: Style) -> Drawing {
         Icon::ToDo => Extra::Checkbox,
         Icon::Important => Extra::Important,
         Icon::Question => Extra::Question,
+        Icon::RememberForLater => Extra::Marked(TAG_YELLOW, false),
+        Icon::Definition => Extra::Marked(TAG_GREEN, false),
+        Icon::HighlightTag => Extra::Marked(TAG_YELLOW, true),
+        Icon::Contact => Extra::Contact,
+        Icon::Address => Extra::Address,
+        Icon::Phone => Extra::Phone,
+        Icon::Idea => Extra::Idea,
+        Icon::Critical => Extra::Critical,
         Icon::InsertSpace => Extra::InsertSpace,
         Icon::Attach => Extra::Attach,
         Icon::DateTime => Extra::DateTime,
@@ -372,9 +511,76 @@ fn extra_drawing(icon: Icon, style: Style) -> Drawing {
         Icon::SectionGroup => Extra::SectionGroup,
         Icon::Import => Extra::Import,
         Icon::Rename => Extra::Rename,
+        Icon::History => Extra::History,
+        Icon::RecycleBin => Extra::RecycleBin,
+        Icon::PageVersions => Extra::PageVersions,
+        Icon::Unread => Extra::Unread,
+        Icon::MarkRead => Extra::MarkRead,
+        Icon::RecentEdits => Extra::RecentEdits,
+        Icon::DeleteRows => Extra::DeleteRows,
+        Icon::DeleteColumns => Extra::DeleteColumns,
+        Icon::SelectCell => Extra::SelectCell,
+        Icon::SelectRow => Extra::SelectRow,
+        Icon::SelectColumn => Extra::SelectColumn,
+        Icon::SelectTable => Extra::SelectTable,
+        Icon::SortAscending => Extra::SortAscending,
+        Icon::SortDescending => Extra::SortDescending,
+        Icon::ConvertToText => Extra::ConvertToText,
         _ => return Drawing::Window,
     };
     Drawing::Extra(x)
+}
+
+/// The highlight tags' colours (Remember for later and Highlight; Definition).
+const TAG_YELLOW: Color32 = Color32::from_rgb(0xFF, 0xF2, 0x00);
+const TAG_GREEN: Color32 = Color32::from_rgb(0x92, 0xD0, 0x50);
+
+/// The icon a tag shows in menus and before tagged text; `None` for To Do, which draws its own
+/// check box with its tick.
+pub fn tag_icon(tag: notecraft_doc::Tag) -> Option<Icon> {
+    use notecraft_doc::Tag;
+    Some(match tag {
+        Tag::ToDo { .. } => return None,
+        Tag::Important => Icon::Important,
+        Tag::Question => Icon::Question,
+        Tag::RememberForLater => Icon::RememberForLater,
+        Tag::Definition => Icon::Definition,
+        Tag::Highlight => Icon::HighlightTag,
+        Tag::Contact => Icon::Contact,
+        Tag::Address => Icon::Address,
+        Tag::Phone => Icon::Phone,
+        Tag::Idea => Icon::Idea,
+        Tag::Critical => Icon::Critical,
+    })
+}
+
+/// A list bullet of `style` centred at `c`, `r` its radius: the canvas's markers and the
+/// Bullets menu draw the same shapes.
+pub fn paint_bullet(painter: &Painter, c: Pos2, r: f32, style: notecraft_doc::ListStyle, color: Color32) {
+    use notecraft_doc::ListStyle;
+    let w = (r * 0.4).max(1.0);
+    match style {
+        ListStyle::Circle => {
+            painter.circle_stroke(c, r - 0.5, Stroke::new((r * 0.35).max(1.0), color));
+        }
+        ListStyle::Square => {
+            painter.rect_filled(Rect::from_center_size(c, vec2(r * 1.7, r * 1.7)), 0.0, color);
+        }
+        ListStyle::Dash => {
+            painter.line_segment([pos2(c.x - r * 1.4, c.y), pos2(c.x + r * 1.4, c.y)], Stroke::new(w, color));
+        }
+        ListStyle::Arrow => {
+            // A solid arrowhead pointing at the text, in two convex halves.
+            let s = r * 1.5;
+            let (top, tip, bottom, notch) =
+                (pos2(c.x - s * 0.7, c.y - s), pos2(c.x + s * 0.9, c.y), pos2(c.x - s * 0.7, c.y + s), pos2(c.x - s * 0.2, c.y));
+            painter.add(Shape::convex_polygon(vec![top, tip, notch], color, Stroke::NONE));
+            painter.add(Shape::convex_polygon(vec![notch, tip, bottom], color, Stroke::NONE));
+        }
+        _ => {
+            painter.circle_filled(c, r, color);
+        }
+    }
 }
 
 /// A notebook icon in the notebook's own colour (the notebook pane, the File menu lists).

@@ -4,7 +4,7 @@ members = ["crates/*", "apps/*", "xtask"]
 default-members = ["crates/*", "apps/notecraft", "apps/notecraft-cli", "xtask"]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"
@@ -21,8 +21,10 @@ notecraft-one = { path = "crates/one" }
 notecraft-onepkg = { path = "crates/onepkg" }
 notecraft-formats = { path = "crates/formats" }
 notecraft-printout = { path = "crates/printout" }
+notecraft-pdf = { path = "crates/pdf" }
 notecraft-engine = { path = "crates/engine" }
 notecraft-ui-egui = { path = "crates/ui-egui" }
+notecraft-fonts = { path = "crates/fonts" }
 
 # foundation
 thiserror = "2"
@@ -45,20 +47,51 @@ cab = "0.6"
 # CRCs (RFC 3309 for .one, MsoCrc32 for .onetoc2) are hand-rolled in notecraft-onestore from the
 # public specs: no crate needed.
 craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f9049f9270955caffb5bee5997aebf7", version = "=0.1.0", default-features = false, features = ["raster", "write"] }
+# PDF export (notecraft-pdf): text is laid out with epaint's CPU fonts (the canvas's line
+# breaks) without egui; skrifa (MIT OR Apache-2.0, epaint's version) maps characters to glyphs
+# for the PDF text; installed fonts come from craft-font-catalog at craft-ui's rev.
+epaint = { version = "0.37", default-features = false }
+skrifa = { version = "0.44", default-features = false, features = ["std"] }
+# The shaper epaint lays text out with (MIT), at its version: the PDF writes the same glyphs
+# (ligatures, kerning, marks) the canvas draws.
+harfrust = "0.12"
+# Geometry types of craft-pdf's interpreter (tests that read exported PDFs back).
+kurbo = "0.13"
+craft-font-catalog = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }
+# Desktop printing: CUPS `lp` and the Windows spooler, at craft-ui's rev (its printing panel).
+craft-print = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }
+
+# fonts (notecraft-fonts: craft-font-catalog and skrifa above serve it too)
+# WOFF / WOFF2 fonts added in the browser (MIT); its brotli decoder, used ahead of it so a
+# hostile file's glyph point counts are checked first (BSD-3-Clause OR MIT; already in the lock).
+wuff = "0.2.9"
+brotli-decompressor = "5"
 
 # ui (same versions and craft-libs revs as WordCraft)
 egui = "0.37"
 egui_extras = { version = "0.37", default-features = false }
 eframe = { version = "0.37", default-features = false }
 egui_kittest = "0.37"
+# egui's bundled faces, as real font files in tests.
+epaint_default_fonts = "0.37"
 # A clock that works on native and in the browser (`performance.now()`, `Date.now()`).
 web-time = "1.1"
-rfd = "0.17"
 arboard = { version = "3.7", default-features = false, features = ["wayland-data-control"] }
 craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }
 craft-i18n = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }
 craft-window = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0", features = ["egui"] }
+# Release checks, the update prompt and the self-update, at WordCraft's rev (desktop only).
+craft-update = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f9049f9270955caffb5bee5997aebf7", version = "=0.1.0", features = ["egui"] }
+# Native file dialogs that never block the event loop (rfd's modal loop re-enters winit on macOS
+# and aborts the app). Desktop only.
+craft-dialogs = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f9049f9270955caffb5bee5997aebf7", version = "=0.1.0" }
 craft-web-host = { git = "https://github.com/storytold/craft-libs", rev = "2e2312ddaf21bc3d85cd3395d0955c7d239306f6", version = "0.1.0" }
+# Spelling (Review tab), at craft-web-host's rev. English comes from SCOWL when the build has
+# craft-i18n's language data (CRAFT_I18N_DIR), else from the built-in public-domain Moby list;
+# other languages from installed Hunspell dictionaries. Builds for wasm32.
+craft-proof = { git = "https://github.com/storytold/craft-libs", rev = "2e2312ddaf21bc3d85cd3395d0955c7d239306f6" }
+# Desktop: open attachments and links with the system's app for them (MIT; already in the lock).
+open = "5"
 
 # web
 js-sys = "0.3"

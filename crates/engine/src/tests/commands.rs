@@ -81,7 +81,7 @@ fn typing_commands() {
     assert_eq!(out.value["caret"], json!({"para": 1, "char": 0}));
     assert_eq!(outline(&s, o).text(), "hello\n wo");
     s.run(ids::TEXT_INSERT, &json!({"outline": id, "at": [1, 0], "text": "B", "style": {"bold": true, "color": "#ff0000"}})).unwrap();
-    let run = &outline(&s, o).paragraphs[1].runs[0];
+    let run = &outline(&s, o).para(1).unwrap().runs[0];
     assert!(run.bold && run.color == Color::parse_hex("#ff0000"));
     // Backspace at the start of a paragraph joins it to the one above.
     let out = s.run(ids::TEXT_DELETE, &json!({"outline": id, "at": [1, 0]})).unwrap();
@@ -111,29 +111,29 @@ fn character_formatting_toggles_like_word() {
     s.run(ids::FORMAT_BOLD, &sel(o, (0, 0), (0, 5))).unwrap();
     // Part bold: applies to all.
     s.run(ids::FORMAT_BOLD, &all).unwrap();
-    assert!(outline(&s, o).paragraphs.iter().all(|p| p.runs.iter().all(|r| r.bold)));
+    assert!(outline(&s, o).paragraphs().all(|p| p.runs.iter().all(|r| r.bold)));
     // All bold: removes.
     s.run(ids::FORMAT_BOLD, &all).unwrap();
-    assert!(outline(&s, o).paragraphs.iter().all(|p| p.runs.iter().all(|r| !r.bold)));
+    assert!(outline(&s, o).paragraphs().all(|p| p.runs.iter().all(|r| !r.bold)));
     // A caret in a word formats the word.
     s.run(ids::FORMAT_ITALIC, &sel(o, (0, 7), (0, 7))).unwrap();
-    let runs = &outline(&s, o).paragraphs[0].runs;
+    let runs = &outline(&s, o).para(0).unwrap().runs;
     assert_eq!(runs.iter().map(|r| (r.text.as_str(), r.italic)).collect::<Vec<_>>(), vec![("alpha ", false), ("beta", true)]);
     // A caret on a space: nothing to format, the canvas keeps it for typing.
     let out = s.run(ids::FORMAT_UNDERLINE, &sel(o, (0, 5), (0, 5))).unwrap();
     assert!(!out.changed && out.value["collapsed"] == json!(true));
     s.run(ids::FORMAT_STRIKE, &with(all.clone(), json!({"value": true}))).unwrap();
     s.run(ids::FORMAT_STRIKE, &with(all.clone(), json!({"value": true}))).unwrap();
-    assert!(outline(&s, o).paragraphs[1].runs[0].strike, "value sets instead of toggling");
+    assert!(outline(&s, o).para(1).unwrap().runs[0].strike, "value sets instead of toggling");
     s.run(ids::FORMAT_HIGHLIGHT, &all).unwrap();
-    assert_eq!(outline(&s, o).paragraphs[1].runs[0].highlight, Some(Color::HIGHLIGHT_YELLOW));
+    assert_eq!(outline(&s, o).para(1).unwrap().runs[0].highlight, Some(Color::HIGHLIGHT_YELLOW));
     s.run(ids::FORMAT_HIGHLIGHT, &all).unwrap();
-    assert_eq!(outline(&s, o).paragraphs[1].runs[0].highlight, None, "the highlight button toggles");
+    assert_eq!(outline(&s, o).para(1).unwrap().runs[0].highlight, None, "the highlight button toggles");
     s.run(ids::FORMAT_HIGHLIGHT, &with(all.clone(), json!({"color": "#00ff00"}))).unwrap();
     s.run(ids::FORMAT_COLOR, &with(sel(o, (1, 0), (1, 2)), json!({"color": "#123456"}))).unwrap();
     s.run(ids::FORMAT_SIZE, &with(all.clone(), json!({"size": 1000}))).unwrap();
     s.run(ids::FORMAT_FONT, &with(all.clone(), json!({"font": "Calibri"}))).unwrap();
-    let p1 = &outline(&s, o).paragraphs[1];
+    let p1 = &outline(&s, o).para(1).unwrap();
     assert_eq!(p1.runs[0].color, Color::parse_hex("#123456"));
     assert_eq!(p1.runs[0].size, Some(crate::cmd::text::MAX_FONT_SIZE));
     assert_eq!(p1.runs[1].font.as_deref(), Some("Calibri"));
@@ -146,7 +146,7 @@ fn character_formatting_toggles_like_word() {
     let f = s.run(ids::TEXT_FORMAT_AT, &sel(o, (0, 8), (0, 8))).unwrap().value;
     assert_eq!(f["italic"], json!(true));
     s.run(ids::FORMAT_CLEAR, &all).unwrap();
-    assert!(outline(&s, o).paragraphs.iter().all(|p| p.runs.len() == 1 && !p.runs[0].strike && p.runs[0].size.is_none()));
+    assert!(outline(&s, o).paragraphs().all(|p| p.runs.len() == 1 && !p.runs[0].strike && p.runs[0].size.is_none()));
     // Unchanged when nothing would change.
     let depth = s.undo_depth();
     s.run(ids::FORMAT_COLOR, &with(all, json!({"color": null}))).unwrap();
@@ -158,29 +158,96 @@ fn paragraph_formatting() {
     let (mut s, o) = session_with("one\ntwo\nthree");
     let first_two = json!({"outline": o.to_string(), "paras": [0, 1]});
     s.run(ids::FORMAT_BULLETS, &first_two).unwrap();
-    assert_eq!(outline(&s, o).paragraphs.iter().map(|p| p.list).collect::<Vec<_>>(), vec![Some(ListKind::Bullet), Some(ListKind::Bullet), None]);
+    assert_eq!(outline(&s, o).paragraphs().map(|p| p.list).collect::<Vec<_>>(), vec![Some(ListKind::Bullet), Some(ListKind::Bullet), None]);
     s.run(ids::FORMAT_BULLETS, &first_two).unwrap();
-    assert!(outline(&s, o).paragraphs.iter().all(|p| p.list.is_none()), "toggles off");
+    assert!(outline(&s, o).paragraphs().all(|p| p.list.is_none()), "toggles off");
     s.run(ids::FORMAT_NUMBERING, &sel(o, (1, 1), (2, 0))).unwrap();
-    assert_eq!(outline(&s, o).paragraphs[2].list, Some(ListKind::Numbered));
+    assert_eq!(outline(&s, o).para(2).unwrap().list, Some(ListKind::Numbered));
     s.run(ids::FORMAT_INDENT, &first_two).unwrap();
     s.run(ids::FORMAT_INDENT, &first_two).unwrap();
     s.run(ids::FORMAT_OUTDENT, &json!({"outline": o.to_string(), "para": 0})).unwrap();
-    assert_eq!(outline(&s, o).paragraphs.iter().map(|p| p.indent).collect::<Vec<_>>(), vec![1, 2, 0]);
+    assert_eq!(outline(&s, o).paragraphs().map(|p| p.indent).collect::<Vec<_>>(), vec![1, 2, 0]);
     s.run(ids::FORMAT_STYLE, &json!({"outline": o.to_string(), "para": 2, "style": "heading2"})).unwrap();
-    assert_eq!(outline(&s, o).paragraphs[2].style, ParaStyle::Heading2);
+    assert_eq!(outline(&s, o).para(2).unwrap().style, ParaStyle::Heading2);
     assert!(s.run(ids::FORMAT_STYLE, &json!({"outline": o.to_string(), "style": "fancy"})).is_err());
     s.run(ids::FORMAT_TAG_TODO, &json!({"outline": o.to_string(), "para": 1})).unwrap();
     s.run(ids::FORMAT_TOGGLE_TODO, &json!({"outline": o.to_string(), "para": 1})).unwrap();
-    assert_eq!(outline(&s, o).paragraphs[1].tag, Some(Tag::ToDo { checked: true }));
+    assert_eq!(outline(&s, o).para(1).unwrap().tag, Some(Tag::ToDo { checked: true }));
     // Tagging all three keeps the checked one checked; tagging again removes all.
     s.run(ids::FORMAT_TAG_TODO, &json!({"outline": o.to_string()})).unwrap();
-    let tags: Vec<_> = outline(&s, o).paragraphs.iter().map(|p| p.tag).collect();
+    let tags: Vec<_> = outline(&s, o).paragraphs().map(|p| p.tag).collect();
     assert_eq!(tags, vec![Some(Tag::ToDo { checked: false }), Some(Tag::ToDo { checked: true }), Some(Tag::ToDo { checked: false })]);
     s.run(ids::FORMAT_TOGGLE_TODO, &json!({"outline": o.to_string(), "checked": true})).unwrap();
-    assert!(outline(&s, o).paragraphs.iter().all(|p| p.tag == Some(Tag::ToDo { checked: true })));
+    assert!(outline(&s, o).paragraphs().all(|p| p.tag == Some(Tag::ToDo { checked: true })));
     s.run(ids::FORMAT_TAG_TODO, &json!({"outline": o.to_string()})).unwrap();
-    assert!(outline(&s, o).paragraphs.iter().all(|p| p.tag.is_none()));
+    assert!(outline(&s, o).paragraphs().all(|p| p.tag.is_none()));
+}
+
+#[test]
+fn list_styles_are_kept_and_toggle_per_style() {
+    use notecraft_doc::ListStyle;
+    let (mut s, o) = session_with("one\ntwo\nthree");
+    let all = json!({"outline": o.to_string()});
+    s.run(ids::FORMAT_BULLETS, &with(all.clone(), json!({"style": "square"}))).unwrap();
+    let styles: Vec<_> = outline(&s, o).paragraphs().map(|p| p.marker_style()).collect();
+    assert_eq!(styles, vec![Some(ListStyle::Square); 3]);
+    // Another style switches style instead of toggling the list off.
+    s.run(ids::FORMAT_BULLETS, &with(all.clone(), json!({"style": "arrow"}))).unwrap();
+    assert!(outline(&s, o).paragraphs().all(|p| p.list == Some(ListKind::Bullet) && p.marker_style() == Some(ListStyle::Arrow)));
+    // The same style again toggles it off.
+    s.run(ids::FORMAT_BULLETS, &with(all.clone(), json!({"style": "arrow"}))).unwrap();
+    assert!(outline(&s, o).paragraphs().all(|p| p.list.is_none() && p.list_style.is_none()));
+    // Numbering by name or by sample; a bullet style isn't a numbering style.
+    s.run(ids::FORMAT_NUMBERING, &with(all.clone(), json!({"style": "I."}))).unwrap();
+    assert!(outline(&s, o).paragraphs().all(|p| p.marker_style() == Some(ListStyle::UpperRoman)));
+    assert!(matches!(s.run(ids::FORMAT_NUMBERING, &with(all.clone(), json!({"style": "disc"}))), Err(CmdError::Params(_))));
+    assert!(matches!(s.run(ids::FORMAT_BULLETS, &with(all.clone(), json!({"style": 5}))), Err(CmdError::Params(_))));
+    // Enter carries the style to the new paragraph.
+    s.run(ids::TEXT_SPLIT_PARAGRAPH, &json!({"outline": o.to_string(), "at": {"para": 2, "char": 5}})).unwrap();
+    assert_eq!(outline(&s, o).para(3).unwrap().marker_style(), Some(ListStyle::UpperRoman));
+    // The button without a style toggles off whatever numbering style is there.
+    s.run(ids::FORMAT_NUMBERING, &all).unwrap();
+    assert!(outline(&s, o).paragraphs().all(|p| p.list.is_none()));
+}
+
+#[test]
+fn alignment_and_tags() {
+    use notecraft_doc::Align;
+    let (mut s, o) = session_with("one\ntwo\nthree");
+    s.run(ids::FORMAT_ALIGN, &json!({"outline": o.to_string(), "paras": [0, 1], "align": "center"})).unwrap();
+    let aligns: Vec<_> = outline(&s, o).paragraphs().map(|p| p.align).collect();
+    assert_eq!(aligns, vec![Align::Center, Align::Center, Align::Left]);
+    s.run(ids::FORMAT_ALIGN, &json!({"outline": o.to_string(), "para": 2, "align": "justify"})).unwrap();
+    assert_eq!(outline(&s, o).para(2).unwrap().align, Align::Justify);
+    let same = s.run(ids::FORMAT_ALIGN, &json!({"outline": o.to_string(), "para": 2, "align": "justify"})).unwrap();
+    assert!(!same.changed, "nothing to change");
+    assert!(matches!(s.run(ids::FORMAT_ALIGN, &json!({"outline": o.to_string(), "align": "middle"})), Err(CmdError::Params(_))));
+    assert!(matches!(s.run(ids::FORMAT_ALIGN, &json!({"outline": o.to_string()})), Err(CmdError::Params(_))));
+    s.run(ids::TEXT_SPLIT_PARAGRAPH, &json!({"outline": o.to_string(), "at": {"para": 0, "char": 3}})).unwrap();
+    assert_eq!(outline(&s, o).para(1).unwrap().align, Align::Center, "Enter keeps the alignment");
+
+    for t in Tag::ALL {
+        s.run(ids::FORMAT_TAG, &json!({"outline": o.to_string(), "para": 0, "tag": t.name()})).unwrap();
+        assert_eq!(outline(&s, o).para(0).unwrap().tag, Some(t), "{t:?}");
+    }
+    // Toggling the same tag removes it; a label works as a name.
+    s.run(ids::FORMAT_TAG, &json!({"outline": o.to_string(), "para": 0, "tag": "Critical"})).unwrap();
+    assert_eq!(outline(&s, o).para(0).unwrap().tag, None);
+    s.run(ids::FORMAT_TAG, &json!({"outline": o.to_string(), "tag": "Remember for later"})).unwrap();
+    assert!(outline(&s, o).paragraphs().all(|p| p.tag == Some(Tag::RememberForLater)));
+    // A checked To Do stays checked when tagged To Do again with `value: true`.
+    s.run(ids::FORMAT_TAG, &json!({"outline": o.to_string(), "para": 1, "tag": "toDo"})).unwrap();
+    s.run(ids::FORMAT_TOGGLE_TODO, &json!({"outline": o.to_string(), "para": 1})).unwrap();
+    s.run(ids::FORMAT_TAG, &json!({"outline": o.to_string(), "para": 1, "tag": "toDo", "value": true})).unwrap();
+    assert_eq!(outline(&s, o).para(1).unwrap().tag, Some(Tag::ToDo { checked: true }));
+    // null removes every tag.
+    s.run(ids::FORMAT_TAG, &json!({"outline": o.to_string(), "tag": null})).unwrap();
+    assert!(outline(&s, o).paragraphs().all(|p| p.tag.is_none()));
+    assert!(matches!(s.run(ids::FORMAT_TAG, &json!({"outline": o.to_string(), "tag": "sparkly"})), Err(CmdError::Params(_))));
+    assert!(matches!(s.run(ids::FORMAT_TAG, &json!({"outline": o.to_string()})), Err(CmdError::Params(_))));
+    // Every Mod+N shortcut names a tag, To Do first.
+    assert_eq!(crate::cmd::format::tag_key(Tag::Phone), Some("Mod+9"));
+    assert_eq!(crate::cmd::format::tag_key(Tag::Idea), None);
 }
 
 #[test]

@@ -1,7 +1,7 @@
 //! Headless screenshots of the whole NoteCraft window, rendered offscreen with wgpu (works with
 //! a locked screen or no display).
 //!
-//! `cargo run -p notecraft-ui-egui --example ui_shot -- OUT_DIR [light|dark|all]`
+//! `cargo run -p notecraft-ui-egui --example ui_shot -- OUT_DIR [light|dark|all] [NAME_PREFIX]`
 //!
 //! Writes `main-light.png`, `main-dark.png`, one per ribbon tab (`tab-insert-light.png`…), the
 //! backstage pages, the collapsed panes, and the ribbon's layouts and display options
@@ -9,6 +9,11 @@
 
 use notecraft_engine::Session;
 use notecraft_ui_egui::{Appearance, NoteApp, Services};
+
+/// An optional third argument: only the shots whose names start with it (`history`).
+fn args_filter() -> Option<String> {
+    std::env::args().nth(3)
+}
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -21,7 +26,16 @@ fn main() {
         _ => vec![(Appearance::Light, "light"), (Appearance::Dark, "dark")],
     };
     for (appearance, name) in themes {
-        let shots = notecraft_ui_egui::app::shots::SHOTS.iter().chain(notecraft_ui_egui::app::shots::RIBBON_SHOTS.iter());
+        let filter = args_filter();
+        let shots = notecraft_ui_egui::app::shots::SHOTS
+            .iter()
+            .chain(notecraft_ui_egui::app::shots::RIBBON_SHOTS.iter())
+            .chain(notecraft_ui_egui::app::shots::PLATFORM_SHOTS.iter())
+            .chain(notecraft_ui_egui::app::shots::HISTORY_SHOTS.iter())
+            .chain(notecraft_ui_egui::app::shots::FONT_SHOTS.iter())
+            .chain(notecraft_ui_egui::app::shots::EDITING_SHOTS.iter())
+            .chain(notecraft_ui_egui::app::shots::REVIEW_SHOTS.iter())
+            .filter(|s| filter.as_ref().is_none_or(|f| s.starts_with(f.as_str())));
         for &shot in shots {
             let mut app = NoteApp::new(Session::new_default(), Services::default());
             app.ui.prefs.appearance = appearance;
@@ -46,6 +60,69 @@ fn main() {
                 use egui_kittest::kittest::Queryable;
                 harness.get_by_label(notecraft_ui_egui::ribbon::display::OPTIONS_LABEL).click();
                 harness.run_steps(4);
+            }
+            if notecraft_ui_egui::app::shots::FONT_SHOTS.contains(&shot) {
+                // The installed fonts are read on a background thread: wait for them.
+                notecraft_ui_egui::fonts::library().wait_until_ready();
+                harness.run_steps(4);
+            }
+            if shot.ends_with("font-box") {
+                use egui_kittest::kittest::Queryable;
+                harness.get_by_label("Font").click();
+                // Twelve previews a frame: enough frames for the rows in view.
+                harness.run_steps(12);
+            }
+            if shot == "options-language-menu" {
+                use egui_kittest::kittest::Queryable;
+                harness.get_by_label(notecraft_ui_egui::backstage::options::LANGUAGE_LABEL).click();
+                harness.run_steps(4);
+            }
+            if notecraft_ui_egui::app::shots::REVIEW_SHOTS.contains(&shot) {
+                // The spelling check runs on a background thread: wait for its marks.
+                for _ in 0..200 {
+                    harness.step();
+                    if !harness.state().canvas.review.marks.is_empty() {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                harness.run_steps(2);
+                if let Some(click) = notecraft_ui_egui::app::shots::review_click(harness.state(), shot) {
+                    let st = harness.state();
+                    let p = match click {
+                        notecraft_ui_egui::app::shots::ReviewClick::Text(o, para, ch) => notecraft_ui_egui::canvas::caret_screen_rect(
+                            &harness.ctx,
+                            &st.canvas,
+                            &st.session,
+                            &st.tokens,
+                            o,
+                            notecraft_engine::TextPos::new(para, ch),
+                        )
+                        .map(|r| egui::pos2(r.left() + 2.0, r.center().y)),
+                        notecraft_ui_egui::app::shots::ReviewClick::Page(x, y) => notecraft_ui_egui::canvas::page_to_screen(&st.canvas, x, y),
+                    };
+                    if let Some(p) = p {
+                        harness.event(egui::Event::PointerMoved(p));
+                        harness.step();
+                        for pressed in [true, false] {
+                            harness.event(egui::Event::PointerButton {
+                                pos: p,
+                                button: egui::PointerButton::Secondary,
+                                pressed,
+                                modifiers: egui::Modifiers::NONE,
+                            });
+                            harness.step();
+                        }
+                        harness.run_steps(4);
+                    }
+                }
+            }
+            if shot == "update-up-to-date" {
+                // The check runs on its own thread: give it a moment, then draw its answer.
+                for _ in 0..50 {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    harness.step();
+                }
             }
             let path = out.join(format!("{shot}-{name}.png"));
             match harness.render() {

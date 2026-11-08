@@ -24,6 +24,14 @@ NoteCraft contains no ArtCraft or Storyteller names, logos or other brand assets
 references like this one. If you fork it, keep it that way: don't add ArtCraft logos, and remove
 any you find.
 
+Fonts
+
+The repository holds no font files. Builds made with CRAFT_FONTS_DIR (a checkout of
+https://github.com/storytold/craft-fonts) embed the metric-compatible faces of its
+fonts/latin-manifest.txt that NoteCraft substitutes for missing Office fonts: Carlito, Caladea and
+Liberation Sans, Serif and Mono (OFL-1.1; crates/fonts/build.rs), listed with their authors in
+craft-fonts' ATTRIBUTION.md. Packages built that way carry each font's OFL.txt.
+
 Trademarks
 
 Microsoft, OneNote and Office are trademarks of the Microsoft group of companies. NoteCraft is an

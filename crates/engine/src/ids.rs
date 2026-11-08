@@ -46,6 +46,8 @@ pub const FORMAT_BULLETS: &str = "format.bullets";
 pub const FORMAT_NUMBERING: &str = "format.numbering";
 pub const FORMAT_INDENT: &str = "format.indent";
 pub const FORMAT_OUTDENT: &str = "format.outdent";
+pub const FORMAT_ALIGN: &str = "format.align";
+pub const FORMAT_TAG: &str = "format.tag";
 pub const FORMAT_TAG_TODO: &str = "format.tag.todo";
 pub const FORMAT_TOGGLE_TODO: &str = "format.toggleTodo";
 pub const FORMAT_CLEAR: &str = "format.clear";
@@ -75,6 +77,7 @@ pub const FILE_EXPORT_ONEPKG: &str = "file.exportOnepkg";
 pub const FILE_EXPORT_HTML: &str = "file.exportHtml";
 pub const FILE_EXPORT_MARKDOWN: &str = "file.exportMarkdown";
 pub const FILE_EXPORT_TEXT: &str = "file.exportText";
+pub const FILE_EXPORT_PDF: &str = "file.exportPdf";
 pub const FILE_IMPORT_ONEPKG: &str = "file.importOnepkg";
 pub const FILE_IMPORT_ONE: &str = "file.importOne";
 
@@ -83,6 +86,100 @@ pub const NAV_SECTION: &str = "nav.section";
 pub const NAV_PAGE: &str = "nav.page";
 
 pub const SEARCH: &str = "search";
+
+pub const HISTORY_RECYCLE_BIN: &str = "history.recycleBin";
+pub const HISTORY_RESTORE: &str = "history.restore";
+pub const HISTORY_DELETE_FOREVER: &str = "history.deleteForever";
+pub const HISTORY_EMPTY_RECYCLE_BIN: &str = "history.emptyRecycleBin";
+pub const HISTORY_VERSIONS: &str = "history.versions";
+pub const HISTORY_VIEW_VERSION: &str = "history.viewVersion";
+pub const HISTORY_RESTORE_VERSION: &str = "history.restoreVersion";
+pub const HISTORY_DELETE_VERSION: &str = "history.deleteVersion";
+pub const HISTORY_DELETE_ALL_VERSIONS: &str = "history.deleteAllVersions";
+pub const HISTORY_SHOW_VERSIONS: &str = "history.showVersions";
+pub const HISTORY_DISABLE: &str = "history.disableHistory";
+pub const HISTORY_MARK_READ: &str = "history.markRead";
+pub const HISTORY_MARK_UNREAD: &str = "history.markUnread";
+pub const HISTORY_TOGGLE_READ: &str = "history.toggleRead";
+pub const HISTORY_NEXT_UNREAD: &str = "history.nextUnread";
+pub const HISTORY_RECENT_EDITS: &str = "history.recentEdits";
+
+pub const INSERT_TABLE: &str = "insert.table";
+pub const TABLE_FROM_TEXT: &str = "table.fromText";
+pub const TABLE_INSERT_ROW_ABOVE: &str = "table.insertRowAbove";
+pub const TABLE_INSERT_ROW_BELOW: &str = "table.insertRowBelow";
+pub const TABLE_INSERT_COLUMN_LEFT: &str = "table.insertColumnLeft";
+pub const TABLE_INSERT_COLUMN_RIGHT: &str = "table.insertColumnRight";
+pub const TABLE_DELETE_ROW: &str = "table.deleteRow";
+pub const TABLE_DELETE_COLUMN: &str = "table.deleteColumn";
+pub const TABLE_DELETE: &str = "table.deleteTable";
+pub const TABLE_SELECT_CELL: &str = "table.selectCell";
+pub const TABLE_SELECT_ROW: &str = "table.selectRow";
+pub const TABLE_SELECT_COLUMN: &str = "table.selectColumn";
+pub const TABLE_SELECT_TABLE: &str = "table.selectTable";
+pub const TABLE_SET_COLUMN_WIDTH: &str = "table.setColumnWidth";
+pub const TABLE_SHADING: &str = "table.shading";
+pub const TABLE_BORDERS: &str = "table.borders";
+pub const TABLE_SORT: &str = "table.sort";
+pub const TABLE_CONVERT_TO_TEXT: &str = "table.convertToText";
+pub const PICTURE_ROTATE: &str = "picture.rotate";
+pub const PICTURE_FLIP: &str = "picture.flip";
+pub const PICTURE_CROP: &str = "picture.crop";
+pub const PICTURE_ALT_TEXT: &str = "picture.altText";
+pub const PICTURE_RESET: &str = "picture.reset";
+
+pub const ARRANGE_BRING_TO_FRONT: &str = "arrange.bringToFront";
+pub const ARRANGE_BRING_FORWARD: &str = "arrange.bringForward";
+pub const ARRANGE_SEND_BACKWARD: &str = "arrange.sendBackward";
+pub const ARRANGE_SEND_TO_BACK: &str = "arrange.sendToBack";
+
+pub const INK_ROTATE: &str = "ink.rotate";
+pub const INK_FLIP: &str = "ink.flip";
+
+pub const PAGE_INSERT_SPACE: &str = "page.insertSpace";
+
+pub const TEXT_FIND: &str = "text.find";
+pub const TEXT_REPLACE: &str = "text.replace";
+
+pub const TAGS_SUMMARY: &str = "tags.summary";
+
+pub const FORMAT_PAINTER_PICK: &str = "format.painterPick";
+pub const FORMAT_PAINTER_APPLY: &str = "format.painterApply";
+
+pub const EDIT_COPY: &str = "edit.copy";
+pub const EDIT_CUT: &str = "edit.cut";
+pub const EDIT_PASTE: &str = "edit.paste";
+pub const EDIT_PASTE_PICTURE: &str = "edit.pastePicture";
+
+pub const TEMPLATE_LIST: &str = "template.list";
+pub const TEMPLATE_SAVE_CURRENT: &str = "template.saveCurrent";
+pub const TEMPLATE_DELETE: &str = "template.delete";
+pub const PAGE_NEW_FROM_TEMPLATE: &str = "page.newFromTemplate";
+pub const SECTION_DEFAULT_TEMPLATE: &str = "section.defaultTemplate";
+
+pub const VIEW_HIDE_PAGE_TITLE: &str = "view.hidePageTitle";
+pub const PROOF_CHECK: &str = "proof.check";
+pub const PROOF_SUGGESTIONS: &str = "proof.suggestions";
+pub const PROOF_APPLY: &str = "proof.apply";
+pub const PROOF_CHANGE_ALL: &str = "proof.changeAll";
+pub const PROOF_IGNORE: &str = "proof.ignore";
+pub const PROOF_IGNORE_ALL: &str = "proof.ignoreAll";
+pub const PROOF_ADD_TO_DICTIONARY: &str = "proof.addToDictionary";
+pub const PROOF_REMOVE_FROM_DICTIONARY: &str = "proof.removeFromDictionary";
+pub const PROOF_DICTIONARY: &str = "proof.dictionary";
+pub const PROOF_SET_LANGUAGE: &str = "proof.setLanguage";
+pub const PROOF_SET_DEFAULT_LANGUAGE: &str = "proof.setDefaultLanguage";
+pub const PROOF_LANGUAGES: &str = "proof.languages";
+pub const REVIEW_WORD_COUNT: &str = "review.wordCount";
+
+pub const LINK_SET: &str = "link.set";
+pub const LINK_REMOVE: &str = "link.remove";
+pub const LINK_GET: &str = "link.get";
+pub const LINK_FOLLOW: &str = "link.follow";
+pub const LINK_TO_PAGE: &str = "link.toPage";
+pub const LINK_TO_PARAGRAPH: &str = "link.toParagraph";
+pub const LINK_WIKI: &str = "link.wiki";
+pub const FILE_EXPORT_ATTACHMENT: &str = "file.exportAttachment";
 
 /// Every id above, for tests and tooling.
 pub const ALL: &[&str] = &[
@@ -127,6 +224,8 @@ pub const ALL: &[&str] = &[
     FORMAT_NUMBERING,
     FORMAT_INDENT,
     FORMAT_OUTDENT,
+    FORMAT_ALIGN,
+    FORMAT_TAG,
     FORMAT_TAG_TODO,
     FORMAT_TOGGLE_TODO,
     FORMAT_CLEAR,
@@ -151,10 +250,93 @@ pub const ALL: &[&str] = &[
     FILE_EXPORT_HTML,
     FILE_EXPORT_MARKDOWN,
     FILE_EXPORT_TEXT,
+    FILE_EXPORT_PDF,
     FILE_IMPORT_ONEPKG,
     FILE_IMPORT_ONE,
     NAV_NOTEBOOK,
     NAV_SECTION,
     NAV_PAGE,
     SEARCH,
+    HISTORY_RECYCLE_BIN,
+    HISTORY_RESTORE,
+    HISTORY_DELETE_FOREVER,
+    HISTORY_EMPTY_RECYCLE_BIN,
+    HISTORY_VERSIONS,
+    HISTORY_VIEW_VERSION,
+    HISTORY_RESTORE_VERSION,
+    HISTORY_DELETE_VERSION,
+    HISTORY_DELETE_ALL_VERSIONS,
+    HISTORY_SHOW_VERSIONS,
+    HISTORY_DISABLE,
+    HISTORY_MARK_READ,
+    HISTORY_MARK_UNREAD,
+    HISTORY_TOGGLE_READ,
+    HISTORY_NEXT_UNREAD,
+    HISTORY_RECENT_EDITS,
+    INSERT_TABLE,
+    TABLE_FROM_TEXT,
+    TABLE_INSERT_ROW_ABOVE,
+    TABLE_INSERT_ROW_BELOW,
+    TABLE_INSERT_COLUMN_LEFT,
+    TABLE_INSERT_COLUMN_RIGHT,
+    TABLE_DELETE_ROW,
+    TABLE_DELETE_COLUMN,
+    TABLE_DELETE,
+    TABLE_SELECT_CELL,
+    TABLE_SELECT_ROW,
+    TABLE_SELECT_COLUMN,
+    TABLE_SELECT_TABLE,
+    TABLE_SET_COLUMN_WIDTH,
+    TABLE_SHADING,
+    TABLE_BORDERS,
+    TABLE_SORT,
+    TABLE_CONVERT_TO_TEXT,
+    PICTURE_ROTATE,
+    PICTURE_FLIP,
+    PICTURE_CROP,
+    PICTURE_ALT_TEXT,
+    PICTURE_RESET,
+    ARRANGE_BRING_TO_FRONT,
+    ARRANGE_BRING_FORWARD,
+    ARRANGE_SEND_BACKWARD,
+    ARRANGE_SEND_TO_BACK,
+    INK_ROTATE,
+    INK_FLIP,
+    PAGE_INSERT_SPACE,
+    TEXT_FIND,
+    TEXT_REPLACE,
+    TAGS_SUMMARY,
+    FORMAT_PAINTER_PICK,
+    FORMAT_PAINTER_APPLY,
+    EDIT_COPY,
+    EDIT_CUT,
+    EDIT_PASTE,
+    EDIT_PASTE_PICTURE,
+    TEMPLATE_LIST,
+    TEMPLATE_SAVE_CURRENT,
+    TEMPLATE_DELETE,
+    PAGE_NEW_FROM_TEMPLATE,
+    SECTION_DEFAULT_TEMPLATE,
+    VIEW_HIDE_PAGE_TITLE,
+    PROOF_CHECK,
+    PROOF_SUGGESTIONS,
+    PROOF_APPLY,
+    PROOF_CHANGE_ALL,
+    PROOF_IGNORE,
+    PROOF_IGNORE_ALL,
+    PROOF_ADD_TO_DICTIONARY,
+    PROOF_REMOVE_FROM_DICTIONARY,
+    PROOF_DICTIONARY,
+    PROOF_SET_LANGUAGE,
+    PROOF_SET_DEFAULT_LANGUAGE,
+    PROOF_LANGUAGES,
+    REVIEW_WORD_COUNT,
+    LINK_SET,
+    LINK_REMOVE,
+    LINK_GET,
+    LINK_FOLLOW,
+    LINK_TO_PAGE,
+    LINK_TO_PARAGRAPH,
+    LINK_WIKI,
+    FILE_EXPORT_ATTACHMENT,
 ];

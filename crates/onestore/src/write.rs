@@ -1,5 +1,5 @@
-//! Writing a fresh revision store ([MS-ONESTORE]): one revision per object space, one
-//! transaction, no free chunk list, an exact `cbExpectedFileLength`.
+//! Writing a fresh revision store ([MS-ONESTORE]): one revision per object space (plus one per
+//! non-default context, [`crate::ContextRevision`]), one transaction, no free chunk list, an exact `cbExpectedFileLength`.
 //!
 //! Layout: the header, then every block (file node list fragments, property sets, file data
 //! store objects, the transaction log) appended at 8-byte aligned offsets. Each file node list is
@@ -26,6 +26,8 @@ struct Out {
     lists: Vec<(u32, u32)>,
     /// File data store objects: (guidReference, location).
     files: Vec<([u8; 16], Fcr)>,
+    /// File data already written, by the address of its shared bytes.
+    shared: HashMap<usize, Guid>,
 }
 
 impl Out {
@@ -114,15 +116,15 @@ fn all_ids(set: &propset::PropertySet, out: &mut Vec<ExtendedGuid>, depth: usize
 }
 
 /// Reference counts (§2.1.5): distinct referencing objects, plus one for roots.
-fn ref_counts(space: &ObjectSpace) -> HashMap<ExtendedGuid, u32> {
+fn ref_counts(objects: &[Object], roots: &[(u32, ExtendedGuid)]) -> HashMap<ExtendedGuid, u32> {
     let mut counts: HashMap<ExtendedGuid, u32> = HashMap::new();
-    for o in &space.objects {
+    for o in objects {
         let distinct: HashSet<ExtendedGuid> = o.props.object_refs().into_iter().collect();
         for r in distinct {
             *counts.entry(r).or_default() += 1;
         }
     }
-    for (_, r) in &space.roots {
+    for (_, r) in roots {
         *counts.entry(*r).or_default() += 1;
     }
     counts
@@ -133,7 +135,8 @@ pub fn write(store: &Store) -> Result<Vec<u8>> {
     if !store.spaces.iter().any(|s| s.id == store.root) {
         return Err(Error::Corrupt("the root object space is missing".into()));
     }
-    let mut out = Out { kind: store.kind, buf: vec![0u8; HEADER_SIZE], next_list: 0x11, lists: Vec::new(), files: Vec::new() };
+    let mut out =
+        Out { kind: store.kind, buf: vec![0u8; HEADER_SIZE], next_list: 0x11, lists: Vec::new(), files: Vec::new(), shared: HashMap::new() };
     let mut root_nodes = Vec::with_capacity(store.spaces.len() + 2);
     let mut seen = HashSet::new();
     for space in &store.spaces {
@@ -180,30 +183,55 @@ pub fn write(store: &Store) -> Result<Vec<u8>> {
     Ok(out.buf)
 }
 
-/// Writes one object space; returns its object space manifest list.
+/// Writes one object space; returns its object space manifest list. The default context's
+/// revision comes first, then one self-contained revision per [`ObjectSpace::contexts`] entry
+/// (`.one` only), each with its own object group.
 fn write_space(out: &mut Out, space: &ObjectSpace) -> Result<Fcr> {
+    let mut rml = vec![node(id::REVISION_MANIFEST_LIST_START, 0, None, &[space.id.to_bytes().as_slice(), &0u32.to_le_bytes()].concat())?];
+    rml.extend(revision(out, &space.objects, &space.roots, ExtendedGuid::NIL)?);
+    if out.kind == FileKind::Section {
+        let mut seen = HashSet::new();
+        for c in &space.contexts {
+            if c.context.is_nil() || !seen.insert(c.context) {
+                return Err(Error::Corrupt("revision contexts must be unique and not nil".into()));
+            }
+            rml.extend(revision(out, &c.objects, &c.roots, c.context)?);
+        }
+    }
+    let rml_fcr = out.list(&rml);
+    let osml = [
+        node(id::OBJECT_SPACE_MANIFEST_LIST_START, 0, None, &space.id.to_bytes())?,
+        node(id::REVISION_MANIFEST_LIST_REFERENCE, 2, Some(rml_fcr), &[])?,
+    ];
+    Ok(out.list(&osml))
+}
+
+/// One revision manifest (start … end) holding `objects`, labelled with revision role 1 and
+/// context `ctx` (nil: the default context, `RevisionManifestStart6FND`; otherwise
+/// `RevisionManifestStart7FND` with its `gctxid`).
+fn revision(out: &mut Out, objects: &[Object], roots: &[(u32, ExtendedGuid)], ctx: ExtendedGuid) -> Result<Vec<Vec<u8>>> {
     let mut table = Table::default();
     let mut ids = Vec::new();
-    for o in &space.objects {
+    for o in objects {
         ids.push(o.id);
         all_ids(&o.props, &mut ids, 0);
     }
-    for (_, r) in &space.roots {
+    for (_, r) in roots {
         ids.push(*r);
     }
     for g in ids {
         table.add(g)?;
     }
-    let counts = ref_counts(space);
-    let mut decls = Vec::with_capacity(space.objects.len());
+    let counts = ref_counts(objects, roots);
+    let mut decls = Vec::with_capacity(objects.len());
     let mut group_crc = 0u32;
-    for o in &space.objects {
+    for o in objects {
         let c_ref = counts.get(&o.id).copied().unwrap_or(0);
         group_crc = crc::crc32_update(group_crc, &c_ref.to_le_bytes());
         decls.push(declaration(out, o, &table, c_ref)?);
     }
     let rid = ExtendedGuid::from_guid(Guid::new(), 1);
-    let mut rml = vec![node(id::REVISION_MANIFEST_LIST_START, 0, None, &[space.id.to_bytes().as_slice(), &0u32.to_le_bytes()].concat())?];
+    let mut rml = Vec::new();
     match out.kind {
         FileKind::Section => {
             let ogid = ExtendedGuid::from_guid(Guid::new(), 1);
@@ -212,12 +240,17 @@ fn write_space(out: &mut Out, space: &ObjectSpace) -> Result<Fcr> {
             group.extend(decls);
             group.push(node(id::OBJECT_GROUP_END, 0, None, &[])?);
             let group_fcr = out.list(&group);
-            let mut start = Vec::with_capacity(46);
+            let mut start = Vec::with_capacity(66);
             start.put(&rid.to_bytes());
             start.put(&ExtendedGuid::NIL.to_bytes());
             start.put_u32(1); // RevisionRole: the active content
             start.put_u16(0); // odcsDefault: not encrypted
-            rml.push(node(id::REVISION_MANIFEST_START6, 0, None, &start)?);
+            if ctx.is_nil() {
+                rml.push(node(id::REVISION_MANIFEST_START6, 0, None, &start)?);
+            } else {
+                start.put(&ctx.to_bytes());
+                rml.push(node(id::REVISION_MANIFEST_START7, 0, None, &start)?);
+            }
             rml.push(node(id::OBJECT_GROUP_LIST_REFERENCE, 2, Some(group_fcr), &ogid.to_bytes())?);
             // ObjectInfoDependencyOverrideData with no overrides (§2.6.10), inline (ref nil).
             let mut ovr = Vec::with_capacity(12);
@@ -225,7 +258,7 @@ fn write_space(out: &mut Out, space: &ObjectSpace) -> Result<Fcr> {
             ovr.put_u32(0);
             ovr.put_u32(group_crc);
             rml.push(node(id::OBJECT_INFO_DEPENDENCY_OVERRIDES, 1, Some(Fcr::NIL), &ovr)?);
-            for (role, oid) in &space.roots {
+            for (role, oid) in roots {
                 rml.push(node(id::ROOT_OBJECT_REFERENCE3, 0, None, &[oid.to_bytes().as_slice(), &role.to_le_bytes()].concat())?);
             }
         }
@@ -239,19 +272,14 @@ fn write_space(out: &mut Out, space: &ObjectSpace) -> Result<Fcr> {
             rml.push(node(id::REVISION_MANIFEST_START4, 0, None, &start)?);
             rml.extend(table.nodes(id::GLOBAL_ID_TABLE_START)?);
             rml.extend(decls);
-            for (role, oid) in &space.roots {
+            for (role, oid) in roots {
                 let c = table.compact(*oid)?;
                 rml.push(node(id::ROOT_OBJECT_REFERENCE2, 0, None, &[c.to_u32().to_le_bytes(), role.to_le_bytes()].concat())?);
             }
         }
     }
     rml.push(node(id::REVISION_MANIFEST_END, 0, None, &[])?);
-    let rml_fcr = out.list(&rml);
-    let osml = [
-        node(id::OBJECT_SPACE_MANIFEST_LIST_START, 0, None, &space.id.to_bytes())?,
-        node(id::REVISION_MANIFEST_LIST_REFERENCE, 2, Some(rml_fcr), &[])?,
-    ];
-    Ok(out.list(&osml))
+    Ok(rml)
 }
 
 /// The declaration node for one object (its data written first).
@@ -311,20 +339,31 @@ fn file_data_declaration(out: &mut Out, o: &Object, oid: u32, c_ref: u32) -> Res
     if out.kind == FileKind::Toc {
         return Err(Error::Corrupt("file data objects can't be stored in a .onetoc2".into()));
     }
-    let data = o.file_data.as_deref().map(Vec::as_slice).unwrap_or_default();
-    let guid = Guid::new();
-    let mut fdso = Vec::with_capacity(data.len() + 64);
-    fdso.put(&consts::FILE_DATA_HEADER);
-    fdso.put_u64(data.len() as u64);
-    fdso.put_u32(0);
-    fdso.put_u64(0);
-    fdso.put(data);
-    while (fdso.len() + 16) % 8 != 0 {
-        fdso.push(0);
-    }
-    fdso.put(&consts::FILE_DATA_FOOTER);
-    let fcr = out.alloc(&fdso);
-    out.files.push((guid.0, fcr));
+    // The same bytes (one `Arc`: a picture shared by a page and its versions) are stored once.
+    let key = o.file_data.as_ref().map(|a| std::sync::Arc::as_ptr(a) as usize);
+    let guid = match key.and_then(|k| out.shared.get(&k).copied()) {
+        Some(g) => g,
+        None => {
+            let data = o.file_data.as_deref().map(Vec::as_slice).unwrap_or_default();
+            let guid = Guid::new();
+            let mut fdso = Vec::with_capacity(data.len() + 64);
+            fdso.put(&consts::FILE_DATA_HEADER);
+            fdso.put_u64(data.len() as u64);
+            fdso.put_u32(0);
+            fdso.put_u64(0);
+            fdso.put(data);
+            while (fdso.len() + 16) % 8 != 0 {
+                fdso.push(0);
+            }
+            fdso.put(&consts::FILE_DATA_FOOTER);
+            let fcr = out.alloc(&fdso);
+            out.files.push((guid.0, fcr));
+            if let Some(k) = key {
+                out.shared.insert(k, guid);
+            }
+            guid
+        }
+    };
     let reference = format!("<ifndf>{guid}");
     let ext = o.file_ext.clone().unwrap_or_default();
     let mut d = Vec::new();

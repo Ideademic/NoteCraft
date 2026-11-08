@@ -53,8 +53,11 @@ fn collect(dir: &Path, prefix: &str, depth: usize, out: &mut Vec<NotebookFile>) 
             Err(_) => continue,
         };
         if meta.is_dir() {
-            if !name.eq_ignore_ascii_case("OneNote_RecycleBin") {
+            if !name.eq_ignore_ascii_case(crate::RECYCLE_BIN_FOLDER) {
                 collect(&path, &format!("{prefix}{name}/"), depth + 1, out)?;
+            } else if depth == 0 {
+                // The notebook's recycle bin: its own files only (deleted sections, deleted pages).
+                collect(&path, &format!("{prefix}{name}/"), MAX_GROUP_DEPTH, out)?;
             }
             continue;
         }

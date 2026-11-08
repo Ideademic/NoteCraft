@@ -1,7 +1,9 @@
 //! Pictures, file printouts and attached files: decoded into textures (cached per element and
 //! picture data, decoded only once visible, scaled down past 4096 px), drawn at their place and
 //! size. A printout is a stack of page pictures with a thin border and the file's name above,
-//! meant to be inked over. The selected item shows a frame, and a picture its corner handles.
+//! meant to be inked over. A picture's rotation, flips and crop are texture coordinates on its
+//! corners (the file is never changed). The selected item shows a frame, and a picture its corner
+//! handles.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -81,11 +83,16 @@ pub fn paint(ctx: &egui::Context, painter: &Painter, state: &CanvasState, page: 
         match &el.kind {
             ElementKind::Image(img) => {
                 let Some(r) = element_rect(state, el) else { continue };
+                // While it is being cropped the whole picture shows (the crop dims the rest).
+                let (r, uv) = match &state.crop {
+                    Some(c) if c.id == el.id => (c.full, full_uvs(&img.transform)),
+                    _ => (r, uvs(&img.transform)),
+                };
                 let sr = v.rect(r);
                 if !sr.intersects(v.clip) {
                     continue;
                 }
-                draw_picture(painter, texture(ctx, &mut tex, el.id, 0, img), sr, &ink, tokens);
+                draw_transformed(painter, texture(ctx, &mut tex, el.id, 0, img), sr, uv, &ink, tokens);
             }
             ElementKind::Printout(p) => {
                 // Pages sit at their own positions (`outline.move` moves them); a drag in
@@ -109,7 +116,7 @@ pub fn paint(ctx: &egui::Context, painter: &Painter, state: &CanvasState, page: 
                     if !sr.intersects(v.clip) {
                         continue;
                     }
-                    draw_picture(painter, texture(ctx, &mut tex, el.id, i, pg), sr, &ink, tokens);
+                    draw_transformed(painter, texture(ctx, &mut tex, el.id, i, pg), sr, uvs(&pg.transform), &ink, tokens);
                     painter.rect_stroke(sr, 0.0, Stroke::new(1.0, mix(ink.paper, ink.text, 0.25)), StrokeKind::Outside);
                 }
             }
@@ -121,7 +128,14 @@ pub fn paint(ctx: &egui::Context, painter: &Painter, state: &CanvasState, page: 
                 }
                 paint_file(painter, sr, name, &ink, tokens, v);
             }
-            _ => {}
+            ElementKind::Opaque { jcid, data } => {
+                let Some(r) = item_rect(state, page, el) else { continue };
+                let sr = v.rect(r);
+                if sr.intersects(v.clip) {
+                    paint_kept(painter, sr, opaque_label(el.id, *jcid, data), &ink, tokens, v);
+                }
+            }
+            ElementKind::Outline(_) => {}
         }
     }
     let frame = tex.frame;
@@ -129,10 +143,29 @@ pub fn paint(ctx: &egui::Context, painter: &Painter, state: &CanvasState, page: 
     tex.map.retain(|(id, _), (_, _, used)| live.contains(id) || frame.saturating_sub(*used) < KEEP_FRAMES);
 }
 
-fn draw_picture(painter: &Painter, t: Option<TextureHandle>, sr: Rect, ink: &Ink, tokens: &Tokens) {
+/// Texture coordinates of a picture's displayed corners (top-left, clockwise): its rotation,
+/// flips and crop.
+pub fn uvs(t: &notecraft_doc::PictureTransform) -> [Pos2; 4] {
+    t.sanitized().uv_corners().map(|(u, v)| pos2(u, v))
+}
+
+/// The same for the whole, uncropped picture.
+fn full_uvs(t: &notecraft_doc::PictureTransform) -> [Pos2; 4] {
+    uvs(&notecraft_doc::PictureTransform { crop: None, ..*t })
+}
+
+/// Draws a picture into `sr` with its corners taking texture coordinates `uv` (top-left,
+/// clockwise): rotation and flips without touching the file.
+fn draw_transformed(painter: &Painter, t: Option<TextureHandle>, sr: Rect, uv: [Pos2; 4], ink: &Ink, tokens: &Tokens) {
     match t {
         Some(t) => {
-            painter.image(t.id(), sr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+            let mut mesh = egui::Mesh::with_texture(t.id());
+            for (p, uv) in corners(sr).into_iter().zip(uv) {
+                mesh.vertices.push(egui::epaint::Vertex { pos: p, uv, color: Color32::WHITE });
+            }
+            mesh.add_triangle(0, 1, 2);
+            mesh.add_triangle(0, 2, 3);
+            painter.add(egui::Shape::mesh(mesh));
         }
         None => {
             // A picture NoteCraft can't read: a grey box with a cross.
@@ -175,8 +208,11 @@ fn paint_file(painter: &Painter, sr: Rect, name: &str, ink: &Ink, tokens: &Token
 /// The frame of the selected item and a picture's corner handles.
 pub fn paint_selection(painter: &Painter, state: &CanvasState, page: &Page, tokens: &Tokens, v: &View) {
     for id in &state.selection.elements {
+        if state.crop.as_ref().is_some_and(|c| c.id == *id) {
+            continue;
+        }
         let Some(el) = page.element(*id) else { continue };
-        let Some(r) = element_rect(state, el) else { continue };
+        let Some(r) = item_rect(state, page, el) else { continue };
         let sr = v.rect(r);
         painter.rect_stroke(sr.expand(1.0), 0.0, Stroke::new(1.0, tokens.handle), StrokeKind::Outside);
         if matches!(el.kind, ElementKind::Image(_)) {
@@ -199,6 +235,9 @@ fn selected_picture<'a>(state: &CanvasState, page: &'a Page) -> Option<&'a notec
 
 /// A corner handle of the selected picture under `at`: (picture, corner, its rect).
 pub fn handle_at(state: &CanvasState, session: &Session, v: &View, at: Pos2) -> Option<(Guid, u8, notecraft_doc::Rect)> {
+    if state.crop.is_some() {
+        return None;
+    }
     let page = session.current_page()?;
     let el = selected_picture(state, page)?;
     let r = element_rect(state, el)?;
@@ -218,12 +257,97 @@ pub fn element_at(state: &CanvasState, session: &Session, v: &View, at: Pos2) ->
     let page = session.current_page()?;
     page.elements.iter().rev().find_map(|el| {
         let pick = match el.kind {
-            ElementKind::Image(_) | ElementKind::EmbeddedFile { .. } => true,
+            ElementKind::Image(_) | ElementKind::EmbeddedFile { .. } | ElementKind::Opaque { .. } => true,
             ElementKind::Printout(_) => state.tool == Tool::Select,
-            _ => false,
+            ElementKind::Outline(_) => false,
         };
-        (pick && element_rect(state, el).is_some_and(|r| v.rect(r).contains(at))).then_some(el.id)
+        (pick && item_rect(state, page, el).is_some_and(|r| v.rect(r).contains(at))).then_some(el.id)
     })
+}
+
+/// [`element_rect`], and for kept content its placeholder's rect: where the file says it is, or
+/// stacked down the left margin below the rest of the page.
+pub fn item_rect(state: &CanvasState, page: &Page, el: &notecraft_doc::PageElement) -> Option<notecraft_doc::Rect> {
+    let ElementKind::Opaque { jcid, data } = &el.kind else { return element_rect(state, el) };
+    let info = opaque_info(el.id, *jcid, data);
+    let (w, h) = info.size.unwrap_or((KEPT_W, KEPT_H));
+    let (w, h) = (w.clamp(KEPT_H, 2000.0), h.clamp(KEPT_H, 2000.0));
+    if let Some((x, y)) = info.pos {
+        return Some(notecraft_doc::Rect::new(x, y, w, h));
+    }
+    // Placed ones first: the stack starts below everything that has a place.
+    let mut below = page.content_bounds().map_or(notecraft_doc::page::CONTENT_ORIGIN.y, |b| b.bottom() + 18.0);
+    for other in &page.elements {
+        let ElementKind::Opaque { jcid, data } = &other.kind else { continue };
+        if other.id == el.id {
+            break;
+        }
+        let o = opaque_info(other.id, *jcid, data);
+        if let Some((_, y)) = o.pos {
+            let (_, oh) = o.size.unwrap_or((KEPT_W, KEPT_H));
+            below = below.max(y + oh + 18.0);
+        } else {
+            below += o.size.map_or(KEPT_H, |s| s.1.clamp(KEPT_H, 2000.0)) + 12.0;
+        }
+    }
+    Some(notecraft_doc::Rect::new(notecraft_doc::page::CONTENT_ORIGIN.x, below, w, h))
+}
+
+/// Default size of a kept content placeholder, points.
+const KEPT_W: f32 = 240.0;
+const KEPT_H: f32 = 40.0;
+
+type InfoCache = HashMap<(Guid, usize), notecraft_one::OpaqueInfo>;
+
+static OPAQUE_INFO: std::sync::LazyLock<Mutex<InfoCache>> = std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// What kept content is and where it sits (read once per element and data).
+pub fn opaque_info(id: Guid, jcid: u32, data: &Arc<Vec<u8>>) -> notecraft_one::OpaqueInfo {
+    let key = (id, Arc::as_ptr(data) as usize);
+    let mut cache = OPAQUE_INFO.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(i) = cache.get(&key) {
+        return *i;
+    }
+    if cache.len() > 4096 {
+        cache.clear();
+    }
+    let info = notecraft_one::describe_opaque(jcid, data);
+    cache.insert(key, info);
+    info
+}
+
+/// The placeholder's label for kept content.
+pub fn opaque_label(id: Guid, jcid: u32, data: &Arc<Vec<u8>>) -> &'static str {
+    use notecraft_one::OpaqueKind as K;
+    match opaque_info(id, jcid, data).kind {
+        K::Table => crate::tl!("Table NoteCraft can't show yet"),
+        K::AudioRecording => crate::tl!("Audio recording"),
+        K::VideoRecording => crate::tl!("Video recording"),
+        K::File => crate::tl!("Embedded content"),
+        K::Other => crate::tl!("Content NoteCraft can't show yet"),
+    }
+}
+
+/// Kept content: a dashed box with its label, sized and placed as it was.
+fn paint_kept(painter: &Painter, sr: Rect, label: &str, ink: &Ink, tokens: &Tokens, v: &View) {
+    let fill = mix(ink.paper, ink.text, 0.05);
+    let line = mix(ink.paper, ink.text, 0.4);
+    painter.rect_filled(sr, 2.0, fill);
+    let dash = |a: Pos2, b: Pos2| painter.extend(egui::Shape::dashed_line(&[a, b], Stroke::new(1.0, line), 5.0, 3.0));
+    dash(sr.left_top(), sr.right_top());
+    dash(sr.right_top(), sr.right_bottom());
+    dash(sr.right_bottom(), sr.left_bottom());
+    dash(sr.left_bottom(), sr.left_top());
+    let size = (v.len(10.0)).clamp(9.0, 20.0);
+    let icon = Rect::from_center_size(pos2(sr.left() + size + 6.0, sr.center().y), vec2(size * 1.2, size * 1.2));
+    crate::icons::paint_styled(painter, icon, crate::icons::Icon::Info, crate::icons::Style::new(line, tokens.accent));
+    painter.with_clip_rect(sr.shrink(2.0)).text(
+        pos2(icon.right() + 6.0, sr.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        FontId::proportional(size),
+        mix(ink.paper, ink.text, 0.75),
+    );
 }
 
 /// Whether a selectable picture is under `at`.

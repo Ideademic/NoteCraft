@@ -48,9 +48,19 @@ fn built() -> Session {
 
 /// Positions pass through half-inch floats and ink units: round to 1/10 pt. Where the file came
 /// from (`source`) and modification times aren't content.
-fn normalize(mut s: Section) -> Section {
+pub(super) fn normalize(mut s: Section) -> Section {
     let r = |v: &mut f32| *v = (*v * 10.0).round() / 10.0;
     s.source = Default::default();
+    // Versions are pages too: normalised the same way (as a one-page section).
+    for page in &mut s.pages {
+        for v in &mut page.versions {
+            let mut one = Section::new("v", notecraft_doc::Color::WHITE);
+            one.pages.push((*v.page).clone());
+            if let Some(p) = normalize(one).pages.pop() {
+                v.page = std::sync::Arc::new(p);
+            }
+        }
+    }
     for page in &mut s.pages {
         page.modified = page.created;
         for e in &mut page.elements {
@@ -112,12 +122,12 @@ fn check_content(nb: &Notebook) {
         })
         .collect();
     let o = outlines.iter().find(|o| o.text().starts_with("Heading")).expect("the outline");
-    assert_eq!(o.paragraphs[0].style, notecraft_doc::ParaStyle::Heading1);
-    assert!(o.paragraphs[1].runs.iter().any(|r| r.bold && r.text == "bold"));
-    assert!(o.paragraphs[1].runs.iter().any(|r| r.italic && r.highlight.is_some()));
-    assert_eq!(o.paragraphs[2].list, Some(ListKind::Bullet));
-    assert_eq!(o.paragraphs[4].tag, Some(Tag::ToDo { checked: true }));
-    assert!(outlines.iter().any(|o| o.paragraphs.iter().all(|p| p.list == Some(ListKind::Numbered))));
+    assert_eq!(o.para(0).unwrap().style, notecraft_doc::ParaStyle::Heading1);
+    assert!(o.para(1).unwrap().runs.iter().any(|r| r.bold && r.text == "bold"));
+    assert!(o.para(1).unwrap().runs.iter().any(|r| r.italic && r.highlight.is_some()));
+    assert_eq!(o.para(2).unwrap().list, Some(ListKind::Bullet));
+    assert_eq!(o.para(4).unwrap().tag, Some(Tag::ToDo { checked: true }));
+    assert!(outlines.iter().any(|o| o.paragraphs().all(|p| p.list == Some(ListKind::Numbered))));
     let pen = p.ink.iter().find(|k| k.tool == InkTool::Pen).expect("pen ink");
     assert_eq!(pen.points.len(), 30);
     let (lo, hi) = pen.points.iter().fold((1.0f32, 0.0f32), |(a, b), q| (a.min(q.pressure), b.max(q.pressure)));

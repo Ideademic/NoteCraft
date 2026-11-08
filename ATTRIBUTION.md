@@ -13,7 +13,9 @@ MIT OR Apache-2.0) into `crates/ui-egui/src/icons/deck/`; NoteCraft's additions 
 images, templates, fonts, sounds or other assets**, and no ArtCraft or Storyteller logos. Every
 asset is original work by NoteCraft contributors or third-party material under a licence in the
 allowlist in [`AGENTS.md`](AGENTS.md). Screenshots of other vendors' software are never committed.
-Font files belong in [storytold/craft-fonts](https://github.com/storytold/craft-fonts), not here.
+Font files belong in [storytold/craft-fonts](https://github.com/storytold/craft-fonts), not here:
+builds made with `CRAFT_FONTS_DIR` embed Carlito, Caladea and Liberation Sans/Serif/Mono (OFL-1.1)
+from its `fonts/latin-manifest.txt` at build time (`crates/fonts/build.rs`, see `NOTICE`).
 
 | File | Author | Source | Licence | Notes |
 |---|---|---|---|---|
@@ -36,6 +38,15 @@ Font files belong in [storytold/craft-fonts](https://github.com/storytold/craft-
 | `packaging/macos/dmg/background.svg` | Ideademic and NoteCraft contributors | original; links the app icon (`assets/app-icon/notecraft.svg`) rather than copying it; layout follows the Craft apps' DMG window; text outlined from Inter and JetBrains Mono (OFL-1.1, via storytold/craft-fonts) | MIT OR Apache-2.0 (outlined glyph shapes: OFL-1.1) | macOS DMG window background |
 | `packaging/macos/dmg/background.tiff` | Ideademic and NoteCraft contributors | rendered from `packaging/macos/dmg/background.svg` by `packaging/macos/dmg/generate.py` | MIT OR Apache-2.0 | 1x + 2x HiDPI TIFF for the macOS DMG window; embeds LittleCMS's built-in sRGB profile ("No copyright, use freely") |
 | `docs/images/hero.png` | Ideademic and NoteCraft contributors | original (headless render of NoteCraft by `crates/ui-egui/examples/ui_shot.rs`) | MIT OR Apache-2.0 | Screenshot of NoteCraft: a notebook with several sections |
-| `docs/images/ink.png` | Ideademic and NoteCraft contributors | original (headless render of NoteCraft by `crates/ui-egui/examples/ui_shot.rs`) | MIT OR Apache-2.0 | Screenshot of NoteCraft: the Draw tab |
-| `docs/images/printout.png` | Ideademic and NoteCraft contributors | original (headless render of NoteCraft by `crates/ui-egui/examples/ui_shot.rs`) | MIT OR Apache-2.0 | Screenshot of NoteCraft: a page with text, ink and a picture |
-| `docs/images/dark.png` | Ideademic and NoteCraft contributors | original (headless render of NoteCraft by `crates/ui-egui/examples/ui_shot.rs`) | MIT OR Apache-2.0 | Screenshot of NoteCraft in dark mode |
+| `docs/images/ink.png` | Ideademic and NoteCraft contributors | original (headless render of NoteCraft by `crates/ui-egui/src/canvas/tests.rs`, `shapes_screenshots`) | MIT OR Apache-2.0 | Screenshot of NoteCraft: the Draw tab and a page of shapes |
+| `docs/images/tables.png` | Ideademic and NoteCraft contributors | original (headless render of NoteCraft by `crates/ui-egui/src/canvas/tests_tables.rs`, `table_screenshots`) | MIT OR Apache-2.0 | Screenshot of NoteCraft: a page with a table and tags, and the Table tab |
+| `docs/images/dark.png` | Ideademic and NoteCraft contributors | original (headless render of NoteCraft by `crates/ui-egui/examples/ui_shot.rs`) | MIT OR Apache-2.0 | Screenshot of NoteCraft in dark mode: fonts, alignment, lists and tags |
+
+## Data built into the app
+
+Not files in this repository: data NoteCraft's dependencies embed in the binaries at build time.
+
+| Data | Author | Source | Licence | Notes |
+|---|---|---|---|---|
+| English word list (Moby Words) | Grady Ward | Moby Project, as packaged in [storytold/craft-libs](https://github.com/storytold/craft-libs) `crates/proof/data/en-words.dic` (craft-proof) | Public domain (`LicenseRef-Public-Domain`) | Review › Spelling's English when a build has no SCOWL dictionaries; always embedded by craft-proof |
+| English spelling dictionaries (SCOWL: en-US, en-GB, en-CA, en-AU) | Kevin Atkinson and the SCOWL contributors | [SCOWL](http://wordlist.aspell.net/), via [storytold/craft-i18n](https://github.com/storytold/craft-i18n) `language-data/en-*` | SCOWL licence (permissive, MIT-style; its notice ships in `language-data/en-us/LICENCE-SCOWL.txt` and is embedded with the data) | Embedded by craft-proof only when the build sets `CRAFT_I18N_DIR`; Review › Spelling then uses them instead of the Moby list |

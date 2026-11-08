@@ -57,7 +57,7 @@ impl SpaceBuilder {
     }
 
     pub fn finish(self) -> ObjectSpace {
-        ObjectSpace { id: self.id, roots: self.roots, objects: self.objects }
+        ObjectSpace { id: self.id, roots: self.roots, objects: self.objects, contexts: Vec::new() }
     }
 }
 

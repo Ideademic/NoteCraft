@@ -28,8 +28,8 @@ impl Counts {
             match &e.kind {
                 ElementKind::Outline(o) => {
                     c.outlines += 1;
-                    c.paragraphs += o.paragraphs.len();
-                    c.words += o.paragraphs.iter().map(|p| p.text().split_whitespace().count()).sum::<usize>();
+                    c.paragraphs += o.paragraphs().count();
+                    c.words += o.paragraphs().map(|p| p.text().split_whitespace().count()).sum::<usize>();
                 }
                 ElementKind::Image(_) => c.images += 1,
                 ElementKind::Printout(_) => c.printouts += 1,
@@ -152,7 +152,7 @@ fn dump_page(p: &Page, out: &mut String) {
     for e in &p.elements {
         match &e.kind {
             ElementKind::Outline(o) => {
-                for para in &o.paragraphs {
+                for para in o.paragraphs() {
                     let mark = match (para.tag, para.list) {
                         (Some(Tag::ToDo { checked: true }), _) => "[x] ",
                         (Some(Tag::ToDo { checked: false }), _) => "[ ] ",

@@ -2,13 +2,15 @@
 //!
 //! Usage: `notecraft [notebook folder | .onetoc2 | .onepkg | .one]…`; `--help` prints `USAGE`.
 //!
-//! At start it reads its settings (`prefs.json`, `recent.json` in the settings folder), offers to
+//! At start it reads its settings (`prefs.json`, `recent.json`, `read.json`, `templates.json` in the settings folder), offers to
 //! restore notebooks a crash left unsaved, reopens the notebooks that were open last time (or the
 //! default "My Notebook"), then the files on the command line. Changes autosave; on exit
 //! everything is saved and the settings written.
 #![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod dialogs;
+mod print;
 mod services;
 
 use std::io::Write as _;
@@ -41,11 +43,17 @@ const ICON_PNG: &[u8] = include_bytes!("../../../assets/app-icon/hicolor/256x256
 struct Saved {
     prefs: String,
     recent: String,
+    /// `read.json`: the pages the user has seen (History ▸ Unread).
+    read: String,
+    /// The user's page templates (`templates.json`) were last written at this revision.
+    templates: u64,
 }
 
 /// The eframe app: [`NoteApp`] does everything; this keeps its settings on disk.
 struct App {
     app: NoteApp,
+    /// File dialogs: asked during the frame, shown at its end, answered on a later frame.
+    dialogs: dialogs::Dialogs,
     settings: Option<PathBuf>,
     saved: Saved,
     /// Recovery snapshots offered at start, waiting for the answer.
@@ -79,7 +87,9 @@ impl App {
         let Some(dir) = &self.settings else { return };
         let prefs = self.app.prefs().to_json();
         let recent = self.app.session.recent.to_json();
-        if prefs == self.saved.prefs && recent == self.saved.recent {
+        let read = self.app.read_state_json();
+        let templates = self.app.ui.templates_revision;
+        if prefs == self.saved.prefs && recent == self.saved.recent && read == self.saved.read && templates == self.saved.templates {
             return;
         }
         if let Err(e) = std::fs::create_dir_all(dir) {
@@ -98,6 +108,18 @@ impl App {
                 Err(e) => log::warn!("writing the recent list: {e}"),
             }
         }
+        if read != self.saved.read {
+            match std::fs::write(dir.join("read.json"), &read) {
+                Ok(()) => self.saved.read = read,
+                Err(e) => log::warn!("writing the read marks: {e}"),
+            }
+        }
+        if templates != self.saved.templates {
+            match std::fs::write(dir.join("templates.json"), self.app.templates_json()) {
+                Ok(()) => self.saved.templates = templates,
+                Err(e) => log::warn!("writing the page templates: {e}"),
+            }
+        }
     }
 
     /// Acts on the answer to the recovery prompt.
@@ -106,7 +128,11 @@ impl App {
         for path in std::mem::take(&mut self.recovery) {
             let result = if restore { self.app.session.restore_recovery(&path).map(|_| ()) } else { Session::discard_recovery(&path) };
             if let Err(e) = result {
-                self.app.set_status(format!("Couldn't recover {}: {e}", path.display()), true);
+                let text = notecraft_ui_egui::i18n::fmt_plain(
+                    notecraft_ui_egui::tl!("Couldn't recover {path}: {error}"),
+                    &[("path", &path.display().to_string()), ("error", &e.to_string())],
+                );
+                self.app.set_status(text, true);
             }
         }
     }
@@ -140,14 +166,17 @@ impl App {
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.refresh_utc_offset(ctx);
+        self.dialogs.deliver(&mut self.app);
         self.app.logic(ctx);
         self.answer_recovery();
         self.track_window(ctx);
         self.store_settings();
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.app.ui(ui);
+        // After the frame, outside any widget: the dialog never runs inside egui's pass.
+        self.dialogs.show_pending(frame);
     }
 
     fn on_exit(&mut self) {
@@ -157,6 +186,7 @@ impl eframe::App for App {
             Err(e) => log::error!("saving on exit failed: {e}"),
         }
         self.store_settings();
+        print::finish_pending_jobs();
     }
 }
 
@@ -192,6 +222,12 @@ fn start_session(prefs: &Prefs, root: Option<&Path>) -> Session {
 }
 
 fn main() -> eframe::Result {
+    // Windows: the update helper is a copy of this program started with `--finish-update`.
+    #[cfg(windows)]
+    if let Some(result) = craft_update::self_update::finish(&notecraft_ui_egui::updates::UPDATE_APP, &std::env::args_os().skip(1).collect::<Vec<_>>())
+    {
+        std::process::exit(i32::from(result.is_err()));
+    }
     let mut files = Vec::new();
     for a in std::env::args().skip(1) {
         match a.as_str() {
@@ -209,6 +245,8 @@ fn main() -> eframe::Result {
     let settings = services::settings_dir();
     let prefs = Prefs::from_json(&read(settings.as_deref(), "prefs.json"));
     let recent_json = read(settings.as_deref(), "recent.json");
+    let read_json = read(settings.as_deref(), "read.json");
+    let templates_json = read(settings.as_deref(), "templates.json");
     let mac = cfg!(target_os = "macos");
     let frame = craft_window::Choice::probe(craft_window::Prefix::new("NOTECRAFT")).into_frame();
     let mut viewport = egui::ViewportBuilder::default()
@@ -234,7 +272,7 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "NoteCraft",
         options,
-        Box::new(move |_cc| {
+        Box::new(move |cc| {
             let root = prefs.notebooks_dir.clone().map(PathBuf::from).or_else(services::notebooks_dir);
             let mut session = start_session(&prefs, root.as_deref());
             session.recent = RecentNotebooks::from_json(&recent_json);
@@ -256,10 +294,15 @@ fn main() -> eframe::Result {
                 }
             }
             if !recovery.is_empty() && names.is_empty() {
-                names.push("your notebooks".to_owned());
+                names.push(notecraft_ui_egui::tl!("your notebooks").to_owned());
             }
-            let mut app = NoteApp::new(session, services::desktop());
+            let dialogs = dialogs::Dialogs::new(&cc.egui_ctx);
+            let mut app = NoteApp::new(session, services::desktop(dialogs.hook()));
             app.load_prefs(prefs);
+            app.load_read_state(&read_json);
+            app.load_templates(&templates_json);
+            // The check at start, unless File › Options turned it off.
+            app.updates.enable_startup_check();
             app.integrated_titlebar = mac;
             app.window_buttons = if mac { None } else { frame.layout().cloned() };
             app.offer_recovery(names);
@@ -267,7 +310,7 @@ fn main() -> eframe::Result {
                 notecraft_ui_egui::app::files::open_path(&mut app, &f);
             }
             app.canvas.utc_offset_minutes = local_utc_offset_minutes();
-            Ok(Box::new(App { app, settings, saved: Saved::default(), recovery, offset_read_at: None }))
+            Ok(Box::new(App { app, dialogs, settings, saved: Saved::default(), recovery, offset_read_at: None }))
         }),
     )
 }

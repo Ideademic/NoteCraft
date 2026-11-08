@@ -1,9 +1,9 @@
-//! Desktop [`Services`]: native file dialogs (rfd), the clipboard (arboard), the file system,
-//! and where NoteCraft keeps its settings and notebooks.
+//! Desktop [`Services`]: native file dialogs (craft-dialogs, see [`crate::dialogs`]), the
+//! clipboard (arboard), the file system, and where NoteCraft keeps its settings and notebooks.
 
 use std::path::PathBuf;
 
-use notecraft_ui_egui::{ClipboardImage, OpenPurpose, Services};
+use notecraft_ui_egui::{ClipboardImage, PathRequest, Services};
 
 fn home() -> Option<PathBuf> {
     std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from)
@@ -35,34 +35,10 @@ pub fn settings_dir() -> Option<PathBuf> {
         .map(|c| c.join("notecraft"))
 }
 
-fn filters(purpose: OpenPurpose) -> (&'static str, &'static [&'static str]) {
-    match purpose {
-        OpenPurpose::Notebook | OpenPurpose::NotebookFolder => ("OneNote notebooks", &["onetoc2", "onepkg", "one"]),
-        OpenPurpose::Import => ("OneNote packages and sections", &["onepkg", "one"]),
-        OpenPurpose::Picture => ("Pictures", &["png", "jpg", "jpeg", "gif", "bmp", "webp"]),
-        OpenPurpose::Printout => ("PDF documents and pictures", &["pdf", "png", "jpg", "jpeg"]),
-        OpenPurpose::Attachment => ("All files", &["*"]),
-    }
-}
-
-pub fn desktop() -> Services {
+/// The desktop services; `ask_path` queues file dialogs (see [`crate::dialogs::Dialogs::hook`]).
+pub fn desktop(ask_path: Box<dyn Fn(PathRequest)>) -> Services {
     Services {
-        pick_open: Some(Box::new(|purpose| {
-            let (name, exts) = filters(purpose);
-            let dialog = rfd::FileDialog::new();
-            let dialog = if exts == ["*"] { dialog } else { dialog.add_filter(name, exts) };
-            dialog.pick_file()
-        })),
-        pick_save: Some(Box::new(|suggested| {
-            let ext = suggested.rsplit_once('.').map(|(_, e)| e.to_owned());
-            let dialog = rfd::FileDialog::new().set_file_name(suggested);
-            let dialog = match &ext {
-                Some(e) => dialog.add_filter(e.to_uppercase(), &[e.as_str()]),
-                None => dialog,
-            };
-            dialog.save_file()
-        })),
-        pick_folder: Some(Box::new(|| rfd::FileDialog::new().pick_folder())),
+        ask_path: Some(ask_path),
         read_file: Some(Box::new(|p| std::fs::read(p).map_err(|e| format!("{}: {e}", p.display())))),
         write_file: Some(Box::new(|p, b| std::fs::write(p, b).map_err(|e| format!("{}: {e}", p.display())))),
         clipboard_text: Some(Box::new(|| arboard::Clipboard::new().ok()?.get_text().ok().filter(|t| !t.is_empty()))),
@@ -71,6 +47,37 @@ pub fn desktop() -> Services {
             let img = arboard::Clipboard::new().ok()?.get_image().ok()?;
             Some(ClipboardImage { width: img.width, height: img.height, rgba: img.bytes.into_owned() })
         })),
+        // Rich copy and paste: HTML with its text for other apps, pictures as pictures.
+        clipboard_html: Some(Box::new(|| arboard::Clipboard::new().ok()?.get().html().ok().filter(|h| !h.trim().is_empty()))),
+        set_clipboard_rich: Some(Box::new(|html, text| arboard::Clipboard::new().and_then(|mut c| c.set_html(html, Some(text))).is_ok())),
+        set_clipboard_image: Some(Box::new(|img| {
+            let data = arboard::ImageData { width: img.width, height: img.height, bytes: std::borrow::Cow::Borrowed(img.rgba.as_slice()) };
+            arboard::Clipboard::new().and_then(|mut c| c.set_image(data)).is_ok()
+        })),
+        print: Some(crate::print::printing()),
+        open_external: Some(Box::new(|target| open::that_detached(target).map_err(|e| format!("{target}: {e}")))),
+        open_file: Some(Box::new(open_attachment)),
         ..Services::default()
     }
+}
+
+/// Opens an attached file: written to a folder of its own under the system's temporary folder,
+/// then opened with the app the system uses for its type.
+fn open_attachment(name: &str, bytes: &[u8]) -> Result<(), String> {
+    let clean: String = name
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or("")
+        .chars()
+        .filter(|c| !c.is_control() && !matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+        .take(120)
+        .collect();
+    let clean = clean.trim().trim_start_matches('.').to_owned();
+    let clean = if clean.is_empty() { "Attachment".to_owned() } else { clean };
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let dir = std::env::temp_dir().join("NoteCraft").join(format!("open-{stamp:x}"));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let path = dir.join(clean);
+    std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    open::that_detached(&path).map_err(|e| format!("{}: {e}", path.display()))
 }

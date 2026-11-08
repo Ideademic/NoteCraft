@@ -64,6 +64,7 @@ macro_rules! icons {
 mod draw;
 pub mod extra;
 mod geometry;
+mod table_tools;
 
 use draw::draw;
 use geometry::Pen;

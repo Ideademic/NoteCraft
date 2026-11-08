@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use notecraft_doc::page::{MAX_INDENT, TITLE_ORIGIN};
-use notecraft_doc::{ElementKind, Guid, ImageElement, ListKind, Outline, Page, PageElement, ParaStyle, Paragraph, Point, Run, Section, Tag};
+use notecraft_doc::{
+    Align, Block, ElementKind, Guid, ImageElement, ListStyle, Outline, Page, PageElement, ParaStyle, Paragraph, Point, Run, Section, Table, Tag,
+};
 use notecraft_onestore::{ExtendedGuid, FileKind, ObjectSpace, PropertySet, PropertyValue, Store};
 
 use crate::build::{SpaceBuilder, element_object_id};
@@ -71,6 +73,9 @@ pub fn section_store(section: &Section, file_name: &str, ancestor: Guid) -> Resu
         .push(prop::SECTION_DISPLAY_NAME, wz_bytes(&section.name))
         .push(prop::NOTEBOOK_COLOR, PropertyValue::U32(to_colorref(section.color)))
         .push(prop::NC_WRITER, wz_bytes(WRITER_NAME));
+    if let Some(t) = section.default_template.as_deref().filter(|t| !t.is_empty()) {
+        meta.push(prop::NC_SECTION_TEMPLATE, wz_bytes(t));
+    }
     let meta_id = root.add(jcid::SECTION_METADATA, meta);
     root.root(role::CONTENT, node_id);
     root.root(role::METADATA, meta_id);
@@ -93,12 +98,15 @@ struct PageWriter {
     created: u32,
     styles: HashMap<&'static str, ExtendedGuid>,
     formats: HashMap<String, ExtendedGuid>,
-    tags: HashMap<u16, ExtendedGuid>,
+    /// The language of the paragraph being written (LanguageID of its runs).
+    lcid: u32,
+    /// Tag definitions by NoteCraft tag name.
+    tags: HashMap<&'static str, ExtendedGuid>,
 }
 
 /// Writes one page as its object space; also returns the page metadata (copied into the
 /// section's page series).
-fn page_space(page: &Page) -> Result<(ObjectSpace, PropertySet)> {
+pub(crate) fn page_space(page: &Page) -> Result<(ObjectSpace, PropertySet)> {
     let id = ExtendedGuid::from_guid(if page.id.is_nil() { Guid::new() } else { page.id }, 1);
     let mut w = PageWriter {
         b: SpaceBuilder::new(id),
@@ -106,6 +114,7 @@ fn page_space(page: &Page) -> Result<(ObjectSpace, PropertySet)> {
         created: to_time32(page.created),
         styles: HashMap::new(),
         formats: HashMap::new(),
+        lcid: LCID_EN_US,
         tags: HashMap::new(),
     };
     let title = w.title(page);
@@ -142,6 +151,9 @@ fn page_space(page: &Page) -> Result<(ObjectSpace, PropertySet)> {
     if page.background.rule != notecraft_doc::RuleLines::None {
         p.push(prop::NC_RULE_LINES, wz_bytes(page.background.rule.name()));
     }
+    if page.hide_title {
+        p.push(prop::NC_HIDE_TITLE, PropertyValue::Bool(true));
+    }
     let node = w.b.add(jcid::PAGE_NODE, p);
     let mut manifest = PropertySet::default();
     manifest.push(prop::CONTENT_CHILD_NODES, PropertyValue::Ids(vec![node]));
@@ -160,7 +172,9 @@ fn page_space(page: &Page) -> Result<(ObjectSpace, PropertySet)> {
     w.b.root(role::CONTENT, manifest_id);
     w.b.root(role::METADATA, meta_id);
     w.b.root(role::VERSION_METADATA, rev_id);
-    Ok((w.b.finish(), meta))
+    let mut space = w.b.finish();
+    crate::versions::attach(&mut space, manifest_id, page)?;
+    Ok((space, meta))
 }
 
 fn indents() -> PropertyValue {
@@ -209,8 +223,8 @@ impl PageWriter {
     /// A jcidParagraphStyleObjectForText for a run's formatting, shared between equal formats.
     fn format(&mut self, run: &Run, hyperlink: bool, hidden: bool) -> ExtendedGuid {
         let key = format!(
-            "{}{}{}{}|{:?}|{:?}|{:?}|{:?}|{hyperlink}{hidden}",
-            run.bold as u8, run.italic as u8, run.underline as u8, run.strike as u8, run.font, run.size, run.color, run.highlight
+            "{}{}{}{}|{:?}|{:?}|{:?}|{:?}|{hyperlink}{hidden}|{}",
+            run.bold as u8, run.italic as u8, run.underline as u8, run.strike as u8, run.font, run.size, run.color, run.highlight, self.lcid
         );
         if let Some(id) = self.formats.get(&key) {
             return *id;
@@ -244,7 +258,7 @@ impl PageWriter {
         if ca != 0xFF || ha != 0xFF {
             p.push(prop::NC_RUN_ALPHA, PropertyValue::U16((u16::from(ca) << 8) | u16::from(ha)));
         }
-        p.push(prop::LANGUAGE_ID, PropertyValue::U32(LCID_EN_US));
+        p.push(prop::LANGUAGE_ID, PropertyValue::U32(self.lcid));
         if hyperlink {
             p.push(prop::HYPERLINK, PropertyValue::Bool(true));
             if !hidden {
@@ -371,7 +385,8 @@ impl PageWriter {
     }
 
     fn outline(&mut self, id: Guid, o: &Outline) -> ExtendedGuid {
-        let tops = self.outline_tree(&o.paragraphs);
+        let blocks: Vec<&Block> = o.blocks.iter().collect();
+        let tops = self.outline_tree(&blocks);
         let mut p = PropertySet::default();
         p.push(prop::LAST_MODIFIED_TIME, PropertyValue::U32(self.modified))
             .push(prop::ELEMENT_CHILD_NODES, PropertyValue::Ids(tops))
@@ -386,29 +401,29 @@ impl PageWriter {
         self.b.add_as(element_object_id(id), jcid::OUTLINE_NODE, p)
     }
 
-    /// Outline elements for `paragraphs`, nested by indent (an indent more than one deeper than
-    /// the paragraph above is treated as one deeper); returns the top-level ones.
-    fn outline_tree(&mut self, paragraphs: &[Paragraph]) -> Vec<ExtendedGuid> {
-        let paragraphs: Vec<&Paragraph> = if paragraphs.is_empty() { Vec::new() } else { paragraphs.iter().collect() };
-        let mut levels = Vec::with_capacity(paragraphs.len());
+    /// Outline elements for `blocks` (paragraphs and tables), nested by indent (an indent more
+    /// than one deeper than the block above is treated as one deeper); returns the top-level
+    /// ones.
+    fn outline_tree(&mut self, blocks: &[&Block]) -> Vec<ExtendedGuid> {
+        let mut levels = Vec::with_capacity(blocks.len());
         let mut prev: Option<u8> = None;
-        for p in &paragraphs {
+        for b in blocks {
             let l = match prev {
                 None => 0,
-                Some(pl) => p.indent.min(pl.saturating_add(1)).min(MAX_INDENT),
+                Some(pl) => b.indent().min(pl.saturating_add(1)).min(MAX_INDENT),
             };
             levels.push(l);
             prev = Some(l);
         }
-        let empty = Paragraph::plain("");
-        if paragraphs.is_empty() {
-            return vec![self.paragraph(&empty, &[])];
+        if blocks.is_empty() {
+            let empty = Block::Paragraph(Paragraph::plain(""));
+            return vec![self.block(&empty, &[])];
         }
-        self.subtree(&paragraphs, &levels, 0, paragraphs.len(), 0)
+        self.subtree(blocks, &levels, 0, blocks.len(), 0)
     }
 
-    /// Outline elements for paragraphs `from..to`, whose top level is `level`.
-    fn subtree(&mut self, paras: &[&Paragraph], levels: &[u8], from: usize, to: usize, level: u8) -> Vec<ExtendedGuid> {
+    /// Outline elements for blocks `from..to`, whose top level is `level`.
+    fn subtree(&mut self, paras: &[&Block], levels: &[u8], from: usize, to: usize, level: u8) -> Vec<ExtendedGuid> {
         let mut out = Vec::new();
         let mut i = from;
         while i < to {
@@ -418,11 +433,40 @@ impl PageWriter {
             }
             let children = if j > i + 1 { self.subtree(paras, levels, i + 1, j, level.saturating_add(1)) } else { Vec::new() };
             if let Some(p) = paras.get(i) {
-                out.push(self.paragraph(p, &children));
+                out.push(self.block(p, &children));
             }
             i = j;
         }
         out
+    }
+
+    /// One block as an outline element.
+    fn block(&mut self, b: &Block, children: &[ExtendedGuid]) -> ExtendedGuid {
+        match b {
+            Block::Paragraph(p) => self.paragraph(p, children),
+            Block::Table { table } => self.table(table, children),
+        }
+    }
+
+    /// A table as an outline element whose content is a jcidTableNode (see [`crate::table`]).
+    fn table(&mut self, t: &Table, children: &[ExtendedGuid]) -> ExtendedGuid {
+        let mut rows = Vec::with_capacity(t.rows.len());
+        for row in &t.rows {
+            let mut cells = Vec::with_capacity(row.cells.len());
+            for cell in &row.cells {
+                let blocks: Vec<Block> = cell.paragraphs.iter().cloned().map(Block::Paragraph).collect();
+                let refs: Vec<&Block> = blocks.iter().collect();
+                let oes = self.outline_tree(&refs);
+                let props = crate::table::cell_props(cell, oes, self.modified, indents());
+                cells.push(self.b.add(jcid::TABLE_CELL_NODE, props));
+            }
+            let props = crate::table::row_props(cells, self.modified);
+            rows.push(self.b.add(jcid::TABLE_ROW_NODE, props));
+        }
+        let props = crate::table::table_props(t, rows, self.modified);
+        let node = self.b.add(jcid::TABLE_NODE, props);
+        let oe = self.oe_props(node, children, None);
+        self.b.add(jcid::OUTLINE_ELEMENT_NODE, oe)
     }
 
     /// One paragraph: its rich text, list and tag, as an outline element.
@@ -435,6 +479,8 @@ impl PageWriter {
         let runs: Vec<&Run> = para.runs.iter().filter(|r| !r.text.is_empty()).collect();
         let default = Run::default();
         let runs = if runs.is_empty() { vec![para.runs.first().unwrap_or(&default)] } else { runs };
+        // The paragraph's proofing language (LanguageID on its runs, RichEditTextLangID on it).
+        self.lcid = para.lang.as_deref().and_then(crate::lcid::from_tag).unwrap_or(LCID_EN_US);
         for run in runs {
             if let Some(url) = run.link.as_deref() {
                 let field = format!("\u{FDDF}HYPERLINK \"{}\"", url.replace('"', "%22"));
@@ -456,30 +502,63 @@ impl PageWriter {
         bytes.extend_from_slice(&[0, 0]);
         rt.push(prop::PARAGRAPH_STYLE, PropertyValue::Ids(vec![style]))
             .push(prop::RICH_EDIT_TEXT_UNICODE, PropertyValue::Bytes(bytes))
-            .push(prop::RICH_EDIT_TEXT_LANG_ID, PropertyValue::U16(LCID_EN_US as u16));
+            .push(prop::RICH_EDIT_TEXT_LANG_ID, PropertyValue::U16(u16::try_from(self.lcid).unwrap_or(LCID_EN_US as u16)));
+        self.lcid = LCID_EN_US;
+        if let Some(lang) = para.lang.as_deref() {
+            rt.push(prop::NC_PARA_LANG, wz_bytes(lang));
+        }
         if let Some(tag) = para.tag {
             let state = self.tag_state(tag);
             rt.push(prop::NOTE_TAG_STATES, PropertyValue::Sets(vec![state]));
         }
+        // ParagraphAlignment (§2.3.94) knows left, center and right; justified text says left
+        // there and keeps the rest in a private property.
+        match para.align {
+            Align::Left => {}
+            Align::Center => {
+                rt.push(prop::PARAGRAPH_ALIGNMENT, PropertyValue::U8(1));
+            }
+            Align::Right => {
+                rt.push(prop::PARAGRAPH_ALIGNMENT, PropertyValue::U8(2));
+            }
+            Align::Justify => {
+                rt.push(prop::PARAGRAPH_ALIGNMENT, PropertyValue::U8(0)).push(prop::NC_PARA_ALIGN, PropertyValue::U8(3));
+            }
+        }
         let rt = self.b.add(jcid::RICH_TEXT_OE_NODE, rt);
-        let list = para.list.map(|k| self.list_node(k));
+        let list = para.marker_style().map(|st| self.list_node(st));
         let oe = self.oe_props(rt, children, list);
         self.b.add(jcid::OUTLINE_ELEMENT_NODE, oe)
     }
 
-    fn list_node(&mut self, kind: ListKind) -> ExtendedGuid {
+    /// A jcidNumberListNode for a marker style. NumberListFormat (§2.3.20) is the character
+    /// count, then the characters: a bullet character, or U+FFFD and an MSONFC number format
+    /// ([MS-OSHARED] §2.2.1.3) followed by a full stop.
+    fn list_node(&mut self, style: ListStyle) -> ExtendedGuid {
         let mut p = PropertySet::default();
         p.push(prop::LAST_MODIFIED_TIME, PropertyValue::U32(self.modified));
-        match kind {
-            ListKind::Bullet => {
-                // NumberListFormat: the length, then "•" (§2.3.20).
-                p.push(prop::NUMBER_LIST_FORMAT, PropertyValue::Bytes(vec![1, 0, 0x22, 0x20]))
-                    .push(prop::LIST_FONT, wz_bytes("Calibri"))
+        match style.bullet_char() {
+            Some(c) => {
+                let mut units = [0u16; 2];
+                let enc = c.encode_utf16(&mut units);
+                let mut f: Vec<u16> = vec![enc.len() as u16];
+                f.extend_from_slice(enc);
+                // Calibri has • and –; the other shapes come from a symbol face.
+                let font = if matches!(style, ListStyle::Disc | ListStyle::Dash) { "Calibri" } else { "Segoe UI Symbol" };
+                p.push(prop::NUMBER_LIST_FORMAT, PropertyValue::Bytes(f.iter().flat_map(|u| u.to_le_bytes()).collect()))
+                    .push(prop::LIST_FONT, wz_bytes(font))
                     .push(prop::LIST_MSAA_INDEX, PropertyValue::U16(1));
             }
-            ListKind::Numbered => {
-                // "<U+FFFD><msonfcArabic>." : 1., 2., 3. …
-                p.push(prop::NUMBER_LIST_FORMAT, PropertyValue::Bytes(vec![3, 0, 0xFD, 0xFF, 0, 0, 0x2E, 0]))
+            None => {
+                let nfc: u16 = match style {
+                    ListStyle::UpperRoman => 1,
+                    ListStyle::LowerRoman => 2,
+                    ListStyle::UpperAlpha => 3,
+                    ListStyle::LowerAlpha => 4,
+                    _ => 0,
+                };
+                let f = [3u16, 0xFFFD, nfc, u16::from(b'.')];
+                p.push(prop::NUMBER_LIST_FORMAT, PropertyValue::Bytes(f.iter().flat_map(|u| u.to_le_bytes()).collect()))
                     .push(prop::FONT, wz_bytes("Calibri"))
                     .push(prop::LANGUAGE_ID, PropertyValue::U32(LCID_EN_US));
             }
@@ -487,25 +566,39 @@ impl PageWriter {
         self.b.add(jcid::NUMBER_LIST_NODE, p)
     }
 
-    /// A NoteTagState (§2.2.42) and its shared definition.
+    /// A NoteTagState (§2.2.42) and its shared definition. Shapes are MS-ONE's NoteTagShape
+    /// values (§2.3.86): the highlight tags have no icon (0) and a NoteTagHighlightColor instead.
     fn tag_state(&mut self, tag: Tag) -> PropertySet {
-        let (shape, label, item, checkable, checked) = match tag {
-            Tag::ToDo { checked } => (3u16, "To Do", 0u16, true, checked),
-            Tag::Important => (13, "Important", 1, false, false),
-            Tag::Question => (15, "Question", 2, false, false),
+        let (shape, checkable, checked) = match tag {
+            Tag::ToDo { checked } => (3u16, true, checked),
+            Tag::Important => (13, false, false),
+            Tag::Question => (15, false, false),
+            Tag::Critical => (17, false, false),
+            Tag::Contact => (18, false, false),
+            Tag::Idea => (21, false, false),
+            Tag::Address => (23, false, false),
+            Tag::Phone => (109, false, false),
+            Tag::RememberForLater | Tag::Definition | Tag::Highlight => (0, false, false),
         };
-        let def = match self.tags.get(&shape) {
+        let item = Tag::ALL.iter().position(|t| t.name() == tag.name()).unwrap_or(0) as u16;
+        let def = match self.tags.get(tag.name()) {
             Some(d) => *d,
             None => {
                 let mut d = PropertySet::default();
-                d.push(prop::NOTE_TAG_LABEL, wz_bytes(label))
-                    // hasLabel | hasIcon
-                    .push(prop::NOTE_TAG_PROPERTY_STATUS, PropertyValue::U32(0x9))
-                    .push(prop::NOTE_TAG_SHAPE, PropertyValue::U16(shape))
-                    .push(prop::ACTION_ITEM_SCHEMA_VERSION, PropertyValue::U8(0))
-                    .push(prop::ACTION_ITEM_TYPE, PropertyValue::U16(item));
+                let highlight = tag.highlight();
+                // NoteTagPropertyStatus: hasLabel, plus hasIcon or hasHighlightColor.
+                let status = if highlight.is_some() { 0x1 | 0x4 } else { 0x1 | 0x8 };
+                d.push(prop::NOTE_TAG_LABEL, wz_bytes(tag.label()))
+                    .push(prop::NOTE_TAG_PROPERTY_STATUS, PropertyValue::U32(status))
+                    .push(prop::NOTE_TAG_SHAPE, PropertyValue::U16(shape));
+                if let Some(c) = highlight {
+                    d.push(prop::NOTE_TAG_HIGHLIGHT_COLOR, PropertyValue::U32(to_colorref(c)));
+                }
+                d.push(prop::ACTION_ITEM_SCHEMA_VERSION, PropertyValue::U8(0))
+                    .push(prop::ACTION_ITEM_TYPE, PropertyValue::U16(item))
+                    .push(prop::NC_TAG, wz_bytes(tag.name()));
                 let id = self.b.add(jcid::NOTE_TAG_DEFINITION, d);
-                self.tags.insert(shape, id);
+                self.tags.insert(tag.name(), id);
                 id
             }
         };
@@ -534,6 +627,9 @@ impl PageWriter {
             .push(prop::OFFSET_FROM_PARENT_VERT, pt_to_hi(img.pos.y));
         if !img.alt.is_empty() {
             p.push(prop::IMAGE_ALT_TEXT, wz_bytes(&img.alt));
+        }
+        if let Some(t) = transform_value(&img.transform) {
+            p.push(prop::NC_PICTURE_TRANSFORM, t);
         }
         if let Some(tag) = printout {
             p.push(prop::NC_PRINTOUT, printout_value(tag));
@@ -569,4 +665,19 @@ fn printout_value((group, index): (Guid, u32)) -> PropertyValue {
     let mut b = group.0.to_vec();
     b.extend_from_slice(&index.to_le_bytes());
     PropertyValue::Bytes(b)
+}
+
+/// [`prop::NC_PICTURE_TRANSFORM`]'s value; `None` for a picture drawn as it is.
+pub(crate) fn transform_value(t: &notecraft_doc::PictureTransform) -> Option<PropertyValue> {
+    let t = t.sanitized();
+    if t.is_identity() {
+        return None;
+    }
+    let mut b = vec![t.rotation, u8::from(t.flip_h) | (u8::from(t.flip_v) << 1)];
+    if let Some(c) = t.crop {
+        for v in [c.left, c.top, c.right, c.bottom] {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    Some(PropertyValue::Bytes(b))
 }

@@ -34,12 +34,14 @@ impl Class {
 /// prefix.
 pub const TABLE: &[(&str, Class)] = &[
     ("geom", Class::Layer(0)),
+    ("fonts", Class::Standalone),
     ("doc", Class::Layer(1)),
     ("onestore", Class::Layer(2)),
     ("one", Class::Layer(2)),
     ("onepkg", Class::Layer(2)),
     ("formats", Class::Layer(2)),
     ("printout", Class::Layer(3)),
+    ("pdf", Class::Layer(3)),
     ("engine", Class::Layer(4)),
     ("ui-egui", Class::Layer(6)),
     ("testkit", Class::Testkit),

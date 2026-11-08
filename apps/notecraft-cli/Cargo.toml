@@ -20,4 +20,5 @@ notecraft-formats = { workspace = true }
 notecraft-one = { workspace = true }
 notecraft-onepkg = { workspace = true }
 notecraft-onestore = { workspace = true }
+notecraft-pdf = { workspace = true }
 serde_json = { workspace = true }

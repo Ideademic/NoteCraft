@@ -3,19 +3,23 @@
 use std::collections::{HashMap, HashSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use notecraft_doc::{Guid, Notebook, Page, Section, SectionEntry};
+use chrono::{DateTime, Utc};
+use notecraft_doc::{Guid, Notebook, Page, PageVersion, Section, SectionEntry};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::history::{History, Snapshot};
 use crate::io::recent::RecentNotebooks;
 use crate::io::{IoError, Layout, Origin, Storage};
+use crate::unread::ReadState;
 use crate::{CmdError, CmdOutput, registry};
 
 /// Autosave waits this long after the last change, seconds.
 pub const AUTOSAVE_DELAY_SECS: f64 = 2.0;
 /// …but never longer than this after the first unsaved change, seconds (steady typing).
 pub const AUTOSAVE_MAX_WAIT_SECS: f64 = 30.0;
+/// A page edited for a while gets at most one new version per this many seconds.
+pub const VERSION_INTERVAL_SECS: i64 = 5 * 60;
 
 /// Where the user is: the current notebook, section and page.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,17 +42,31 @@ pub struct Session {
     /// Notebooks whose table of contents (name, colour, entries, their order or colours) changed
     /// since it was last saved.
     pub dirty_tocs: HashSet<Guid>,
+    /// Notebooks whose recycle bin changed since it was last saved.
+    pub dirty_bins: HashSet<Guid>,
+    /// History ▸ Page Versions: the page list shows each page's versions under it.
+    pub show_versions: bool,
+    /// A page version open read-only: (page, version). Going to another page closes it.
+    pub viewing_version: Option<(Guid, Guid)>,
+    /// Which pages the user has seen (History ▸ Unread). The app loads and stores it
+    /// ([`ReadState::from_json`]).
+    pub read_state: ReadState,
     /// Ink strokes on the current page selected by the lasso.
     pub ink_selection: Vec<Guid>,
     /// Draw › Ink to Shape is on: `draw.stroke` redraws strokes that look like shapes
     /// ([`Session::ink_to_shape`]; set with `draw.inkToShape`).
     pub(crate) ink_to_shape: bool,
+    /// Spelling: the default proofing language and words ignored once (Review › Spelling).
+    pub proof: crate::proof::ProofState,
     /// Saves notebooks ([`Session::save_dirty`], autosave). `None`: nothing is saved (tests,
     /// the CLI).
     pub storage: Option<Box<dyn Storage>>,
     /// Messages for the user (a file with content NoteCraft can't keep, a failed autosave…),
     /// oldest first. The UI shows and drains them.
     pub notices: Vec<String>,
+    /// The user's page templates (Insert › Page Templates › Save current page as a template).
+    /// The app loads and stores them; `template.saveCurrent` and `template.delete` change them.
+    pub templates: Vec<crate::templates::Template>,
     /// Bumped by every change to the notebooks (commands, undo, redo): caches compare it.
     pub revision: u64,
     /// Recently opened notebooks (File ▸ Open). The app loads and stores it
@@ -58,6 +76,10 @@ pub struct Session {
     /// same folder as its [`crate::io::FolderStorage::root`]. `notebook.new` uses it.
     pub default_location: Option<std::path::PathBuf>,
     pub(crate) history: History,
+    /// When each page last got a version this session ([`VERSION_INTERVAL_SECS`]).
+    pub(crate) versioned_at: HashMap<Guid, DateTime<Utc>>,
+    /// Tests: the time page versions and the recycle bin see instead of the clock.
+    pub(crate) clock: Option<DateTime<Utc>>,
     /// Where each notebook's sections were last saved (or found when opened).
     pub(crate) layouts: HashMap<Guid, Layout>,
     /// Sections the "can't edit yet; backup kept" notice was shown for.
@@ -89,14 +111,22 @@ impl Session {
             current: Location::default(),
             dirty: HashSet::new(),
             dirty_tocs: HashSet::new(),
+            dirty_bins: HashSet::new(),
+            show_versions: false,
+            viewing_version: None,
+            read_state: ReadState::default(),
             ink_selection: Vec::new(),
             ink_to_shape: false,
+            proof: crate::proof::ProofState::default(),
             storage: None,
             notices: Vec::new(),
+            templates: Vec::new(),
             revision: 0,
             recent: RecentNotebooks::default(),
             default_location: None,
             history: History::default(),
+            versioned_at: HashMap::new(),
+            clock: None,
             layouts: HashMap::new(),
             warned_unsupported: HashSet::new(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -117,11 +147,16 @@ impl Session {
         Session::new(Notebook::new_default(), Origin::Scratch)
     }
 
-    /// Opens `notebook` (after the others) and goes to its first page. Clears undo.
-    pub fn add_notebook(&mut self, notebook: Notebook, origin: Origin) -> Guid {
+    /// Opens `notebook` (after the others) and goes to its first page. Clears undo. What has been
+    /// in its recycle bin longer than [`notecraft_doc::history::RECYCLE_BIN_DAYS`] goes.
+    pub fn add_notebook(&mut self, mut notebook: Notebook, origin: Origin) -> Guid {
         let id = notebook.id;
+        if notebook.recycle_bin.expire(self.now()) > 0 {
+            self.dirty_bins.insert(id);
+        }
+        self.read_state.adopt(&notebook);
         if let Some(s) = notebook.all_sections().iter().find(|s| s.source.unsupported_content) {
-            self.notices.push(format!("\u{201c}{}\u{201d} has content NoteCraft can show but not edit; it is kept when saving.", s.name));
+            self.notices.push(format!("\u{201c}{}\u{201d} has content NoteCraft can't edit yet (such as tables inside tables, or pictures in table cells); saving may not keep all of it.", s.name));
         }
         if let Some(l) = crate::io::initial_layout(&notebook, &origin) {
             self.layouts.insert(id, l);
@@ -169,17 +204,77 @@ impl Session {
             }
             (Ok(out), Some(before)) => {
                 if out.changed {
+                    if !spec.id.starts_with("history.") {
+                        self.keep_versions(&before.notebooks);
+                    }
                     self.note_changes(&before.notebooks);
                     let merge = params.get("mergeKey").and_then(Value::as_str).map(str::to_owned);
                     self.history.checkpoint(before, merge);
                 }
                 self.normalize_location();
+                self.mark_current_read();
                 Ok(out)
             }
             (Ok(out), None) => {
                 self.normalize_location();
+                // The page on screen has been seen, unless the user just marked it unread.
+                if !matches!(spec.id, crate::ids::HISTORY_MARK_UNREAD | crate::ids::HISTORY_TOGGLE_READ) {
+                    self.mark_current_read();
+                }
                 Ok(out)
             }
+        }
+    }
+
+    /// The time page versions and the recycle bin go by.
+    pub(crate) fn now(&self) -> DateTime<Utc> {
+        self.clock.unwrap_or_else(notecraft_doc::now)
+    }
+
+    /// Keeps a version of each page this command changed, as it was before: the first change
+    /// of a page this session, then at most one per [`VERSION_INTERVAL_SECS`]. Blank pages and
+    /// notebooks with history disabled get none.
+    fn keep_versions(&mut self, before: &[Notebook]) {
+        let now = self.now();
+        let mut stamps = std::mem::take(&mut self.versioned_at);
+        for nb in &mut self.notebooks {
+            if nb.history_disabled {
+                continue;
+            }
+            let Some(old_nb) = before.iter().find(|b| b.id == nb.id) else { continue };
+            for sec in nb.all_sections_mut() {
+                let Some(old_sec) = old_nb.section(sec.id) else { continue };
+                if *old_sec == *sec {
+                    continue;
+                }
+                for page in &mut sec.pages {
+                    if stamps.get(&page.id).is_some_and(|t| now.signed_duration_since(*t).num_seconds().abs() < VERSION_INTERVAL_SECS) {
+                        continue;
+                    }
+                    let Some(old) = old_sec.page(page.id) else { continue };
+                    if same_content(old, page) || is_blank(old) || page.versions.last().is_some_and(|v| same_content(&v.page, old)) {
+                        continue;
+                    }
+                    page.versions.push(PageVersion::of(old));
+                    notecraft_doc::history::trim_versions(&mut page.versions);
+                    stamps.insert(page.id, now);
+                }
+            }
+        }
+        self.versioned_at = stamps;
+    }
+
+    /// Whether page `id` of an open notebook is unread (History ▸ Unread).
+    pub fn is_unread(&self, id: Guid) -> bool {
+        self.notebooks.iter().find_map(|n| n.find_page(id).map(|(_, p)| self.read_state.is_unread(n.id, p))).unwrap_or(false)
+    }
+
+    /// Marks the current page read (it is on screen).
+    pub(crate) fn mark_current_read(&mut self) {
+        let Some(nb) = self.current.notebook else { return };
+        let Some(page) = self.current.page else { return };
+        if let Some((_, p)) = self.notebooks.iter().find(|n| n.id == nb).and_then(|n| n.find_page(page)) {
+            self.read_state.mark_read(p);
         }
     }
 
@@ -262,6 +357,9 @@ impl Session {
             if old.is_none_or(|o| toc_signature(o) != toc_signature(nb)) {
                 self.dirty_tocs.insert(nb.id);
             }
+            if old.is_none_or(|o| o.recycle_bin != nb.recycle_bin) {
+                self.dirty_bins.insert(nb.id);
+            }
             for s in nb.all_sections() {
                 if old.and_then(|o| o.section(s.id)) != Some(s) {
                     self.dirty.insert(s.id);
@@ -277,6 +375,7 @@ impl Session {
         let sections: Vec<Guid> = nb.all_sections().iter().map(|s| s.id).collect();
         self.dirty.extend(sections);
         self.dirty_tocs.insert(id);
+        self.dirty_bins.insert(id);
         self.revision += 1;
     }
 
@@ -287,12 +386,14 @@ impl Session {
 
     /// Whether anything is unsaved.
     pub fn is_dirty(&self) -> bool {
-        !self.dirty.is_empty() || !self.dirty_tocs.is_empty()
+        !self.dirty.is_empty() || !self.dirty_tocs.is_empty() || !self.dirty_bins.is_empty()
     }
 
     /// Whether notebook `id` has unsaved changes.
     pub fn notebook_is_dirty(&self, id: Guid) -> bool {
-        self.dirty_tocs.contains(&id) || self.notebook(id).is_some_and(|nb| nb.all_sections().iter().any(|s| self.dirty.contains(&s.id)))
+        self.dirty_tocs.contains(&id)
+            || self.dirty_bins.contains(&id)
+            || self.notebook(id).is_some_and(|nb| nb.all_sections().iter().any(|s| self.dirty.contains(&s.id)))
     }
 
     /// Saves every notebook with unsaved changes through [`Session::storage`]; returns how many
@@ -413,7 +514,24 @@ impl Session {
         if self.current.page != old_page {
             self.ink_selection.clear();
         }
+        if let Some((page, version)) = self.viewing_version {
+            let exists = self.current_page().is_some_and(|p| p.id == page && p.versions.iter().any(|v| v.id == version));
+            if !exists {
+                self.viewing_version = None;
+            }
+        }
     }
+}
+
+/// Whether two pages show the same thing (title, background, elements, ink), whatever their
+/// times, level and versions.
+pub(crate) fn same_content(a: &Page, b: &Page) -> bool {
+    a.title == b.title && a.background == b.background && a.elements == b.elements && a.ink == b.ink
+}
+
+/// A page with nothing on it.
+fn is_blank(p: &Page) -> bool {
+    p.title.trim().is_empty() && p.elements.is_empty() && p.ink.is_empty()
 }
 
 /// What a notebook's table of contents records: name, colour, and the entry tree's ids, names
@@ -434,7 +552,7 @@ fn toc_signature(nb: &Notebook) -> String {
             }
         }
     }
-    let mut out = format!("{}|{}|", nb.name, nb.color.to_hex());
+    let mut out = format!("{}|{}|{}|", nb.name, nb.color.to_hex(), nb.history_disabled);
     walk(&nb.sections, 0, &mut out);
     out
 }

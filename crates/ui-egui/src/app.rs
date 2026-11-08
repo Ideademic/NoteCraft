@@ -5,6 +5,7 @@
 pub mod files;
 pub mod frame;
 pub mod keys;
+pub mod narrow;
 pub mod shots;
 
 use egui::Rect;
@@ -34,6 +35,8 @@ pub const NOTEBOOK_BAR_WIDTH: f32 = 30.0;
 pub const PAGE_LIST_WIDTH: f32 = 230.0;
 /// Most notebooks the recent list keeps.
 pub const MAX_RECENT: usize = 12;
+/// Most fonts the font box lists as recently used.
+pub const MAX_RECENT_FONTS: usize = 8;
 /// Most steps the Back button remembers.
 pub const MAX_BACK: usize = 50;
 
@@ -101,8 +104,22 @@ pub struct Prefs {
     /// Quick Access Toolbar entries shown, in [`QAT_CHOICES`] order.
     pub qat: Vec<String>,
     pub window: Option<WindowGeometry>,
+    /// The font box's Recently Used Fonts, most recent first.
+    pub recent_fonts: Vec<String>,
     /// Notebooks open when the app last closed (paths), reopened at the next start.
     pub open_notebooks: Vec<String>,
+    /// Interface language: [`crate::i18n::AUTO`] (follow the system) or a language code.
+    pub language: String,
+    /// Desktop: look for a newer release when the app starts (File › Options).
+    pub check_for_updates: bool,
+    /// The page zoom (1.0 = 100 %), kept for the next start.
+    pub zoom: f32,
+    /// Review › Spelling: red wavy lines under misspelled words as you type (File › Options).
+    pub check_spelling: bool,
+    /// Words added to the dictionary (Add to Dictionary), lower case.
+    pub user_words: Vec<String>,
+    /// The proofing language of text without one (a BCP 47 tag); empty follows the system.
+    pub proofing_language: String,
 }
 
 impl Default for Prefs {
@@ -119,6 +136,13 @@ impl Default for Prefs {
             qat: vec![QAT_BACK.to_owned(), notecraft_engine::ids::EDIT_UNDO.to_owned(), notecraft_engine::ids::EDIT_REDO.to_owned()],
             window: None,
             open_notebooks: Vec::new(),
+            recent_fonts: Vec::new(),
+            language: crate::i18n::AUTO.to_owned(),
+            check_for_updates: true,
+            zoom: 1.0,
+            check_spelling: true,
+            user_words: Vec::new(),
+            proofing_language: String::new(),
         }
     }
 }
@@ -135,13 +159,36 @@ impl Prefs {
         }
         p.recent.truncate(MAX_RECENT);
         p.open_notebooks.truncate(64);
+        p.recent_fonts.retain(|f| !f.trim().is_empty() && f.chars().count() <= 128);
+        p.recent_fonts.truncate(MAX_RECENT_FONTS);
         p.qat.retain(|id| QAT_CHOICES.contains(&id.as_str()));
         p.window = p.window.and_then(WindowGeometry::sanitized);
+        p.zoom = if p.zoom.is_finite() { notecraft_geom::zoom::clamp(p.zoom) } else { 1.0 };
+        p.user_words.retain(|w| !w.trim().is_empty() && w.chars().count() <= 64);
+        p.user_words.truncate(100_000);
+        p.proofing_language = notecraft_doc::page::clean_lang(&p.proofing_language).unwrap_or_default();
+        // Junk follows the system. A well-formed code this build has no catalog for is kept (it
+        // follows the system meanwhile), so a build with that language shows it again.
+        let tag_like = |s: &str| !s.is_empty() && s.len() <= 35 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+        if !tag_like(&p.language) {
+            p.language = crate::i18n::AUTO.to_owned();
+        }
         p
     }
 
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(self).unwrap_or_default()
+    }
+
+    /// Puts a font first in the font box's recently used fonts.
+    pub fn remember_font(&mut self, font: &str) {
+        let font = font.trim();
+        if font.is_empty() {
+            return;
+        }
+        self.recent_fonts.retain(|f| !f.eq_ignore_ascii_case(font));
+        self.recent_fonts.insert(0, font.chars().take(128).collect());
+        self.recent_fonts.truncate(MAX_RECENT_FONTS);
     }
 
     /// Puts a notebook first in the recent list.
@@ -186,6 +233,9 @@ pub enum Prompt {
     Recovery { names: Vec<String> },
     /// A message with an OK button.
     Message { title: String, body: String },
+    /// A yes / no question that runs `command` with `params` on yes (Empty Recycle Bin, Delete
+    /// All Versions).
+    Confirm { title: String, body: String, yes: String, command: String, params: Value },
 }
 
 /// UI state that isn't part of the notebooks.
@@ -199,11 +249,15 @@ pub struct UiState {
     pub ribbon_layout: RibbonLayout,
     /// Always show the ribbon, show tabs only, or full-screen mode.
     pub ribbon_display: RibbonDisplay,
-    /// A hidden ribbon shown for one use (Show tabs only: a tab was clicked; full-screen mode:
-    /// the strip at the top was clicked).
+    /// Full-screen mode: the tabs and ribbon are revealed for one use (the strip at the top was
+    /// clicked). Show tabs only never peeks: a click on a tab shows the ribbon for good.
     pub ribbon_peek: bool,
     pub notebook_pane_open: bool,
     pub page_list_open: bool,
+    /// Panes folded for room in a narrow window, for now ([`narrow`]).
+    pub narrow: narrow::NarrowPanes,
+    /// The message fading at the bottom of the window ([`crate::toast`]).
+    pub toast: Option<crate::toast::Toast>,
     /// View › Full Page View: the page alone (no ribbon, panes or tabs).
     pub full_page_view: bool,
     /// View › Hide Page Title. The canvas should skip the title block while this is on.
@@ -233,6 +287,28 @@ pub struct UiState {
     pub new_notebook_dir: Option<String>,
     /// File › Info: the notebook whose settings are open.
     pub info_notebook: Option<notecraft_doc::Guid>,
+    /// History ▸ Notebook Recycle Bin is open in the page area.
+    pub bin_view: Option<crate::panes::history::BinView>,
+    /// Where the user was when the recycle bin opened (going elsewhere closes it).
+    pub bin_opened_at: Location,
+    /// History ▸ Recent Edits is open, for this period (`history.recentEdits`'s `since`).
+    pub recent_edits: Option<String>,
+    /// Find on the page (Ctrl+F) is open.
+    pub find: Option<crate::dialogs::find::FindBar>,
+    /// Home › Find Tags: the Tags Summary pane is open.
+    pub tags_pane: Option<crate::panes::tags::TagsPane>,
+    /// Insert › Page Templates: the Templates pane is open.
+    pub templates_pane: Option<crate::panes::templates::TemplatesPane>,
+    /// The Alt Text dialog is open for this picture, with the text so far.
+    pub alt_text: Option<(notecraft_doc::Guid, String)>,
+    /// Where the search box looks (`search`'s scope: `section`, `sectionGroup`, `notebook`,
+    /// `all`).
+    pub search_scope: String,
+    /// Bumped when the user's page templates change (the host stores them, see
+    /// [`NoteApp::templates_json`]).
+    pub templates_revision: u64,
+    /// Review: the Spelling pane, the link and word count dialogs ([`crate::review`]).
+    pub review: crate::review::ReviewUi,
     pub prefs: Prefs,
 }
 
@@ -248,6 +324,8 @@ impl Default for UiState {
             ribbon_peek: false,
             notebook_pane_open: prefs.notebook_pane_open,
             page_list_open: prefs.page_list_open,
+            narrow: narrow::NarrowPanes::default(),
+            toast: None,
             full_page_view: false,
             hide_page_title: false,
             dark: false,
@@ -265,6 +343,16 @@ impl Default for UiState {
             new_notebook_name: String::new(),
             new_notebook_dir: None,
             info_notebook: None,
+            bin_view: None,
+            bin_opened_at: Location::default(),
+            recent_edits: None,
+            find: None,
+            tags_pane: None,
+            templates_pane: None,
+            alt_text: None,
+            search_scope: "all".to_owned(),
+            templates_revision: 0,
+            review: crate::review::ReviewUi::default(),
             prefs,
         }
     }
@@ -276,6 +364,10 @@ pub struct NoteApp {
     pub services: Services,
     pub ui: UiState,
     pub canvas: CanvasState,
+    /// The canvas state of read-only pages (a page version, a page in the recycle bin).
+    pub preview_canvas: CanvasState,
+    /// File › Print: its settings, preview and the job being sent.
+    pub print: crate::backstage::print::PrintPage,
     pub tokens: Tokens,
     /// macOS: the title bar is drawn by us under AppKit's traffic lights (hidden system title bar,
     /// full-size content view).
@@ -287,6 +379,8 @@ pub struct NoteApp {
     pub canvas_rect: Option<Rect>,
     /// What the system says about dark mode (set by the host; `None`: ask egui).
     pub system_dark: Option<bool>,
+    /// The update check and prompt ([`crate::updates`]; desktop only).
+    pub updates: crate::updates::Updates,
     applied_dark: Option<bool>,
     /// macOS: the `movable` flag last applied to the window (craft-window).
     #[cfg(target_os = "macos")]
@@ -301,11 +395,14 @@ impl NoteApp {
             services,
             ui,
             canvas: CanvasState::default(),
+            preview_canvas: CanvasState::default(),
+            print: crate::backstage::print::PrintPage::default(),
             tokens: Tokens::light(),
             integrated_titlebar: false,
             window_buttons: None,
             canvas_rect: None,
             system_dark: None,
+            updates: crate::updates::Updates::default(),
             applied_dark: None,
             #[cfg(target_os = "macos")]
             movable: None,
@@ -319,8 +416,25 @@ impl NoteApp {
         self.ui.ribbon_layout = prefs.ribbon_layout;
         self.ui.ribbon_display = prefs.ribbon_display;
         self.ui.ribbon_peek = false;
+        self.canvas.set_zoom(prefs.zoom);
+        crate::review::load_prefs(&mut self.session, &prefs);
         self.ui.prefs = prefs;
         self.applied_dark = None;
+    }
+
+    /// Takes the user's page templates (Insert › Page Templates › Save current page as a
+    /// template), as [`NoteApp::templates_json`] gave them: the host keeps them beside its
+    /// settings (`templates.json`, or browser storage). Junk is ignored.
+    pub fn load_templates(&mut self, json: &str) {
+        let list: Vec<notecraft_engine::templates::Template> = serde_json::from_str(json).unwrap_or_default();
+        self.session.templates =
+            list.into_iter().filter(|t| !t.is_builtin() && !t.id.trim().is_empty()).take(notecraft_engine::templates::MAX_USER_TEMPLATES).collect();
+    }
+
+    /// The user's page templates, for the host to store when [`UiState::templates_revision`]
+    /// changes.
+    pub fn templates_json(&self) -> String {
+        serde_json::to_string(&self.session.templates).unwrap_or_default()
     }
 
     /// The settings to keep, with the panes, ribbon and open notebooks as they are now.
@@ -339,7 +453,23 @@ impl NoteApp {
         p.page_list_open = self.ui.page_list_open;
         p.ribbon_layout = self.ui.ribbon_layout;
         p.ribbon_display = self.ui.ribbon_display;
+        p.zoom = self.canvas.zoom;
         p
+    }
+
+    /// Takes the pages the user had seen (History ▸ Unread), as [`NoteApp::read_state_json`]
+    /// gave them: the host stores them beside its settings (`read.json`). Open notebooks the
+    /// state doesn't know count as read through.
+    pub fn load_read_state(&mut self, json: &str) {
+        self.session.read_state = notecraft_engine::unread::ReadState::from_json(json);
+        for nb in &self.session.notebooks {
+            self.session.read_state.adopt(nb);
+        }
+    }
+
+    /// The pages the user has seen, for the host to store.
+    pub fn read_state_json(&self) -> String {
+        self.session.read_state.to_json()
     }
 
     /// Whether command `id` exists (some land in later versions; their buttons stay greyed out).
@@ -350,6 +480,21 @@ impl NoteApp {
     /// Whether command `id` exists and can run now.
     pub fn can(&self, id: &str) -> bool {
         self.session.is_enabled(id)
+    }
+
+    /// Shows `text` in a toast that fades by itself.
+    pub fn toast(&mut self, text: impl Into<String>) {
+        self.ui.toast = Some(crate::toast::Toast::new(text));
+    }
+
+    /// The toast for a control that isn't built yet.
+    pub fn coming_soon(&mut self) {
+        self.toast(crate::tl!("Coming soon"));
+    }
+
+    /// The toast showing, if any (for tests).
+    pub fn toast_text(&self) -> Option<&str> {
+        self.ui.toast.as_ref().map(|t| t.text.as_str())
     }
 
     /// Runs a command; an error is also shown in the status bar.
@@ -425,6 +570,8 @@ impl NoteApp {
 
     /// Per-frame work that isn't drawing: theme, autosave, delivered files, the dirty flag.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        crate::fonts::sync(ctx);
+        crate::i18n::set_current(crate::i18n::Lang::from_pref(&self.ui.prefs.language));
         let system = self
             .system_dark
             .or_else(|| self.services.prefers_dark.as_ref().and_then(|f| f()))
@@ -462,7 +609,10 @@ impl NoteApp {
         self.drain_canvas_messages();
         self.remember_open_notebooks();
         files::drain_inbox(self);
+        crate::updates::tick(self, ctx);
         keys::handle(self, ctx);
+        crate::backstage::print::poll(self, ctx);
+        crate::review::tick(self, ctx);
         if let Some(hook) = &self.services.on_dirty {
             hook(self.session.is_dirty());
         }
@@ -526,3 +676,9 @@ impl NoteApp {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_editing;
+#[cfg(test)]
+mod tests_history;
+#[cfg(test)]
+mod tests_review;

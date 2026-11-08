@@ -12,24 +12,38 @@
 //! Units: page positions are points; on screen a point is [`PX_PER_PT`] logical pixels at 100 %
 //! zoom (96 dpi, like Office), so `scale = zoom * PX_PER_PT`.
 
+pub mod clipboard;
+pub mod context_menu;
+pub mod crop;
 pub mod drop;
 pub mod edit;
+pub mod find;
+pub mod format_painter;
 pub mod images;
 pub mod ink;
 pub mod layout;
+pub mod links;
 pub mod page;
 pub mod pointer;
+pub mod proof;
 pub mod shape;
+pub mod space;
 pub mod style;
+pub mod table;
 pub mod text;
 pub mod view;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_editing;
+#[cfg(test)]
+mod tests_tables;
 
 use egui::{Pos2, Sense};
 use notecraft_doc::{Color, Guid, InkTool, Point};
 pub use notecraft_engine::cmd::shapes::ShapeKind;
+use notecraft_engine::text::{CellRange, CellRef, Frame};
 use notecraft_engine::{CmdError, CmdOutput, Session, TextPos};
 use serde_json::{Value, json};
 
@@ -56,6 +70,8 @@ pub enum Tool {
     Lasso,
     /// Draw › Shapes: drag to insert this shape.
     Shape(ShapeKind),
+    /// Insert › Insert Space: drag a line down (or up) to push what is below it ([`space`]).
+    InsertSpace,
 }
 
 impl Tool {
@@ -195,7 +211,8 @@ impl PendingStyle {
 }
 
 /// The caret in a note container: `head` is where it blinks, `anchor` the other end of the
-/// selection (equal when nothing is selected).
+/// selection (equal when nothing is selected). Both are in one flow: the container's own
+/// paragraphs, or the table cell `cell`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextCaret {
     pub outline: Guid,
@@ -205,11 +222,25 @@ pub struct TextCaret {
     pub merge_key: String,
     /// Remembered x (screen px from the outline's left) for Up/Down.
     pub goal_x: Option<f32>,
+    /// The table cell the caret is in (`None`: the container's own paragraphs).
+    pub cell: Option<CellRef>,
+    /// Whole cells selected (a drag across cells, Table ▸ Select); the caret stays in `cell`.
+    pub cells: Option<CellRange>,
 }
 
 impl TextCaret {
     pub fn at(outline: Guid, pos: TextPos) -> TextCaret {
-        TextCaret { outline, anchor: pos, head: pos, merge_key: outline.to_string(), goal_x: None }
+        TextCaret { outline, anchor: pos, head: pos, merge_key: outline.to_string(), goal_x: None, cell: None, cells: None }
+    }
+
+    /// A caret in table cell `cell`.
+    pub fn in_cell(outline: Guid, cell: CellRef, pos: TextPos) -> TextCaret {
+        TextCaret { cell: Some(cell), ..TextCaret::at(outline, pos) }
+    }
+
+    /// The flow the caret is in.
+    pub fn frame(&self) -> Frame {
+        self.cell.map_or(Frame::Top, Frame::Cell)
     }
 
     /// Start and end in document order.
@@ -262,11 +293,28 @@ pub struct CanvasState {
     pub(crate) title_buf: Option<String>,
     /// The keyboard moved the caret: scroll it into view.
     pub(crate) reveal_caret: bool,
+    /// Home › Format Painter is armed with this formatting ([`format_painter`]).
+    pub painter: Option<format_painter::Armed>,
+    /// Find on the page (Ctrl+F): the matches to highlight and the current one ([`find`]).
+    pub find: Option<find::Highlights>,
+    /// A picture being cropped with handles ([`crop`]).
+    pub crop: Option<crop::CropEdit>,
+    /// Put the caret at the start of this paragraph of this container and scroll it into view
+    /// (Tags Summary, find): `(outline, para)`.
+    pub goto: Option<(Guid, usize)>,
+    /// The table cell `goto`'s paragraph is in.
+    pub goto_cell: Option<CellRef>,
+    /// Undo grouping of typing ([`edit::Burst`]).
+    pub(crate) burst: edit::Burst,
+    /// The next paste event pastes plain text (Ctrl+Shift+V, Paste › Keep Text Only).
+    pub paste_plain: bool,
     /// Last frame's canvas rect and view origin (tests and the shell's Fit Page Width).
     pub last_rect: Option<egui::Rect>,
     pub(crate) last_origin: Option<Pos2>,
     /// Status messages the canvas wants shown (errors from commands); the shell may drain them.
     pub messages: Vec<String>,
+    /// Spelling marks, the right-click menu's target, links being followed ([`context_menu`]).
+    pub review: context_menu::CanvasReview,
 }
 
 impl Default for CanvasState {
@@ -288,9 +336,17 @@ impl Default for CanvasState {
             gesture: pointer::Gesture::None,
             title_buf: None,
             reveal_caret: false,
+            painter: None,
+            find: None,
+            crop: None,
+            goto: None,
+            goto_cell: None,
+            burst: edit::Burst::default(),
+            paste_plain: false,
             last_rect: None,
             last_origin: None,
             messages: Vec::new(),
+            review: context_menu::CanvasReview::default(),
         }
     }
 }
@@ -310,6 +366,8 @@ impl CanvasState {
                 self.selection.clear();
             }
             self.gesture = pointer::Gesture::None;
+            self.crop = None;
+            self.painter = None;
         }
         self.tool = tool;
     }
@@ -331,10 +389,37 @@ pub fn selection_params(state: &CanvasState) -> Option<Value> {
     let c = state.caret.as_ref()?;
     let (a, b) = c.range();
     let mut v = json!({"outline": c.outline, "start": a.to_json(), "end": b.to_json()});
-    if let (Some(page), Value::Object(m)) = (state.page, &mut v) {
-        m.insert("page".into(), json!(page));
+    if let Value::Object(m) = &mut v {
+        if let Some(page) = state.page {
+            m.insert("page".into(), json!(page));
+        }
+        if let Some(cell) = c.cell {
+            m.insert("cell".into(), cell.to_json());
+        }
+        if let Some(cells) = c.cells {
+            m.insert("cells".into(), cells.to_json());
+        }
     }
     Some(v)
+}
+
+/// The table the caret is in, for the Table tab: the outline, the caret's cell and the selected
+/// cells. `None` outside a table.
+pub fn table_context(state: &CanvasState) -> Option<(Guid, CellRef, Option<CellRange>)> {
+    let c = state.caret.as_ref()?;
+    Some((c.outline, c.cell?, c.cells))
+}
+
+/// Runs a Table tab command (`table.*`) on the caret's table and moves the caret as it says.
+/// `None` when the caret isn't in a table.
+pub fn table_command(state: &mut CanvasState, session: &mut Session, id: &str, extra: Value) -> Option<Result<CmdOutput, CmdError>> {
+    table::command(state, session, id, extra)
+}
+
+/// Inserts a `rows` × `cols` table at the caret (or, without one, in a new note container below
+/// the page's content, or where the paper was clicked), and puts the caret in its first cell.
+pub fn insert_table(state: &mut CanvasState, session: &mut Session, rows: usize, cols: usize) -> Result<CmdOutput, CmdError> {
+    table::insert(state, session, rows, cols)
 }
 
 /// The pending style (Ctrl+B with nothing selected), for the ribbon to change.
@@ -363,6 +448,9 @@ pub struct CurrentFormat {
     pub size: Option<Option<f32>>,
     pub style: Option<notecraft_doc::ParaStyle>,
     pub list: Option<Option<notecraft_doc::ListKind>>,
+    /// The list marker style in effect (the level's default included).
+    pub list_style: Option<Option<notecraft_doc::ListStyle>>,
+    pub align: Option<notecraft_doc::Align>,
     pub tag: Option<Option<notecraft_doc::Tag>>,
 }
 
@@ -376,7 +464,14 @@ pub fn current_format(state: &CanvasState, session: &Session) -> Option<CurrentF
 pub fn show(ui: &mut egui::Ui, state: &mut CanvasState, session: &mut Session, tokens: &Tokens, services: &Services) {
     let rect = ui.available_rect_before_wrap();
     let id = ui.scope_id().with("nc_canvas");
+    crate::fonts::sync(ui.ctx());
     sync(state, session);
+    links::apply_goto(state, session);
+    // The context menu's Cut, Copy and Paste reach the keyboard handling below as input.
+    let inject = std::mem::take(&mut state.review.inject);
+    if !inject.is_empty() {
+        ui.ctx().input_mut(|i| i.events.extend(inject));
+    }
     let resp = ui.interact(rect, id, Sense::click_and_drag());
     state.last_rect = Some(rect);
     let painter = ui.painter_at(rect);
@@ -395,7 +490,16 @@ pub fn show(ui: &mut egui::Ui, state: &mut CanvasState, session: &mut Session, t
     let title = if state.hide_title { None } else { session.current_page().map(|p| page::title_rect(ui.ctx(), p, &v)) };
     let rev = session.revision;
     pointer::handle(ui, state, session, &v, &lay, &resp, title);
-    if session.revision != rev {
+    if resp.secondary_clicked()
+        && let Some(at) = resp.interact_pointer_pos()
+    {
+        context_menu::on_secondary_click(state, session, &v, &lay, at);
+    }
+    if resp.double_clicked() {
+        context_menu::on_double_click(state, session, &v, resp.interact_pointer_pos());
+    }
+    links::frame(ui, state, session, services, &v, &lay, &resp);
+    if session.revision != rev || session.current.page != state.page {
         lay = layout::page_layout(ui.ctx(), state, session, tokens, &v);
     }
     let rev = session.revision;
@@ -404,6 +508,8 @@ pub fn show(ui: &mut egui::Ui, state: &mut CanvasState, session: &mut Session, t
     if session.revision != rev {
         lay = layout::page_layout(ui.ctx(), state, session, tokens, &v);
     }
+    edit::go_to_paragraph(ui, state, session, &v, &lay, sheet, id);
+    find::reveal_current(state, &v, &lay, sheet);
     if state.reveal_caret {
         edit::caret_visible(state, &v, &lay, sheet);
     }
@@ -412,10 +518,14 @@ pub fn show(ui: &mut egui::Ui, state: &mut CanvasState, session: &mut Session, t
         page::paint_title(&painter, ui.ctx(), state, pg, tokens, &v);
         images::paint(ui.ctx(), &painter, state, pg, tokens, &v);
         ink::paint_layer(&painter, state, pg, tokens, &v, true);
+        find::paint(&painter, state, tokens, &v, &lay);
         text::paint_outlines(&painter, state, pg, tokens, &v, &lay, &resp);
+        proof::paint(ui.ctx(), &painter, state, session, &v, &lay, style::Ink::new(tokens, pg.background.color).dark);
         ink::paint_layer(&painter, state, pg, tokens, &v, false);
         shape::paint_preview(&painter, state, pg, tokens, &v);
         images::paint_selection(&painter, state, pg, tokens, &v);
+        crop::paint(&painter, state, tokens, &v);
+        space::paint(ui, &painter, state, tokens, &v, sheet, &resp);
     }
     ink::paint_overlay(&painter, state, session, tokens, &v, &resp);
     drop::paint_hover(ui, &painter, tokens, rect);
@@ -423,6 +533,28 @@ pub fn show(ui: &mut egui::Ui, state: &mut CanvasState, session: &mut Session, t
     page::title_editor(ui, state, session, tokens, &v);
     view::paint_scrollbars(ui, state, session, tokens, sheet, &v, &lay);
     pointer::cursor(ui, state, session, &v, &lay, &resp);
+}
+
+/// Where page point (x, y) was on screen last frame.
+pub fn page_to_screen(state: &CanvasState, x: f32, y: f32) -> Option<Pos2> {
+    let o = state.last_origin?;
+    Some(egui::pos2(o.x + x * state.scale(), o.y + y * state.scale()))
+}
+
+/// Where text position `pos` of note container `outline` is on screen (a zero-width caret rect),
+/// as last frame laid the page out. For the shell's popups and for tests.
+pub fn caret_screen_rect(
+    ctx: &egui::Context,
+    state: &CanvasState,
+    session: &Session,
+    tokens: &Tokens,
+    outline: Guid,
+    pos: TextPos,
+) -> Option<egui::Rect> {
+    let sheet = page::sheet_rect(state.last_rect?);
+    let v = view::View::new(state, sheet);
+    let lay = layout::page_layout(ctx, state, session, tokens, &v);
+    lay.outline(outline)?.caret_rect(&v, pos)
 }
 
 /// Keeps the state in step with the session: another page resets selection and editing; the
@@ -440,6 +572,8 @@ fn sync(state: &mut CanvasState, session: &mut Session) {
         state.gesture = pointer::Gesture::None;
         state.scroll = egui::Vec2::ZERO;
         state.pending_style = PendingStyle::default();
+        state.crop = None;
+        state.find = None;
     }
     if state.caret.is_some() && state.editing != state.caret.as_ref().map(|c| c.outline) {
         // The shell cleared `editing` (tool change) or pointed it elsewhere.
@@ -448,16 +582,14 @@ fn sync(state: &mut CanvasState, session: &mut Session) {
         if let Some(id) = wanted
             && session.current_page().and_then(|p| p.outline(id)).is_some()
         {
-            let end = session.current_page().and_then(|p| p.outline(id)).map(notecraft_engine::text::end_of).unwrap_or_default();
-            state.caret = Some(TextCaret::at(id, end));
+            state.caret = session.current_page().and_then(|p| p.outline(id)).map(|o| table::caret_at_end(id, o));
             state.editing = Some(id);
         }
     } else if state.caret.is_none() && state.editing.is_some() {
         let id = state.editing;
         let exists = id.is_some_and(|id| session.current_page().and_then(|p| p.outline(id)).is_some());
         if exists && let Some(id) = id {
-            let end = session.current_page().and_then(|p| p.outline(id)).map(notecraft_engine::text::end_of).unwrap_or_default();
-            state.caret = Some(TextCaret::at(id, end));
+            state.caret = session.current_page().and_then(|p| p.outline(id)).map(|o| table::caret_at_end(id, o));
         } else {
             state.editing = None;
         }

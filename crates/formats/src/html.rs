@@ -10,7 +10,8 @@ use std::fmt::Write as _;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use notecraft_doc::{
-    ElementKind, ImageElement, ImageFormat, ListKind, Outline, Page, PageElement, ParaStyle, Paragraph, Printout, Rect, Run, Section, Tag,
+    Align, Block, ElementKind, ImageElement, ImageFormat, ListKind, ListStyle, Outline, Page, PageElement, ParaStyle, Paragraph, Printout, Rect, Run,
+    Section, Table, Tag,
 };
 
 use crate::svg::{ink_bounds, ink_svg, num};
@@ -45,6 +46,9 @@ pre{font-family:Consolas,'Courier New',monospace}\
 .attachment{display:inline-block;padding:4pt 8pt;border:1px solid #c8c8cc}\
 nav.toc ol{list-style:none;padding-left:0}\
 nav.toc .sub1{padding-left:18pt}nav.toc .sub2{padding-left:36pt}\
+table.nc-table{border-collapse:collapse;table-layout:fixed;margin:2pt 0}\
+table.nc-table td{vertical-align:top;padding:2pt 4pt;overflow-wrap:anywhere}\
+table.nc-table.borders td{border:1px solid #a6a6a6}\
 section.page-section{margin-top:36pt;border-top:1px solid #e0e0e0;padding-top:12pt}";
 
 /// One page as a complete HTML document. (Never fails today; `Result` keeps room for limits.)
@@ -73,9 +77,10 @@ pub fn section_to_html_with(section: &Section, opts: HtmlOptions) -> String {
         let _ = write!(out, "<li class=\"sub{}\"><a href=\"#page-{}\">{}</a></li>", p.level.min(2), i + 1, esc(p.display_title()));
     }
     out.push_str("</ol></nav>\n");
+    let anchors: std::collections::HashMap<notecraft_doc::Guid, usize> = section.pages.iter().enumerate().map(|(i, p)| (p.id, i + 1)).collect();
     for (i, p) in section.pages.iter().enumerate() {
         let _ = write!(out, "<section class=\"page-section\" id=\"page-{}\">", i + 1);
-        out.push_str(&page_body(p, opts));
+        out.push_str(&page_body(&local_links(p, &anchors), opts));
         out.push_str("</section>\n");
     }
     out.push_str("</body>\n</html>\n");
@@ -211,38 +216,123 @@ fn img_tag(img: &ImageElement, class: &str, positioned: bool) -> Option<String> 
     } else {
         format!(" style=\"width:{}pt;height:{}pt\"", num(img.size.w), num(img.size.h))
     };
-    Some(format!(
-        "<img class=\"{class}\" alt=\"{}\" src=\"data:{};base64,{}\"{style}>",
-        esc(&img.alt),
-        img.format.mime(),
-        STANDARD.encode(img.data.as_slice())
-    ))
+    let (mime, data) = match crate::picture::bake(img) {
+        Some(png) => (ImageFormat::Png.mime(), STANDARD.encode(png)),
+        None => (img.format.mime(), STANDARD.encode(img.data.as_slice())),
+    };
+    Some(format!("<img class=\"{class}\" alt=\"{}\" src=\"data:{mime};base64,{data}\"{style}>", esc(&img.alt)))
 }
 
-/// An outline's paragraphs: consecutive list paragraphs of one kind share a list.
+/// An outline's blocks: paragraphs (consecutive list paragraphs of one kind and chosen marker
+/// style share a list) and tables.
 fn outline_html(o: &Outline, out: &mut String) {
-    let mut open: Option<ListKind> = None;
-    for p in &o.paragraphs {
-        if p.list != open {
-            if let Some(k) = open {
-                out.push_str(list_tag(k).1);
+    let mut run: Vec<&Paragraph> = Vec::new();
+    for b in &o.blocks {
+        match b {
+            Block::Paragraph(p) => run.push(p),
+            Block::Table { table } => {
+                paras_html(&run, out);
+                run.clear();
+                table_html(table, out);
             }
-            if let Some(k) = p.list {
-                out.push_str(list_tag(k).0);
+        }
+    }
+    paras_html(&run, out);
+}
+
+/// A table: fixed column widths, cell shading, borders unless hidden; each cell's paragraphs
+/// as in an outline.
+fn table_html(t: &Table, out: &mut String) {
+    let width: f32 = t.width();
+    let class = if t.borders { "nc-table borders" } else { "nc-table" };
+    let margin = if t.indent > 0 { format!("margin-left:{}pt;", u32::from(t.indent) * 18) } else { String::new() };
+    let _ = write!(out, "<table class=\"{class}\" style=\"{margin}width:{}pt\"><colgroup>", num(width));
+    for c in 0..t.col_count() {
+        let _ = write!(out, "<col style=\"width:{}pt\">", num(t.col_width(c)));
+    }
+    out.push_str("</colgroup><tbody>");
+    for row in &t.rows {
+        out.push_str("<tr>");
+        for cell in &row.cells {
+            match cell.shading {
+                Some(c) => {
+                    let _ = write!(out, "<td style=\"background-color:{}\">", c.to_hex());
+                }
+                None => out.push_str("<td>"),
             }
-            open = p.list;
+            let paras: Vec<&Paragraph> = cell.paragraphs.iter().collect();
+            paras_html(&paras, out);
+            out.push_str("</td>");
+        }
+        out.push_str("</tr>");
+    }
+    out.push_str("</tbody></table>\n");
+}
+
+/// Paragraphs in order: consecutive list paragraphs of one kind and (chosen) marker style
+/// share a list.
+fn paras_html(paras: &[&Paragraph], out: &mut String) {
+    let mut open: Option<(ListKind, Option<ListStyle>)> = None;
+    for &p in paras {
+        let key = p.list.map(|k| (k, chosen_style(p)));
+        if key != open {
+            if let Some((k, _)) = open {
+                out.push_str(list_close(k));
+            }
+            if let Some((k, st)) = key {
+                list_open(k, st, out);
+            }
+            open = key;
         }
         para_html(p, out);
     }
-    if let Some(k) = open {
-        out.push_str(list_tag(k).1);
+    if let Some((k, _)) = open {
+        out.push_str(list_close(k));
     }
 }
 
-fn list_tag(k: ListKind) -> (&'static str, &'static str) {
+/// The list style the paragraph chose (one of its list's kind), not the level's default.
+fn chosen_style(p: &Paragraph) -> Option<ListStyle> {
+    p.list_style.filter(|s| Some(s.kind()) == p.list)
+}
+
+/// CSS `list-style-type` for a marker style.
+fn list_css(style: ListStyle) -> &'static str {
+    match style {
+        ListStyle::Disc => "disc",
+        ListStyle::Circle => "circle",
+        ListStyle::Square => "square",
+        ListStyle::Dash => "&quot;\u{2013}  &quot;",
+        ListStyle::Arrow => "&quot;\u{27A2}  &quot;",
+        ListStyle::Decimal => "decimal",
+        ListStyle::LowerAlpha => "lower-alpha",
+        ListStyle::UpperAlpha => "upper-alpha",
+        ListStyle::LowerRoman => "lower-roman",
+        ListStyle::UpperRoman => "upper-roman",
+    }
+}
+
+/// `<ul>` / `<ol>`, with a chosen marker style as CSS and, for numbers, `type`.
+fn list_open(k: ListKind, style: Option<ListStyle>, out: &mut String) {
+    let tag = if k == ListKind::Bullet { "ul" } else { "ol" };
+    let Some(st) = style else {
+        let _ = write!(out, "<{tag}>");
+        return;
+    };
+    let ty = match st {
+        ListStyle::LowerAlpha => " type=\"a\"",
+        ListStyle::UpperAlpha => " type=\"A\"",
+        ListStyle::LowerRoman => " type=\"i\"",
+        ListStyle::UpperRoman => " type=\"I\"",
+        _ => "",
+    };
+    let _ = write!(out, "<{tag}{ty} style=\"list-style-type:{}\">", list_css(st));
+}
+
+fn list_close(k: ListKind) -> &'static str {
     match k {
-        ListKind::Bullet => ("<ul>", "</ul>"),
-        ListKind::Numbered => ("<ol>", "</ol>"),
+        ListKind::Bullet => "</ul>",
+        ListKind::Numbered => "</ol>",
     }
 }
 
@@ -261,16 +351,37 @@ fn para_html(p: &Paragraph, out: &mut String) {
         }
     };
     out.push_str(&open);
+    let mut css = String::new();
     if p.indent > 0 {
-        let _ = write!(out, " style=\"margin-left:{}pt\"", u32::from(p.indent) * 18);
+        let _ = write!(css, "margin-left:{}pt;", u32::from(p.indent) * 18);
+    }
+    // A nested item without a chosen style takes its level's marker, as on the canvas.
+    if let Some(k) = p.list
+        && chosen_style(p).is_none()
+        && !p.indent.is_multiple_of(3)
+    {
+        let _ = write!(css, "list-style-type:{};", list_css(ListStyle::by_level(k, p.indent)));
+    }
+    if p.align != Align::Left {
+        let _ = write!(css, "text-align:{};", p.align.name());
+    }
+    if !css.is_empty() {
+        let _ = write!(out, " style=\"{}\"", css.trim_end_matches(';'));
     }
     out.push('>');
+    let mut mark = false;
     match p.tag {
         Some(Tag::ToDo { checked }) => {
             let _ = write!(out, "<input type=\"checkbox\" class=\"todo\" disabled{}> ", if checked { " checked" } else { "" });
         }
-        Some(Tag::Important) => out.push_str("<span class=\"tag\" aria-label=\"Important\">\u{2605}</span> "),
-        Some(Tag::Question) => out.push_str("<span class=\"tag\" aria-label=\"Question\">?</span> "),
+        Some(t) => {
+            if let Some(sym) = crate::tag_symbol(t) {
+                let _ = write!(out, "<span class=\"tag\" aria-label=\"{}\">{sym}</span> ", esc(t.label()));
+            } else if let Some(c) = t.highlight() {
+                let _ = write!(out, "<mark class=\"tag\" title=\"{}\" style=\"background-color:{}\">", esc(t.label()), c.to_hex());
+                mark = true;
+            }
+        }
         None => {}
     }
     if p.style == ParaStyle::Code && p.list.is_none() {
@@ -282,13 +393,16 @@ fn para_html(p: &Paragraph, out: &mut String) {
     if p.style == ParaStyle::Code && p.list.is_none() {
         out.push_str("</code>");
     }
+    if mark {
+        out.push_str("</mark>");
+    }
     if p.runs.iter().all(|r| r.text.is_empty()) {
         out.push_str("<br>");
     }
     out.push_str(&close);
 }
 
-fn run_html(r: &Run, out: &mut String) {
+pub(crate) fn run_html(r: &Run, out: &mut String) {
     if r.text.is_empty() {
         return;
     }
@@ -330,11 +444,34 @@ fn run_html(r: &Run, out: &mut String) {
     }
 }
 
-/// Links kept in exports: web, mail and OneNote links only (no `javascript:` and the like).
+/// `page` with its `notecraft:` links to pages of the same export pointing at their places in
+/// the file (`#page-3`).
+fn local_links(page: &Page, anchors: &std::collections::HashMap<notecraft_doc::Guid, usize>) -> Page {
+    let mut p = page.clone();
+    for el in &mut p.elements {
+        let notecraft_doc::ElementKind::Outline(o) = &mut el.kind else { continue };
+        for para in o.paragraphs_mut() {
+            for r in &mut para.runs {
+                let target =
+                    r.link.as_deref().and_then(notecraft_doc::link::InternalLink::parse).and_then(|l| l.page).and_then(|id| anchors.get(&id));
+                if let Some(n) = target {
+                    r.link = Some(format!("#page-{n}"));
+                }
+            }
+        }
+    }
+    p
+}
+
+/// Links kept in exports: web, mail, OneNote and NoteCraft links only (no `javascript:` and the
+/// like). A section export points NoteCraft links to its own pages at their places in the file.
 pub(crate) fn safe_href(href: &str) -> Option<&str> {
     let h = href.trim();
+    if h.strip_prefix("#page-").is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())) {
+        return Some(h);
+    }
     let lower = h.to_ascii_lowercase();
-    ["http://", "https://", "mailto:", "onenote:"].iter().any(|s| lower.starts_with(s)).then_some(h)
+    ["http://", "https://", "mailto:", "onenote:", "notecraft:"].iter().any(|s| lower.starts_with(s)).then_some(h)
 }
 
 /// Escapes text for HTML content and attribute values.
@@ -365,12 +502,12 @@ mod tests {
     fn sample() -> Page {
         let mut page = Page::new("Plans <&>");
         let mut o = Outline::with_text(Point::new(36.0, 108.0), "Heading\nfirst\nsecond\ndone\nplain");
-        o.paragraphs[0].style = ParaStyle::Heading1;
-        o.paragraphs[1].list = Some(ListKind::Bullet);
-        o.paragraphs[2].list = Some(ListKind::Bullet);
-        o.paragraphs[2].indent = 1;
-        o.paragraphs[3].tag = Some(Tag::ToDo { checked: true });
-        o.paragraphs[4].runs = vec![
+        o.para_mut(0).unwrap().style = ParaStyle::Heading1;
+        o.para_mut(1).unwrap().list = Some(ListKind::Bullet);
+        o.para_mut(2).unwrap().list = Some(ListKind::Bullet);
+        o.para_mut(2).unwrap().indent = 1;
+        o.para_mut(3).unwrap().tag = Some(Tag::ToDo { checked: true });
+        o.para_mut(4).unwrap().runs = vec![
             Run { text: "bold".into(), bold: true, ..Run::default() },
             Run::plain(" and "),
             Run { text: "link".into(), link: Some("https://example.com".into()), color: Some(Color::NOTECRAFT), ..Run::default() },
@@ -383,6 +520,7 @@ mod tests {
             data: Arc::new(b"\x89PNG\r\n\x1a\nxx".to_vec()),
             format: ImageFormat::Png,
             alt: "a \"pic\"".into(),
+            transform: Default::default(),
         })));
         page.elements.push(PageElement::new(ElementKind::EmbeddedFile {
             name: "notes.txt".into(),
@@ -399,7 +537,7 @@ mod tests {
         assert!(html.starts_with("<!DOCTYPE html>"));
         assert!(html.contains("<title>Plans &lt;&amp;&gt;</title>"));
         assert!(html.contains("<h2>Heading</h2>"));
-        assert!(html.contains("<ul><li>first</li><li style=\"margin-left:18pt\">second</li></ul>"), "{html}");
+        assert!(html.contains("<ul><li>first</li><li style=\"margin-left:18pt;list-style-type:circle\">second</li></ul>"), "{html}");
         assert!(html.contains("<input type=\"checkbox\" class=\"todo\" disabled checked> done"));
         assert!(html.contains("<strong>bold</strong>"));
         assert!(html.contains("<a href=\"https://example.com\"><span style=\"color:#c44df0;\">link</span></a>"));
@@ -413,6 +551,54 @@ mod tests {
         assert!(!flow.contains("position:absolute"));
         // The picture (y = 50) comes before the outline (y = 108) in reading order.
         assert!(flow.find("<img").unwrap() < flow.find("<div class=\"outline\"").unwrap());
+    }
+
+    #[test]
+    fn alignment_list_styles_and_tags_export() {
+        let mut page = Page::new("x");
+        let mut o = Outline::with_text(Point::new(0.0, 0.0), "mid\nsq1\nsq2\nrom\nidea\ndef\nleft");
+        o.para_mut(0).unwrap().align = Align::Center;
+        for i in [1, 2] {
+            o.para_mut(i).unwrap().list = Some(ListKind::Bullet);
+            o.para_mut(i).unwrap().list_style = Some(ListStyle::Square);
+        }
+        o.para_mut(2).unwrap().align = Align::Justify;
+        o.para_mut(3).unwrap().list = Some(ListKind::Numbered);
+        o.para_mut(3).unwrap().list_style = Some(ListStyle::UpperRoman);
+        o.para_mut(4).unwrap().tag = Some(Tag::Idea);
+        o.para_mut(5).unwrap().tag = Some(Tag::Definition);
+        page.elements.push(PageElement::new(ElementKind::Outline(o)));
+        let html = page_to_html(&page).unwrap();
+        assert!(html.contains("<p style=\"text-align:center\">mid</p>"), "{html}");
+        assert!(html.contains("<ul style=\"list-style-type:square\"><li>sq1</li><li style=\"text-align:justify\">sq2</li></ul>"), "{html}");
+        assert!(html.contains("<ol type=\"I\" style=\"list-style-type:upper-roman\"><li>rom</li></ol>"), "{html}");
+        assert!(html.contains("<span class=\"tag\" aria-label=\"Idea\">\u{1F4A1}</span> idea"), "{html}");
+        assert!(html.contains("<mark class=\"tag\" title=\"Definition\" style=\"background-color:#92d050\">def</mark>"), "{html}");
+        assert!(html.contains("<p>left</p>"));
+    }
+
+    #[test]
+    fn notecraft_links_point_inside_a_section_export() {
+        let mut s = Section::new("Work", Color::WHITE);
+        let target = Page::new("Target");
+        let elsewhere =
+            notecraft_doc::link::InternalLink::to_page(notecraft_doc::Guid::new(), notecraft_doc::Guid::new(), notecraft_doc::Guid::new(), "Away")
+                .to_url();
+        let here = notecraft_doc::link::InternalLink::to_page(notecraft_doc::Guid::new(), s.id, target.id, "Target").to_url();
+        let mut page = Page::new("From");
+        let mut o = Outline::with_text(Point::ZERO, "");
+        o.para_mut(0).unwrap().runs = vec![
+            Run { text: "in".into(), link: Some(here.clone()), ..Run::default() },
+            Run { text: "out".into(), link: Some(elsewhere.clone()), ..Run::default() },
+        ];
+        page.elements.push(PageElement::new(ElementKind::Outline(o)));
+        s.pages.push(page.clone());
+        s.pages.push(target);
+        let html = section_to_html(&s).unwrap();
+        assert!(html.contains("<a href=\"#page-2\">in</a>"), "{html}");
+        assert!(html.contains(&format!("<a href=\"{}\">out</a>", esc(&elsewhere))), "a page outside the export keeps its link");
+        assert!(page_to_html(&page).unwrap().contains(&esc(&here)), "a page export keeps NoteCraft links");
+        assert_eq!(safe_href("#page-x"), None);
     }
 
     #[test]
