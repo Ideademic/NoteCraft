@@ -103,6 +103,10 @@ pub struct Prefs {
     pub window: Option<WindowGeometry>,
     /// Notebooks open when the app last closed (paths), reopened at the next start.
     pub open_notebooks: Vec<String>,
+    /// Interface language: [`crate::i18n::AUTO`] (follow the system) or a language code.
+    pub language: String,
+    /// Desktop: look for a newer release when the app starts (File › Options).
+    pub check_for_updates: bool,
 }
 
 impl Default for Prefs {
@@ -119,6 +123,8 @@ impl Default for Prefs {
             qat: vec![QAT_BACK.to_owned(), notecraft_engine::ids::EDIT_UNDO.to_owned(), notecraft_engine::ids::EDIT_REDO.to_owned()],
             window: None,
             open_notebooks: Vec::new(),
+            language: crate::i18n::AUTO.to_owned(),
+            check_for_updates: true,
         }
     }
 }
@@ -137,6 +143,12 @@ impl Prefs {
         p.open_notebooks.truncate(64);
         p.qat.retain(|id| QAT_CHOICES.contains(&id.as_str()));
         p.window = p.window.and_then(WindowGeometry::sanitized);
+        // Junk follows the system. A well-formed code this build has no catalog for is kept (it
+        // follows the system meanwhile), so a build with that language shows it again.
+        let tag_like = |s: &str| !s.is_empty() && s.len() <= 35 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+        if !tag_like(&p.language) {
+            p.language = crate::i18n::AUTO.to_owned();
+        }
         p
     }
 
@@ -287,6 +299,8 @@ pub struct NoteApp {
     pub canvas_rect: Option<Rect>,
     /// What the system says about dark mode (set by the host; `None`: ask egui).
     pub system_dark: Option<bool>,
+    /// The update check and prompt ([`crate::updates`]; desktop only).
+    pub updates: crate::updates::Updates,
     applied_dark: Option<bool>,
     /// macOS: the `movable` flag last applied to the window (craft-window).
     #[cfg(target_os = "macos")]
@@ -306,6 +320,7 @@ impl NoteApp {
             window_buttons: None,
             canvas_rect: None,
             system_dark: None,
+            updates: crate::updates::Updates::default(),
             applied_dark: None,
             #[cfg(target_os = "macos")]
             movable: None,
@@ -425,6 +440,7 @@ impl NoteApp {
 
     /// Per-frame work that isn't drawing: theme, autosave, delivered files, the dirty flag.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        crate::i18n::set_current(crate::i18n::Lang::from_pref(&self.ui.prefs.language));
         let system = self
             .system_dark
             .or_else(|| self.services.prefers_dark.as_ref().and_then(|f| f()))
@@ -462,6 +478,7 @@ impl NoteApp {
         self.drain_canvas_messages();
         self.remember_open_notebooks();
         files::drain_inbox(self);
+        crate::updates::tick(self, ctx);
         keys::handle(self, ctx);
         if let Some(hook) = &self.services.on_dirty {
             hook(self.session.is_dirty());

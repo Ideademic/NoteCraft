@@ -1,5 +1,8 @@
 //! File › (Backstage): Info, New, Open, Export, Import, Options, About, with a back arrow, on a
-//! flat accent-coloured rail like Office 2016's. Esc goes back to the notes.
+//! flat accent-coloured rail like Office 2016's. Esc goes back to the notes. Options' Language
+//! and Updates parts and About's update check are in [`options`].
+
+pub mod options;
 
 use egui::{Align2, Rect, Sense, Stroke, Ui, pos2, vec2};
 use notecraft_doc::Guid;
@@ -287,17 +290,15 @@ fn new_notebook(ui: &mut Ui, app: &mut NoteApp) {
     let resp = resp.labelled_by(label.id);
     let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
     ui.add_space(6.0);
-    let desktop = app.services.pick_folder.is_some();
+    let desktop = app.services.has_dialogs();
     if desktop {
         ui.label(egui::RichText::new(tl!("Location")).font(regular(13.0)).color(t.text));
         let dir = app.ui.new_notebook_dir.clone().or_else(|| app.ui.prefs.notebooks_dir.clone());
         ui.horizontal(|ui| {
             let shown = dir.clone().unwrap_or_else(|| tl!("Documents › NoteCraft Notebooks").to_owned());
             ui.label(egui::RichText::new(shown).font(regular(12.5)).color(t.text_dim));
-            if flat_button(ui, tl!("Browse…"), false, true)
-                && let Some(p) = app.services.pick_folder.as_ref().and_then(|f| f())
-            {
-                app.ui.new_notebook_dir = Some(p.to_string_lossy().into_owned());
+            if flat_button(ui, tl!("Browse…"), false, true) {
+                files::choose_folder(app, crate::services::FolderFor::NewNotebook);
             }
         });
     } else {
@@ -316,7 +317,7 @@ fn open_page(ui: &mut Ui, app: &mut NoteApp) {
         if flat_button(ui, tl!("Open Notebook…"), true, true) {
             files::pick_and_open(app, OpenPurpose::Notebook);
         }
-        if app.services.pick_folder.is_some() && flat_button(ui, tl!("Open Notebook Folder…"), false, true) {
+        if app.services.has_dialogs() && flat_button(ui, tl!("Open Notebook Folder…"), false, true) {
             files::pick_and_open(app, OpenPurpose::NotebookFolder);
         }
     });
@@ -462,6 +463,7 @@ fn options(ui: &mut Ui, app: &mut NoteApp) {
             }
         }
     });
+    options::language(ui, app);
     subheading(ui, tl!("Saving"));
     ui.checkbox(&mut app.ui.prefs.autosave, tl!("Save changes automatically"));
     dim(
@@ -470,15 +472,13 @@ fn options(ui: &mut Ui, app: &mut NoteApp) {
             "NoteCraft has no Save button: changes are saved a moment after you make them. With this off, they are saved when you close a notebook or quit."
         ),
     );
-    if app.services.pick_folder.is_some() {
+    if app.services.has_dialogs() {
         subheading(ui, tl!("Default Notebook Location"));
         ui.horizontal(|ui| {
             let shown = app.ui.prefs.notebooks_dir.clone().unwrap_or_else(|| tl!("Documents › NoteCraft Notebooks").to_owned());
             ui.label(egui::RichText::new(shown).font(regular(12.5)).color(t.text_dim));
-            if flat_button(ui, tl!("Browse…"), false, true)
-                && let Some(p) = app.services.pick_folder.as_ref().and_then(|f| f())
-            {
-                app.ui.prefs.notebooks_dir = Some(p.to_string_lossy().into_owned());
+            if flat_button(ui, tl!("Browse…"), false, true) {
+                files::choose_folder(app, crate::services::FolderFor::DefaultLocation);
             }
             if app.ui.prefs.notebooks_dir.is_some() && flat_button(ui, tl!("Use Default"), false, true) {
                 app.ui.prefs.notebooks_dir = None;
@@ -487,6 +487,7 @@ fn options(ui: &mut Ui, app: &mut NoteApp) {
     }
     subheading(ui, tl!("Ribbon"));
     crate::ribbon::display::options(ui, app);
+    options::updates(ui, app);
     subheading(ui, tl!("Recent Notebooks"));
     if flat_button(ui, tl!("Clear the List"), false, !app.session.recent.entries.is_empty()) {
         app.session.recent.entries.clear();
@@ -509,6 +510,7 @@ fn about(ui: &mut Ui, app: &mut NoteApp) {
             ui.label(egui::RichText::new(tl!("A community Craft app by Ideademic")).font(regular(14.0)).color(t.accent_text));
         });
     });
+    options::about_updates(ui, app);
     ui.add_space(8.0);
     ui.label(
         egui::RichText::new(tl!("Made to fit in with ArtCraft's Crafting Apps: WordCraft, GridCraft, DeckCraft and friends.")).font(regular(13.5)),
