@@ -1,4 +1,4 @@
-//! The ribbon: the tab row (File, Home, Insert, Draw, History, View) on the accent band under the title
+//! The ribbon: the tab row (File, Home, Insert, Draw, History, Review, View) on the accent band under the title
 //! bar, and the selected tab's commands on a light body. File opens the backstage.
 //!
 //! The body has two layouts ([`display::RibbonLayout`]): Classic, groups of large and small
@@ -16,6 +16,7 @@ pub mod history;
 pub mod home;
 pub mod insert;
 pub mod paragraph;
+pub mod review;
 pub mod simplified;
 pub mod view;
 
@@ -42,11 +43,13 @@ pub enum RibbonTab {
     Insert,
     Draw,
     History,
+    Review,
     View,
 }
 
 impl RibbonTab {
-    pub const ALL: [RibbonTab; 6] = [RibbonTab::File, RibbonTab::Home, RibbonTab::Insert, RibbonTab::Draw, RibbonTab::History, RibbonTab::View];
+    pub const ALL: [RibbonTab; 7] =
+        [RibbonTab::File, RibbonTab::Home, RibbonTab::Insert, RibbonTab::Draw, RibbonTab::History, RibbonTab::Review, RibbonTab::View];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -55,6 +58,7 @@ impl RibbonTab {
             RibbonTab::Insert => tl!("Insert"),
             RibbonTab::Draw => tl!("Draw"),
             RibbonTab::History => tl!("History"),
+            RibbonTab::Review => tl!("Review"),
             RibbonTab::View => tl!("View"),
         }
     }
@@ -67,6 +71,7 @@ impl RibbonTab {
             RibbonTab::Insert => "insert",
             RibbonTab::Draw => "draw",
             RibbonTab::History => "history",
+            RibbonTab::Review => "review",
             RibbonTab::View => "view",
         }
     }
@@ -194,6 +199,7 @@ fn classic(ui: &mut Ui, app: &mut NoteApp, full: Rect) {
                     RibbonTab::Insert => insert::show(ui, app),
                     RibbonTab::Draw => draw::show(ui, app),
                     RibbonTab::History => history::show(ui, app),
+                    RibbonTab::Review => review::show(ui, app),
                     RibbonTab::View => view::show(ui, app),
                 }
             });

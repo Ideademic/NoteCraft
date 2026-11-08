@@ -48,6 +48,29 @@ pub fn desktop(ask_path: Box<dyn Fn(PathRequest)>) -> Services {
             Some(ClipboardImage { width: img.width, height: img.height, rgba: img.bytes.into_owned() })
         })),
         print: Some(crate::print::printing()),
+        open_external: Some(Box::new(|target| open::that_detached(target).map_err(|e| format!("{target}: {e}")))),
+        open_file: Some(Box::new(open_attachment)),
         ..Services::default()
     }
+}
+
+/// Opens an attached file: written to a folder of its own under the system's temporary folder,
+/// then opened with the app the system uses for its type.
+fn open_attachment(name: &str, bytes: &[u8]) -> Result<(), String> {
+    let clean: String = name
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or("")
+        .chars()
+        .filter(|c| !c.is_control() && !matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+        .take(120)
+        .collect();
+    let clean = clean.trim().trim_start_matches('.').to_owned();
+    let clean = if clean.is_empty() { "Attachment".to_owned() } else { clean };
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let dir = std::env::temp_dir().join("NoteCraft").join(format!("open-{stamp:x}"));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let path = dir.join(clean);
+    std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    open::that_detached(&path).map_err(|e| format!("{}: {e}", path.display()))
 }

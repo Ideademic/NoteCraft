@@ -3108,6 +3108,7 @@ dependencies = [
  "notecraft-doc",
  "notecraft-engine",
  "notecraft-ui-egui",
+ "open",
  "serde_json",
  "winresource",
 ]
@@ -3278,6 +3279,7 @@ dependencies = [
  "notecraft-engine",
  "notecraft-fonts",
  "notecraft-geom",
+ "notecraft-one",
  "notecraft-pdf",
  "serde",
  "serde_json",
