@@ -17,8 +17,8 @@
 //! ```
 //!
 //! See `README.md` for what is supported and what is uncertain. Covered: Section / PageSeries / PageManifest / Page / PageMetaData /
-//! Title / Outline / OutlineElement / RichTextOE / Image / NumberList / Table (read-only,
-//! flattened) / EmbeddedFile, ink (InkContainer / InkData / InkStroke / StrokeProperties, ISF
+//! Title / Outline / OutlineElement / RichTextOE / Image / NumberList / Table / TableRow /
+//! TableCell / EmbeddedFile, ink (InkContainer / InkData / InkStroke / StrokeProperties, ISF
 //! multibyte delta encoding), and the `.onetoc2` TOC. Unknown objects are kept as
 //! [`notecraft_doc::ElementKind::Opaque`] and written back where possible; reading one sets
 //! [`notecraft_doc::SourceInfo::unsupported_content`].

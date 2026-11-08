@@ -10,8 +10,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::page::{MAX_INDENT, Paragraph};
 use crate::Color;
+use crate::page::{MAX_INDENT, Paragraph};
 
 /// Most rows a table has (hostile files and commands).
 pub const MAX_TABLE_ROWS: usize = 2_000;
@@ -377,8 +377,8 @@ pub fn clamp_width(w: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::page::Outline;
     use crate::Point;
+    use crate::page::Outline;
 
     #[test]
     fn new_tables_are_rectangular_and_capped() {
@@ -444,7 +444,8 @@ mod tests {
         assert_eq!(back.paragraphs().count(), 2 + 4);
         assert_eq!(o.text(), "before\na\tb\nc\t\nafter");
         // 0.1 JSON: an outline of paragraphs.
-        let old: Outline = serde_json::from_str(r#"{"pos":{"x":0,"y":0},"width":200,"paragraphs":[{"runs":[{"text":"hi","bold":true}]},{"runs":[]}]}"#).unwrap();
+        let old: Outline =
+            serde_json::from_str(r#"{"pos":{"x":0,"y":0},"width":200,"paragraphs":[{"runs":[{"text":"hi","bold":true}]},{"runs":[]}]}"#).unwrap();
         assert_eq!(old.blocks.len(), 2);
         assert!(old.blocks.iter().all(|b| !b.is_table()));
         assert_eq!(old.text(), "hi\n");

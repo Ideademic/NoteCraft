@@ -8,7 +8,9 @@ use std::fmt::Write as _;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use notecraft_doc::{Align, Block, ElementKind, ImageElement, ImageFormat, ListKind, Outline, Page, PageElement, ParaStyle, Paragraph, Run, Table, Tag};
+use notecraft_doc::{
+    Align, Block, ElementKind, ImageElement, ImageFormat, ListKind, Outline, Page, PageElement, ParaStyle, Paragraph, Run, Table, Tag,
+};
 
 use crate::html::{reading_key, safe_href};
 use crate::svg::{ink_bounds, ink_svg};
@@ -71,6 +73,8 @@ fn outline_md(o: &Outline) -> String {
     let mut prev: Option<&Paragraph> = None;
     let mut number = 0u32;
     let mut in_code = false;
+    // A table just ended: a blank line before what follows.
+    let mut after_table = false;
     for b in &o.blocks {
         let p = match b {
             Block::Paragraph(p) => p,
@@ -79,15 +83,19 @@ fn outline_md(o: &Outline) -> String {
                     out.push_str("```\n");
                     in_code = false;
                 }
-                if prev.is_some() {
+                if prev.is_some() || after_table {
                     out.push('\n');
                 }
                 table_md(table, &mut out);
                 prev = None;
                 number = 0;
+                after_table = true;
                 continue;
             }
         };
+        if std::mem::take(&mut after_table) {
+            out.push('\n');
+        }
         let code = p.style == ParaStyle::Code && p.list.is_none();
         if code != in_code {
             out.push_str("```\n");

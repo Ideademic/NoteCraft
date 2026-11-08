@@ -149,7 +149,7 @@ impl Session {
         }
         self.read_state.adopt(&notebook);
         if let Some(s) = notebook.all_sections().iter().find(|s| s.source.unsupported_content) {
-            self.notices.push(format!("\u{201c}{}\u{201d} has content NoteCraft can show but not edit; it is kept when saving.", s.name));
+            self.notices.push(format!("\u{201c}{}\u{201d} has content NoteCraft can't edit yet (such as tables inside tables, or pictures in table cells); saving may not keep all of it.", s.name));
         }
         if let Some(l) = crate::io::initial_layout(&notebook, &origin) {
             self.layouts.insert(id, l);

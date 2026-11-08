@@ -52,7 +52,7 @@ pub fn paint_outlines(painter: &Painter, state: &CanvasState, page: &Page, token
         let selected = state.selection.elements.contains(&o.id);
         let dragging = pointer::dragged_element(state) == Some(o.id);
         for t in &o.tables {
-            super::table::paint_shading(painter, o, t, v);
+            super::table::paint_shading(painter, o, t, v, &ink);
         }
         if let Some(c) = editing {
             super::table::paint_selected_cells(painter, o, v, c, tokens.selection);

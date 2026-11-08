@@ -13,9 +13,9 @@
 //! - **Tables:** `cell` puts the range in a table cell, `cells` covers whole cells, and a range
 //!   in the outline's own blocks covers every table it spans (see [`super::text`]).
 
+use notecraft_doc::Block;
 use notecraft_doc::page::MAX_INDENT;
 use notecraft_doc::{Align, Color, ListKind, ListStyle, Outline, ParaStyle, Paragraph, Run, Tag};
-use notecraft_doc::Block;
 use serde_json::{Value, json};
 
 use super::has_page;

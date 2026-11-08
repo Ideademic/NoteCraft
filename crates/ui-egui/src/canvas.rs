@@ -27,6 +27,8 @@ pub mod view;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_tables;
 
 use egui::{Pos2, Sense};
 use notecraft_doc::{Color, Guid, InkTool, Point};

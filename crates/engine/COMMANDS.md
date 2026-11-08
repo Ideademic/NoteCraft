@@ -52,6 +52,14 @@ its text (all runs joined). Text and formatting commands take:
 - **Paragraph formatting** (style, bullets, numbering, indent, tags) covers every paragraph the
   range touches.
 - `text.formatAt` gives the ribbon its toggle states for the selection.
+- **Tables.** An outline holds blocks: paragraphs and tables. A table is one block (`para`
+  indexes blocks); nothing is typed into a table's block, paragraphs don't merge with it, and a
+  range that spans it deletes it. Its cells are flows of their own: add
+  `"cell": {"block": b, "row": r, "col": c}` (or `[b, r, c]`) to any text or formatting command
+  and `start`/`end`/`at` are in that cell's paragraphs. Formatting commands also take
+  `"cells": {"block": b, "rows": [r0, r1], "cols": [c0, c1]}` (whole cells), and a range in the
+  outline's own blocks (or no range) covers every table it spans. Commands that move the caret
+  into another flow return `{"cell": cell | null, "caret": pos}`.
 
 ## Ink selection
 
@@ -235,6 +243,30 @@ The notebook recycle bin, page versions, unread pages and recent edits. Deleted 
 | `history.toggleRead` |  | — | `{"page"?: guid} -> {"unread": bool}` | Mark as Read / Unread for one page. |
 | `history.nextUnread` |  | — | `{} -> {"page"} \| null` | Goes to the next unread page after the current one (all open notebooks, wrapping round). |
 | `history.recentEdits` |  | — | `{"since"?: "today"\|"yesterday"\|"7d" (default)\|"14d"\|"30d"\|"6m"\|"all", "utcOffsetMinutes"?: number} -> [{"page", "title", "section", "sectionName", "notebook", "notebookName", "modified", "unread"}]` | Pages changed in the period, newest first (at most 500). "today" and "yesterday" follow the local day. |
+
+### Tables
+
+Insert › Table and the contextual Table tab. Tables hold rows of cells; a cell holds paragraphs (no nested tables). Caps: 2,000 rows, 64 columns, 10,000 cells; columns 18–2,000 pt wide. Commands name the table by `cell` (the caret's), `cells` (a selection) or `block` (the whole table); with `cells` the row and column commands act on every selected row or column.
+
+| id | shortcut | undo | params | effect / output |
+|---|---|---|---|---|
+| `insert.table` |  | yes | `{"rows": number, "cols": number, "colWidth"?: points, "outline"?: guid, "cell"?: cell, "at"?/"start"?: pos, "x"?: number, "y"?: number, "page"?: guid}` | A `rows` × `cols` table (columns 72 pt): at the caret in `outline` (replacing an empty paragraph, or splitting the caret's paragraph; from a cell, after its table; an empty paragraph follows a table that ends the outline), else in a new note container at `x`/`y` or below the content. → `{id, cell, caret}` |
+| `table.fromText` |  | yes | `{"outline": guid, "start"?/"end"?/"para"?/"paras"?, "addColumn"?: bool, "page"?: guid}` | The range's paragraphs become rows, split into cells at tabs (formatting kept). `addColumn` adds an empty column (typing Tab after text). → `{cell, caret}` |
+| `table.insertRowAbove` |  | yes | table target | A row above the first selected row (shading copied). → `{cell, caret}` |
+| `table.insertRowBelow` | `Mod+Enter` | yes | table target | A row below the last selected row. → `{cell, caret}` |
+| `table.insertColumnLeft` | `Mod+Alt+E` | yes | table target | A column left of the first selected column, as wide as it. → `{cell, caret}` |
+| `table.insertColumnRight` | `Mod+Alt+R` | yes | table target | A column right of the last selected column. → `{cell, caret}` |
+| `table.deleteRow` |  | yes | table target | Deletes the selected rows (all of them: the table). → `{cell, caret}` |
+| `table.deleteColumn` |  | yes | table target | Deletes the selected columns (all of them: the table). → `{cell, caret}` |
+| `table.deleteTable` |  | yes | table target | Deletes the table; an empty paragraph is left if nothing else is. → `{cell: null, caret}` |
+| `table.selectCell` / `selectRow` / `selectColumn` / `selectTable` |  | — | table target | The cells to select. → `{cells}` |
+| `table.setColumnWidth` |  | yes | table target + `"col"?: number (default: the cell's), "width": points` | Sets (and locks) a column's width. Pass a `mergeKey` while dragging a border. |
+| `table.shading` |  | yes | table target + `"color": "#rrggbb" \| null` | Shades the cell, the selected cells, or (`block` alone) every cell. |
+| `table.borders` |  | yes | table target + `"value"?: bool (default: toggle)` | Shows or hides the borders (Hide Borders). → `{borders}` |
+| `table.sort` |  | yes | table target + `"col"?: number, "descending"?: bool, "header"?: bool` | Sorts the rows by a column: numbers by value, then text without case, empty cells last; `header` keeps the first row on top. |
+| `table.convertToText` |  | yes | table target | A paragraph per row, cells separated by tabs (formatting kept). → `{cell: null, caret}` |
+
+A *table target* is `{"outline": guid, "cell"?: cell, "cells"?: cell range, "block"?: number, "page"?: guid}`.
 
 ## Session lifecycle (Rust API, not commands)
 

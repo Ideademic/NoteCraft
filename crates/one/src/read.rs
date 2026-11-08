@@ -265,15 +265,7 @@ impl Reader {
 
     /// Walks the outline elements under `parent` (an outline, outline group or outline element).
     /// `at` is the (indent, nesting depth) of the elements found.
-    fn outline_elements(
-        &mut self,
-        v: &View<'_>,
-        parent: &PropertySet,
-        at: (u32, usize),
-        pos: Point,
-        out: &mut Vec<Block>,
-        parts: &mut PageParts,
-    ) {
+    fn outline_elements(&mut self, v: &View<'_>, parent: &PropertySet, at: (u32, usize), pos: Point, out: &mut Vec<Block>, parts: &mut PageParts) {
         let (indent, depth) = at;
         if depth > MAX_OE_DEPTH {
             self.unsupported = true;

@@ -72,3 +72,6 @@ mod tests {
         assert!(page_to_markdown(&p).unwrap().starts_with("# Hello"));
     }
 }
+
+#[cfg(test)]
+mod tests_tables;

@@ -523,3 +523,5 @@ fn node(m: &Mark) -> Option<OutlineNode> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_tables;

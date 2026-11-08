@@ -89,7 +89,12 @@ fn selected_text(state: &CanvasState, session: &Session) -> Option<String> {
     for i in a.para..=b.para.min(o.count().saturating_sub(1)) {
         let t: Vec<char> = match (o.para(i), c.cell) {
             (Some(p), _) => p.text().chars().collect(),
-            (None, None) => session.current_page().and_then(|p| p.outline(c.outline)).and_then(|ol| ol.table(i)).map(|t| t.text().chars().collect()).unwrap_or_default(),
+            (None, None) => session
+                .current_page()
+                .and_then(|p| p.outline(c.outline))
+                .and_then(|ol| ol.table(i))
+                .map(|t| t.text().chars().collect())
+                .unwrap_or_default(),
             (None, Some(_)) => Vec::new(),
         };
         let s = if i == a.para { a.char.min(t.len()) } else { 0 };

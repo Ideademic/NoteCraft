@@ -2,6 +2,7 @@ mod commands;
 mod history;
 mod lifecycle;
 mod roundtrip;
+mod tables;
 
 use std::collections::HashSet;
 

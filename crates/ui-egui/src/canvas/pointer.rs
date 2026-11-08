@@ -221,7 +221,12 @@ fn press(ui: &Ui, state: &mut CanvasState, session: &mut Session, v: &View, lay:
         for (fr, i, r) in layout::todo_boxes(o, v) {
             if r.expand(2.0).contains(at) {
                 let page = state.page;
-                run(state, session, ids::FORMAT_TOGGLE_TODO, json!({"outline": o.id, "cell": fr.cell().map(|c| c.to_json()), "para": i, "page": page}));
+                run(
+                    state,
+                    session,
+                    ids::FORMAT_TOGGLE_TODO,
+                    json!({"outline": o.id, "cell": fr.cell().map(|c| c.to_json()), "para": i, "page": page}),
+                );
                 return;
             }
         }

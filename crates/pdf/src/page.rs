@@ -205,6 +205,8 @@ fn table(s: &mut Surface, fs: &mut FontSet, t: &text::TableLay, ink: &Ink, clip:
         if let Some(sh) = c.shading
             && visible(c.rect, clip)
         {
+            // On a dark page, darkened towards the paper so the light text stays readable.
+            let sh = if ink.dark { mix(ink.paper, sh, 0.35) } else { sh };
             draw::fill_rect(s, c.rect.x, c.rect.y, c.rect.w, c.rect.h, sh);
         }
     }

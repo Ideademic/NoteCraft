@@ -32,8 +32,7 @@ pub(super) fn draw(p: &Pen<'_>, icon: Extra) -> bool {
         }
         Extra::DeleteRows | Extra::DeleteColumns => {
             let g = (2.5, 3.0, 19.5, 17.0);
-            let cells: &[(usize, usize)] =
-                if icon == Extra::DeleteRows { &[(1, 0), (1, 1), (1, 2)] } else { &[(0, 1), (1, 1), (2, 1)] };
+            let cells: &[(usize, usize)] = if icon == Extra::DeleteRows { &[(1, 0), (1, 1), (1, 2)] } else { &[(0, 1), (1, 1), (2, 1)] };
             for &(r, c) in cells {
                 p.rect(cell(g, 3, 3, r, c), 0.0, t(R), N);
             }

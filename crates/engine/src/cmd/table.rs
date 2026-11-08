@@ -28,7 +28,6 @@ use crate::{CmdError, CmdOutput, CmdResult, CommandSpec, Session, p};
 pub const MAX_INSERT_ROWS: usize = MAX_TABLE_ROWS;
 pub const MAX_INSERT_COLS: usize = MAX_TABLE_COLS;
 
-
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new(INSERT_TABLE, "Table", insert).when(has_page).params(
@@ -488,11 +487,8 @@ mod tests {
 
     #[test]
     fn tabs_split_into_cells_keeping_formats() {
-        let p = Paragraph {
-            runs: vec![Run::plain("a\tb"), Run { text: "c\t".into(), bold: true, ..Run::default() }],
-            indent: 2,
-            ..Paragraph::default()
-        };
+        let p =
+            Paragraph { runs: vec![Run::plain("a\tb"), Run { text: "c\t".into(), bold: true, ..Run::default() }], indent: 2, ..Paragraph::default() };
         let cells = split_at_tabs(&p);
         assert_eq!(cells.iter().map(Paragraph::text).collect::<Vec<_>>(), vec!["a", "bc", ""]);
         assert!(cells[1].runs[1].bold && !cells[1].runs[0].bold);

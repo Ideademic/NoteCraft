@@ -67,6 +67,8 @@ pub fn picker(ui: &mut Ui, app: &mut NoteApp) {
     let cell = 16.0;
     let gap = 2.0;
     let size = vec2(GRID_COLS as f32 * (cell + gap) - gap, GRID_ROWS as f32 * (cell + gap) - gap);
+    // The menu is as wide as the grid (its separator and item would stretch it otherwise).
+    ui.set_max_width(size.x);
     let (area, _) = ui.allocate_exact_size(size, Sense::hover());
     for r in 1..=GRID_ROWS {
         for c in 1..=GRID_COLS {
@@ -120,11 +122,7 @@ pub fn dialog(ctx: &egui::Context, app: &mut NoteApp) {
     let t = app.tokens.clone();
     let mut answer: Option<bool> = None;
     let modal = egui::Modal::new(egui::Id::unique("nc_insert_table_modal")).backdrop_color(egui::Color32::TRANSPARENT).frame(
-        egui::Frame::NONE
-            .fill(t.menu)
-            .stroke(egui::Stroke::new(1.0, t.border_strong))
-            .corner_radius(crate::theme::RADIUS_MEDIUM)
-            .inner_margin(20.0),
+        egui::Frame::NONE.fill(t.menu).stroke(egui::Stroke::new(1.0, t.border_strong)).corner_radius(crate::theme::RADIUS_MEDIUM).inner_margin(20.0),
     );
     let resp = modal.show(ctx, |ui| {
         ui.set_width(260.0);

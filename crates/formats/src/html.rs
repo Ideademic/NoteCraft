@@ -10,8 +10,8 @@ use std::fmt::Write as _;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use notecraft_doc::{
-    Align, Block, ElementKind, ImageElement, ImageFormat, ListKind, ListStyle, Outline, Page, PageElement, ParaStyle, Paragraph, Printout, Rect,
-    Run, Section, Table, Tag,
+    Align, Block, ElementKind, ImageElement, ImageFormat, ListKind, ListStyle, Outline, Page, PageElement, ParaStyle, Paragraph, Printout, Rect, Run,
+    Section, Table, Tag,
 };
 
 use crate::svg::{ink_bounds, ink_svg, num};

@@ -372,10 +372,7 @@ impl Outline {
     /// The width the container takes on the page: its own, or more when a table is wider.
     pub fn display_width(&self) -> f32 {
         let w = if self.width.is_finite() { self.width } else { DEFAULT_OUTLINE_WIDTH };
-        self.blocks
-            .iter()
-            .filter_map(|b| b.as_table().map(|t| t.width() + f32::from(t.indent.min(MAX_INDENT)) * 18.0))
-            .fold(w, f32::max)
+        self.blocks.iter().filter_map(|b| b.as_table().map(|t| t.width() + f32::from(t.indent.min(MAX_INDENT)) * 18.0)).fold(w, f32::max)
     }
 
     /// A rough height (the canvas measures real text): 18 pt per line, table rows included.

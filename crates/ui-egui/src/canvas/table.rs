@@ -131,7 +131,9 @@ pub fn selected_cells_text(state: &CanvasState, session: &Session) -> Option<Str
     let r = c.cells?;
     let t = session.current_page()?.outline(c.outline)?.table(r.block)?;
     let rows: Vec<String> = (r.rows.0..=r.rows.1)
-        .map(|row| (r.cols.0..=r.cols.1).map(|col| t.cell(row, col).map(notecraft_doc::Cell::text).unwrap_or_default()).collect::<Vec<_>>().join("\t"))
+        .map(|row| {
+            (r.cols.0..=r.cols.1).map(|col| t.cell(row, col).map(notecraft_doc::Cell::text).unwrap_or_default()).collect::<Vec<_>>().join("\t")
+        })
         .collect();
     Some(rows.join("\n"))
 }
@@ -407,11 +409,11 @@ fn leave_table(state: &mut CanvasState, session: &Session, o: &OutlineLayout, bl
     }
     if ol.table(target).is_some() {
         // Another table: its first or last row.
-        state.caret.as_mut().map(|c| {
+        if let Some(c) = state.caret.as_mut() {
             c.cell = None;
             c.head = TextPos::new(target, 0);
             c.anchor = c.head;
-        });
+        }
         enter_table(state, session, down);
         return true;
     }
@@ -461,8 +463,10 @@ pub fn key(state: &mut CanvasState, session: &mut Session, lay: &PageLayout, v: 
     match key {
         Key::ArrowLeft if !cmd && c.head == TextPos::default() => {
             if cell.col > 0 || cell.row > 0 {
-                let prev = if cell.col > 0 { CellRef::new(cell.block, cell.row, cell.col - 1) } else { CellRef::new(cell.block, cell.row - 1, cols - 1) };
-                let pos = session.current_page().and_then(|p| p.outline(c.outline)).and_then(|ol| text::flow(ol, Frame::Cell(prev))).map(text::end_of);
+                let prev =
+                    if cell.col > 0 { CellRef::new(cell.block, cell.row, cell.col - 1) } else { CellRef::new(cell.block, cell.row - 1, cols - 1) };
+                let pos =
+                    session.current_page().and_then(|p| p.outline(c.outline)).and_then(|ol| text::flow(ol, Frame::Cell(prev))).map(text::end_of);
                 go(state, Frame::Cell(prev), pos.unwrap_or_default(), None);
                 true
             } else {
@@ -480,7 +484,8 @@ pub fn key(state: &mut CanvasState, session: &mut Session, lay: &PageLayout, v: 
         }
         Key::ArrowRight if !cmd && c.head == end => {
             if cell.col + 1 < cols || cell.row + 1 < rows {
-                let next = if cell.col + 1 < cols { CellRef::new(cell.block, cell.row, cell.col + 1) } else { CellRef::new(cell.block, cell.row + 1, 0) };
+                let next =
+                    if cell.col + 1 < cols { CellRef::new(cell.block, cell.row, cell.col + 1) } else { CellRef::new(cell.block, cell.row + 1, 0) };
                 go(state, Frame::Cell(next), TextPos::default(), None);
                 true
             } else {
@@ -528,11 +533,13 @@ fn enter_in_cell(state: &mut CanvasState, session: &mut Session, cell: CellRef) 
     let last = cell.row + 1 == t.row_count() && cell.col + 1 == t.col_count();
     let Some(fl) = text::flow(o, Frame::Cell(cell)) else { return false };
     let at_end = c.head == text::end_of(fl);
-    let empty_last = fl.count() > 1 && text::len_at(fl, c.head.para) == 0 && fl.para(c.head.para).is_some_and(|p| p.list.is_none() && p.tag.is_none());
+    let empty_last =
+        fl.count() > 1 && text::len_at(fl, c.head.para) == 0 && fl.para(c.head.para).is_some_and(|p| p.list.is_none() && p.tag.is_none());
     if !(last && at_end && empty_last) {
         return false;
     }
-    let params = json!({"outline": c.outline, "cell": cell.to_json(), "at": c.head.to_json(), "backward": true, "page": state.page, "mergeKey": c.merge_key});
+    let params =
+        json!({"outline": c.outline, "cell": cell.to_json(), "at": c.head.to_json(), "backward": true, "page": state.page, "mergeKey": c.merge_key});
     run(state, session, ids::TEXT_DELETE, params);
     run_here(state, session, ids::TABLE_INSERT_ROW_BELOW);
     true
@@ -548,13 +555,19 @@ pub fn border_at(o: &OutlineLayout, v: &View, at: Pos2) -> Option<(usize, usize)
 
 // --- painting ----------------------------------------------------------------------------------
 
+/// A shading colour as drawn: on dark paper it is darkened towards the paper, so the light
+/// text drawn there stays readable (as OneNote's dark mode does).
+pub fn shading_color(ink: &Ink, c: Color32) -> Color32 {
+    if ink.dark { mix(ink.paper, c, 0.35) } else { c }
+}
+
 /// Cell shading, under everything else.
-pub fn paint_shading(painter: &Painter, o: &OutlineLayout, t: &TableLayout, v: &View) {
+pub fn paint_shading(painter: &Painter, o: &OutlineLayout, t: &TableLayout, v: &View, ink: &Ink) {
     for (r, row) in t.shading.iter().enumerate() {
         for (c, shade) in row.iter().enumerate() {
             let (Some(s), Some(rect)) = (shade, t.cell_rect(o, v, r, c)) else { continue };
             if rect.intersects(v.clip) {
-                painter.rect_filled(rect, 0.0, crate::theme::color32(*s));
+                painter.rect_filled(rect, 0.0, shading_color(ink, crate::theme::color32(*s)));
             }
         }
     }
