@@ -37,7 +37,7 @@ chrono = { version = "0.4.45", default-features = false, features = ["std", "ser
 # Random GUIDs (`notecraft_doc::Guid::new`). On wasm32 the crates add the `wasm_js` feature.
 getrandom = "0.3"
 # Binary payloads (pictures, printouts, embedded files) in the JSON form of the model.
-base64 = "0.22"
+base64 = "0.23"
 proptest = "1"
 
 # formats
