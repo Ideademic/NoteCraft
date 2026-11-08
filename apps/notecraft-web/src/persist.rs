@@ -24,6 +24,8 @@ use notecraft_engine::{IoError, Location, Origin, Session, Storage};
 pub const SESSION_KEY: &str = "notecraft.session";
 /// `localStorage`: the preferences ([`crate::prefs`]).
 pub const PREFS_KEY: &str = "notecraft.prefs";
+/// `localStorage`: the user's page templates (Insert › Page Templates).
+pub const TEMPLATES_KEY: &str = "notecraft.templates";
 /// `localStorage`: where the user was ([`Location`] as JSON).
 pub const LOCATION_KEY: &str = "notecraft.location";
 /// [`SESSION_KEY`]'s value while the blob lives in IndexedDB.

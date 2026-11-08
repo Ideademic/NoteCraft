@@ -1,5 +1,6 @@
 //! Simplified Draw: Type, Lasso Select, Eraser | the pen strip (the pens used last) and Pens▾ (the
-//! whole preset gallery) | Color & Thickness▾ | Shapes▾ | Ink to Shape | Delete.
+//! whole preset gallery) | Color & Thickness▾ | Shapes▾ | Ink to Shape | Insert Space, Delete,
+//! Arrange▾, Rotate▾, Crop, Alt Text.
 //!
 //! As on the classic tab, the tools only set [`crate::canvas::CanvasState`] (`set_tool` and the
 //! pen styles); Ink to Shape and Delete run engine commands. Shapes▾ and the Ink to Shape state
@@ -227,6 +228,14 @@ fn convert(ui: &mut Ui, app: &mut NoteApp) {
 }
 
 fn edit(ui: &mut Ui, app: &mut NoteApp) {
+    let b = Btn::new(Icon::InsertSpace, tl!("Insert Space"))
+        .icon_only()
+        .checked(app.canvas.tool == Tool::InsertSpace)
+        .enabled(app.session.current_page().is_some())
+        .help(tl!("Drag a line down the page to push what is below it further down (or up to take space away)."));
+    if widgets::small(ui, app, b) {
+        crate::ribbon::editing::insert_space(app);
+    }
     let has_sel = !app.canvas.selection.strokes.is_empty() || !app.session.ink_selection.is_empty();
     let b = Btn::new(Icon::Delete, tl!("Delete")).icon_only().help(tl!("Delete the selected ink.")).for_command(app, ids::DRAW_DELETE_SELECTION);
     let b = Btn { enabled: b.enabled && has_sel, ..b };
@@ -235,5 +244,24 @@ fn edit(ui: &mut Ui, app: &mut NoteApp) {
         // deletes.
         app.act(ids::DRAW_DELETE_SELECTION, json!({}));
         app.canvas.selection.strokes.clear();
+    }
+    let b = Btn::new(Icon::Arrange, tl!("Arrange"))
+        .icon_only()
+        .enabled(crate::ribbon::editing::can_arrange(app))
+        .help(tl!("Bring the selected items or ink to the front, or send them back."));
+    widgets::small_menu(ui, app, b, crate::ribbon::editing::arrange_menu);
+    let b = Btn::new(Icon::Rotate, tl!("Rotate"))
+        .icon_only()
+        .enabled(crate::ribbon::editing::can_rotate(app))
+        .help(tl!("Turn or flip the selected pictures or ink."));
+    widgets::small_menu(ui, app, b, crate::ribbon::editing::rotate_menu);
+    let one = crate::ribbon::editing::one_picture(app);
+    let b = Btn::new(Icon::Crop, tl!("Crop")).icon_only().enabled(one).help(tl!("Trim the edges of the selected picture."));
+    if widgets::small(ui, app, b) {
+        crate::ribbon::editing::crop(app);
+    }
+    let b = Btn::new(Icon::AltText, tl!("Alt Text")).icon_only().enabled(one).help(tl!("Describe the selected picture for people who can't see it."));
+    if widgets::small(ui, app, b) {
+        crate::ribbon::editing::alt_text(app);
     }
 }

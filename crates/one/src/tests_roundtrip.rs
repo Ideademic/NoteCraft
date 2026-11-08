@@ -89,9 +89,21 @@ fn sample_section() -> Section {
         data: png(),
         format: ImageFormat::Png,
         alt: "A small icon".into(),
+        transform: notecraft_doc::PictureTransform {
+            rotation: 3,
+            flip_h: true,
+            flip_v: false,
+            crop: Some(notecraft_doc::Crop { left: 0.125, top: 0.25, right: 0.875, bottom: 0.75 }),
+        },
     })));
-    let page_img =
-        |y: f32| ImageElement { pos: Point::new(36.0, y), size: Size::new(306.0, 396.0), data: png(), format: ImageFormat::Png, alt: String::new() };
+    let page_img = |y: f32| ImageElement {
+        pos: Point::new(36.0, y),
+        size: Size::new(306.0, 396.0),
+        data: png(),
+        format: ImageFormat::Png,
+        alt: String::new(),
+        transform: Default::default(),
+    };
     p.elements.push(PageElement::new(ElementKind::Printout(Printout {
         file_name: "report.pdf".into(),
         file_bytes: Arc::new(b"%PDF-1.7 fake".to_vec()),
@@ -116,10 +128,12 @@ fn sample_section() -> Section {
     for (i, level) in [1u8, 2, 0].into_iter().enumerate() {
         let mut sub = Page::new_at(format!("Page {i}"), at(1_700_100_000 + i as i64));
         sub.level = level;
+        sub.hide_title = i == 1;
         sub.elements.push(PageElement::new(ElementKind::Outline(Outline::with_text(Point::new(72.0, 144.0), "eggs\nmilk"))));
         s.pages.push(sub);
     }
     s.pages.push(Page::new_at("", at(1_700_200_000)));
+    s.default_template = Some("nc:meeting".into());
     s
 }
 
@@ -168,6 +182,34 @@ fn section_round_trip() {
     assert!(back.source.authored_by_notecraft);
     assert!(!back.source.unsupported_content);
     assert_eq!(normalize(back), normalize(s));
+}
+
+#[test]
+fn picture_settings_hidden_titles_and_templates_round_trip() {
+    let back = read_section(&write_section(&sample_section()).unwrap()).unwrap();
+    assert_eq!(back.default_template.as_deref(), Some("nc:meeting"));
+    assert_eq!(back.pages.iter().filter(|p| p.hide_title).count(), 1);
+    let img = back.pages[0]
+        .elements
+        .iter()
+        .find_map(|e| match &e.kind {
+            ElementKind::Image(i) => Some(i.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(img.alt, "A small icon");
+    assert_eq!((img.transform.rotation, img.transform.flip_h, img.transform.flip_v), (3, true, false));
+    assert_eq!(img.transform.crop, Some(notecraft_doc::Crop { left: 0.125, top: 0.25, right: 0.875, bottom: 0.75 }));
+    // A picture drawn as it is writes no transform.
+    assert!(crate::write::transform_value(&notecraft_doc::PictureTransform::default()).is_none());
+    assert!(crate::write::transform_value(&notecraft_doc::PictureTransform { rotation: 4, ..Default::default() }).is_none());
+    assert!(crate::write::transform_value(&notecraft_doc::PictureTransform { flip_v: true, ..Default::default() }).is_some());
+    // Junk transform bytes read as something sane.
+    let mut set = notecraft_onestore::PropertySet::default();
+    set.push(ids::prop::NC_PICTURE_TRANSFORM, notecraft_onestore::PropertyValue::Bytes(vec![7, 0xFF, 1, 2]));
+    let t = crate::read::read_transform(&set);
+    assert_eq!(t.rotation, 3);
+    assert!(t.crop.is_none());
 }
 
 #[test]

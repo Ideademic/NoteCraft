@@ -1,5 +1,5 @@
-//! Simplified Insert: Space | Table | File Printout, File Attachment | Pictures | Date & Time▾
-//! (Date, Time inside).
+//! Simplified Insert: Space | Table | File Printout, File Attachment | Pictures | Templates |
+//! Date & Time▾ (Date, Time inside).
 
 use egui::Ui;
 use notecraft_engine::ids;
@@ -11,17 +11,35 @@ use crate::services::OpenPurpose;
 use crate::widgets::{self, Btn};
 use crate::{NoteApp, tl};
 
-pub const SEGMENTS: [Segment; 5] = [
+pub const SEGMENTS: [Segment; 6] = [
     Segment { key: "space", draw: space },
     Segment { key: "table", draw: table },
     Segment { key: "files", draw: files },
     Segment { key: "images", draw: images },
+    Segment { key: "templates", draw: templates },
     Segment { key: "stamp", draw: stamp },
 ];
 
 fn space(ui: &mut Ui, app: &mut NoteApp) {
-    let b = Btn::new(Icon::InsertSpace, tl!("Space")).tip(tl!("Insert Space")).enabled(false).help(tl!("Coming in a later version of NoteCraft."));
-    widgets::small(ui, app, b);
+    let b = Btn::new(Icon::InsertSpace, tl!("Space"))
+        .tip(tl!("Insert Space"))
+        .checked(app.canvas.tool == crate::canvas::Tool::InsertSpace)
+        .enabled(app.session.current_page().is_some())
+        .help(tl!("Drag a line down the page to push what is below it further down (or up to take space away)."));
+    if widgets::small(ui, app, b) {
+        crate::ribbon::editing::insert_space(app);
+    }
+}
+
+fn templates(ui: &mut Ui, app: &mut NoteApp) {
+    let b = Btn::new(Icon::Templates, tl!("Templates"))
+        .tip(tl!("Page Templates"))
+        .checked(app.ui.templates_pane.is_some())
+        .enabled(app.session.current_section().is_some())
+        .help(tl!("Add a page made from a template, or save this page as one."));
+    if widgets::small(ui, app, b) {
+        crate::panes::templates::toggle(app);
+    }
 }
 
 fn table(ui: &mut Ui, app: &mut NoteApp) {

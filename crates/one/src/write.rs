@@ -71,6 +71,9 @@ pub fn section_store(section: &Section, file_name: &str, ancestor: Guid) -> Resu
         .push(prop::SECTION_DISPLAY_NAME, wz_bytes(&section.name))
         .push(prop::NOTEBOOK_COLOR, PropertyValue::U32(to_colorref(section.color)))
         .push(prop::NC_WRITER, wz_bytes(WRITER_NAME));
+    if let Some(t) = section.default_template.as_deref().filter(|t| !t.is_empty()) {
+        meta.push(prop::NC_SECTION_TEMPLATE, wz_bytes(t));
+    }
     let meta_id = root.add(jcid::SECTION_METADATA, meta);
     root.root(role::CONTENT, node_id);
     root.root(role::METADATA, meta_id);
@@ -145,6 +148,9 @@ pub(crate) fn page_space(page: &Page) -> Result<(ObjectSpace, PropertySet)> {
     }
     if page.background.rule != notecraft_doc::RuleLines::None {
         p.push(prop::NC_RULE_LINES, wz_bytes(page.background.rule.name()));
+    }
+    if page.hide_title {
+        p.push(prop::NC_HIDE_TITLE, PropertyValue::Bool(true));
     }
     let node = w.b.add(jcid::PAGE_NODE, p);
     let mut manifest = PropertySet::default();
@@ -590,6 +596,9 @@ impl PageWriter {
         if !img.alt.is_empty() {
             p.push(prop::IMAGE_ALT_TEXT, wz_bytes(&img.alt));
         }
+        if let Some(t) = transform_value(&img.transform) {
+            p.push(prop::NC_PICTURE_TRANSFORM, t);
+        }
         if let Some(tag) = printout {
             p.push(prop::NC_PRINTOUT, printout_value(tag));
         }
@@ -624,4 +633,19 @@ fn printout_value((group, index): (Guid, u32)) -> PropertyValue {
     let mut b = group.0.to_vec();
     b.extend_from_slice(&index.to_le_bytes());
     PropertyValue::Bytes(b)
+}
+
+/// [`prop::NC_PICTURE_TRANSFORM`]'s value; `None` for a picture drawn as it is.
+pub(crate) fn transform_value(t: &notecraft_doc::PictureTransform) -> Option<PropertyValue> {
+    let t = t.sanitized();
+    if t.is_identity() {
+        return None;
+    }
+    let mut b = vec![t.rotation, u8::from(t.flip_h) | (u8::from(t.flip_v) << 1)];
+    if let Some(c) = t.crop {
+        for v in [c.left, c.top, c.right, c.bottom] {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    Some(PropertyValue::Bytes(b))
 }

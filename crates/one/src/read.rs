@@ -82,6 +82,10 @@ pub fn section(store: &Store, name: &str) -> Result<Section> {
         color,
         pages,
         source: SourceInfo { authored_by_notecraft: authored, unsupported_content: r.unsupported, file_name: None },
+        default_template: meta
+            .and_then(|m| string(m, prop::NC_SECTION_TEMPLATE))
+            .filter(|t| !t.trim().is_empty())
+            .map(|t| t.chars().take(256).collect()),
     })
 }
 
@@ -175,7 +179,8 @@ impl Reader {
         };
         let (elements, ink) = parts.finish();
         let versions = crate::versions::read(self, space, manifest);
-        Some(Page { id, title, created, modified, level, background, elements, ink, versions })
+        let hide_title = np.bool(prop::NC_HIDE_TITLE) == Some(true);
+        Some(Page { id, title, created, modified, level, background, elements, ink, versions, hide_title })
     }
 
     fn title_text(&mut self, v: &View<'_>, title: &Object) -> String {
@@ -238,7 +243,14 @@ impl Reader {
             p.f32(prop::LAYOUT_MAX_HEIGHT).or_else(|| p.f32(prop::PICTURE_HEIGHT)).map(hi_to_pt).unwrap_or(0.0),
         );
         let size = if size.w > 0.0 && size.h > 0.0 { size } else { picture_size(&data).unwrap_or(Size::new(100.0, 100.0)) }.sanitized();
-        let img = ImageElement { pos, size, format: ImageFormat::sniff(&data), data, alt: string(p, prop::IMAGE_ALT_TEXT).unwrap_or_default() };
+        let img = ImageElement {
+            pos,
+            size,
+            format: ImageFormat::sniff(&data),
+            data,
+            alt: string(p, prop::IMAGE_ALT_TEXT).unwrap_or_default(),
+            transform: read_transform(p),
+        };
         if let Some((group, index)) = printout_tag(p) {
             if let Some(p) = parts.printout(group) {
                 p.pages.push((index, img));
@@ -565,6 +577,19 @@ fn jpeg_size(d: &[u8]) -> Option<(u32, u32)> {
         i = i.checked_add(2 + len)?;
     }
     None
+}
+
+/// [`prop::NC_PICTURE_TRANSFORM`], tolerant: a short or junk value gives what it can.
+pub(crate) fn read_transform(p: &PropertySet) -> notecraft_doc::PictureTransform {
+    let Some(b) = p.bytes(prop::NC_PICTURE_TRANSFORM) else { return notecraft_doc::PictureTransform::default() };
+    let rotation = b.first().copied().unwrap_or(0) % 4;
+    let flags = b.get(1).copied().unwrap_or(0);
+    let f = |i: usize| b.get(2 + i * 4..6 + i * 4).and_then(|s| <[u8; 4]>::try_from(s).ok()).map(f32::from_le_bytes);
+    let crop = match (f(0), f(1), f(2), f(3)) {
+        (Some(left), Some(top), Some(right), Some(bottom)) => notecraft_doc::Crop { left, top, right, bottom }.sanitized(),
+        _ => None,
+    };
+    notecraft_doc::PictureTransform { rotation, flip_h: flags & 1 != 0, flip_v: flags & 2 != 0, crop }.sanitized()
 }
 
 #[cfg(test)]

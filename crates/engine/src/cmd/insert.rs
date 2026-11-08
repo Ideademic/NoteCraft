@@ -50,7 +50,7 @@ fn push(page: &mut Page, kind: ElementKind) -> Result<notecraft_doc::Guid, CmdEr
     Ok(id)
 }
 
-fn image(s: &mut Session, params: &Value) -> CmdResult {
+pub(crate) fn image(s: &mut Session, params: &Value) -> CmdResult {
     let file = file_input(params, notecraft_formats::MAX_IMAGE_BYTES)?;
     let mut img = notecraft_formats::import_image(&file.bytes).map_err(|e| CmdError::Failed(e.to_string()))?;
     img.alt = p::str(params, "alt").map(|a| a.chars().filter(|c| !c.is_control()).take(1000).collect()).unwrap_or_default();

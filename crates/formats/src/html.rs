@@ -213,12 +213,11 @@ fn img_tag(img: &ImageElement, class: &str, positioned: bool) -> Option<String> 
     } else {
         format!(" style=\"width:{}pt;height:{}pt\"", num(img.size.w), num(img.size.h))
     };
-    Some(format!(
-        "<img class=\"{class}\" alt=\"{}\" src=\"data:{};base64,{}\"{style}>",
-        esc(&img.alt),
-        img.format.mime(),
-        STANDARD.encode(img.data.as_slice())
-    ))
+    let (mime, data) = match crate::picture::bake(img) {
+        Some(png) => (ImageFormat::Png.mime(), STANDARD.encode(png)),
+        None => (img.format.mime(), STANDARD.encode(img.data.as_slice())),
+    };
+    Some(format!("<img class=\"{class}\" alt=\"{}\" src=\"data:{mime};base64,{data}\"{style}>", esc(&img.alt)))
 }
 
 /// An outline's paragraphs: consecutive list paragraphs of one kind and (chosen) marker style
@@ -354,7 +353,7 @@ fn para_html(p: &Paragraph, out: &mut String) {
     out.push_str(&close);
 }
 
-fn run_html(r: &Run, out: &mut String) {
+pub(crate) fn run_html(r: &Run, out: &mut String) {
     if r.text.is_empty() {
         return;
     }
@@ -472,6 +471,7 @@ mod tests {
             data: Arc::new(b"\x89PNG\r\n\x1a\nxx".to_vec()),
             format: ImageFormat::Png,
             alt: "a \"pic\"".into(),
+            transform: Default::default(),
         })));
         page.elements.push(PageElement::new(ElementKind::EmbeddedFile {
             name: "notes.txt".into(),

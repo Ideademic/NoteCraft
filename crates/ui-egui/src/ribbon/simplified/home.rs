@@ -39,10 +39,6 @@ fn is_on(state: Option<&CurrentFormat>, key: &str) -> bool {
     v.unwrap_or(false)
 }
 
-fn editing_or_selected(app: &NoteApp) -> bool {
-    app.canvas.editing.is_some() || !app.canvas.selection.is_empty()
-}
-
 /// Remembered between frames under the classic tab's keys, so both layouts agree.
 fn remembered<T: Clone + Send + Sync + 'static>(ui: &Ui, key: &str, default: T) -> T {
     ui.data(|d| d.get_temp::<T>(egui::Id::unique(key))).unwrap_or(default)
@@ -55,42 +51,26 @@ fn remember<T: Clone + Send + Sync + 'static>(ui: &Ui, key: &str, v: T) {
 fn clipboard(ui: &mut Ui, app: &mut NoteApp) {
     let paste = Btn::new(Icon::Paste, tl!("Paste")).shortcut(widgets::shortcut_text("Mod+V")).enabled(app.session.current_page().is_some());
     if widgets::small_split(ui, app, paste, |ui, app| {
-        if widgets::menu_item(ui, Some(Icon::Paste), tl!("Paste"), true) {
-            paste_now(ui, app, true);
-        }
-        if widgets::menu_item(ui, Some(Icon::ClearFormat), tl!("Keep Text Only"), true) {
-            paste_now(ui, app, false);
-        }
+        crate::ribbon::editing::paste_menu(ui, app);
         ui.separator();
-        let on = editing_or_selected(app);
+        let on = crate::ribbon::editing::can_copy(app);
         if widgets::menu_item(ui, Some(Icon::Cut), tl!("Cut"), on) {
-            ui.ctx().input_mut(|i| i.events.push(egui::Event::Cut));
+            crate::ribbon::editing::copy(ui, app, true);
         }
         if widgets::menu_item(ui, Some(Icon::Copy), tl!("Copy"), on) {
-            ui.ctx().input_mut(|i| i.events.push(egui::Event::Copy));
+            crate::ribbon::editing::copy(ui, app, false);
         }
-        widgets::menu_item(ui, Some(Icon::FormatPainter), tl!("Format Painter"), false);
     }) {
-        paste_now(ui, app, true);
+        crate::ribbon::editing::paste(ui, app, false);
     }
-}
-
-/// Paste, as on the classic tab: text goes to the canvas as a paste event; a picture on the
-/// clipboard becomes a picture on the page.
-fn paste_now(ui: &Ui, app: &mut NoteApp, with_pictures: bool) {
-    if let Some(text) = app.services.clipboard_text.as_ref().and_then(|f| f()) {
-        ui.ctx().input_mut(|i| i.events.push(egui::Event::Paste(text)));
-        return;
+    let painter = Btn::new(Icon::FormatPainter, tl!("Format Painter"))
+        .icon_only()
+        .checked(app.canvas.painter.is_some())
+        .enabled(crate::ribbon::editing::can_paint(app))
+        .help(tl!("Copy the formatting at the caret onto other text. Double-click to keep painting until Esc."));
+    if widgets::small(ui, app, painter) {
+        crate::ribbon::editing::format_painter(ui, app);
     }
-    if with_pictures && let Some(img) = app.services.clipboard_image.as_ref().and_then(|f| f()) {
-        match crate::app::files::png_from_rgba(img.width, img.height, &img.rgba) {
-            Some(png) => crate::app::files::insert_bytes(app, crate::services::OpenPurpose::Picture, tl!("Pasted picture.png"), &png),
-            None => app.set_status(tl!("The picture on the clipboard couldn't be read."), true),
-        }
-        return;
-    }
-    let key = widgets::shortcut_text("Mod+V");
-    app.set_status(crate::i18n::fmt_plain(tl!("Nothing to paste here. Press {key} to paste into a note."), &[("key", &key)]), false);
 }
 
 fn size_text(s: f32) -> String {
@@ -247,4 +227,12 @@ fn tags(ui: &mut Ui, app: &mut NoteApp) {
     }
     let b = Btn::new(Icon::Important, tl!("Tags")).icon_only().help(tl!("Mark notes with a tag.")).for_command(app, ids::FORMAT_TAG);
     widgets::small_menu(ui, app, b, crate::ribbon::paragraph::tag_menu);
+    let b = Btn::new(Icon::FindTags, tl!("Find Tags"))
+        .icon_only()
+        .checked(app.ui.tags_pane.is_some())
+        .enabled(!app.session.notebooks.is_empty())
+        .help(tl!("List the tagged notes in a pane, and go to any of them."));
+    if widgets::small(ui, app, b) {
+        crate::panes::tags::toggle(app);
+    }
 }

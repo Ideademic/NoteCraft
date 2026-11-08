@@ -3,14 +3,14 @@
 //! attachments, the proofing language menus and File › Options › Proofing, and keeping the user
 //! dictionary and the default proofing language in the settings.
 //!
-//! Some menu items belong to editing features that land separately (rotate, crop and alt text
-//! for pictures, bring to front and send to back, paste picture, rich copy): they are looked up by
-//! command id ([`EXTRA`]) and shown once one of their ids is registered.
+//! The menus' editing items (copy, cut and paste, a picture's rotate, crop and alt text, the
+//! order of items and ink) use the canvas's clipboard and the editing commands, as the ribbon
+//! does ([`crate::ribbon::editing`]).
 
 use base64::Engine as _;
 use egui::{Align, Frame, Layout, Ui};
 use notecraft_doc::Guid;
-use notecraft_engine::{TextPos, ids, proof, registry};
+use notecraft_engine::{TextPos, ids, proof};
 use serde_json::{Value, json};
 
 use crate::canvas::TextCaret;
@@ -33,8 +33,6 @@ pub struct ReviewUi {
     pub open_file: Option<(Guid, String)>,
     /// A link to a file on this computer waiting for "Open it?".
     pub open_link: Option<String>,
-    /// A picture's alt text being edited (element, text).
-    pub alt_text: Option<(Guid, String)>,
     /// craft-proof's dictionary generation the settings last copied.
     dictionary: Option<u64>,
     warmed: bool,
@@ -59,28 +57,6 @@ pub struct LinkDialog {
     original: String,
     /// The address box takes the keyboard on the first frame (from the note being edited).
     focus: bool,
-}
-
-/// Menu items of editing features that may not be in this build: the first registered id of each
-/// is used, with the item's params.
-pub const EXTRA: &[(&str, &[&str])] = &[
-    ("rotateRight", &["picture.rotateRight", "picture.rotate", "image.rotate", "arrange.rotate", "draw.rotate"]),
-    ("rotateLeft", &["picture.rotateLeft"]),
-    ("flipHorizontal", &["picture.flipHorizontal", "picture.flip", "image.flip"]),
-    ("flipVertical", &["picture.flipVertical"]),
-    ("crop", &["picture.crop", "image.crop"]),
-    ("altText", &["picture.altText", "picture.setAltText", "image.altText"]),
-    ("bringToFront", &["arrange.bringToFront", "draw.bringToFront", "element.bringToFront", "order.bringToFront"]),
-    ("sendToBack", &["arrange.sendToBack", "draw.sendToBack", "element.sendToBack", "order.sendToBack"]),
-    ("pastePicture", &["edit.pastePicture", "insert.pastePicture", "clipboard.pastePicture"]),
-    ("copy", &["edit.copy", "clipboard.copy"]),
-    ("cut", &["edit.cut", "clipboard.cut"]),
-    ("paste", &["edit.paste", "clipboard.paste"]),
-];
-
-/// The registered command for an [`EXTRA`] item, if any.
-pub fn extra(name: &str) -> Option<&'static str> {
-    EXTRA.iter().find(|(n, _)| *n == name).and_then(|(_, ids)| ids.iter().copied().find(|id| registry().get(id).is_some()))
 }
 
 // --- settings and per-frame work ---------------------------------------------------------------
@@ -488,49 +464,6 @@ fn open_link_prompt(ctx: &egui::Context, app: &mut NoteApp) {
     }
 }
 
-fn alt_text_prompt(ctx: &egui::Context, app: &mut NoteApp) {
-    let Some((element, mut text)) = app.ui.review.alt_text.clone() else { return };
-    let Some(cmd) = extra("altText") else {
-        app.ui.review.alt_text = None;
-        return;
-    };
-    let t = app.tokens.clone();
-    let mut answer = None;
-    let modal = egui::Modal::new(egui::Id::unique("nc_alt_text")).frame(
-        Frame::NONE.fill(t.menu).stroke(egui::Stroke::new(1.0, t.border_strong)).corner_radius(crate::theme::RADIUS_MEDIUM).inner_margin(18.0),
-    );
-    let resp = modal.show(ctx, |ui| {
-        ui.set_width(380.0);
-        ui.label(egui::RichText::new(tl!("Alt Text")).font(regular(17.0)).color(t.text));
-        ui.label(egui::RichText::new(tl!("Describe the picture for people who can't see it.")).font(regular(12.0)).color(t.text_dim));
-        let r = ui.add(egui::TextEdit::multiline(&mut text).desired_rows(3).desired_width(f32::INFINITY));
-        if !r.has_focus() {
-            r.request_focus();
-        }
-        ui.horizontal(|ui| {
-            if flat_button(ui, tl!("OK"), true, true) {
-                answer = Some(true);
-            }
-            if flat_button(ui, tl!("Cancel"), false, true) {
-                answer = Some(false);
-            }
-        });
-    });
-    if resp.should_close() && answer.is_none() {
-        answer = Some(false);
-    }
-    match answer {
-        Some(yes) => {
-            app.ui.review.alt_text = None;
-            if yes {
-                let page = app.session.current.page;
-                app.act(cmd, json!({"id": element, "element": element, "page": page, "alt": text, "text": text}));
-            }
-        }
-        None => app.ui.review.alt_text = Some((element, text)),
-    }
-}
-
 /// The dialogs and the page's context menu, after the frame's panels.
 pub fn dialogs(ctx: &egui::Context, app: &mut NoteApp) {
     context_menu(ctx, app);
@@ -538,7 +471,6 @@ pub fn dialogs(ctx: &egui::Context, app: &mut NoteApp) {
     word_count_dialog(ctx, app);
     open_file_prompt(ctx, app);
     open_link_prompt(ctx, app);
-    alt_text_prompt(ctx, app);
 }
 
 // --- the page's context menu ---------------------------------------------------------------
@@ -599,25 +531,33 @@ fn inject(app: &mut NoteApp, ev: egui::Event) {
     app.canvas.review.inject.push(ev);
 }
 
-fn paste(app: &mut NoteApp) {
-    if let Some(id) = extra("paste") {
-        app.act(id, json!({}));
-        return;
-    }
+/// Paste (`plain`: the words only): the system clipboard's text, or what NoteCraft copied, as a
+/// paste the canvas handles next frame (rich, see [`crate::canvas::clipboard`]).
+fn paste(ctx: &egui::Context, app: &mut NoteApp, plain: bool) {
     // The host reads the clipboard (on the web it arrives as a paste a moment later).
-    if let Some(text) = app.services.clipboard_text.as_ref().and_then(|f| f()) {
+    let text = app.services.clipboard_text.as_ref().and_then(|f| f()).or_else(|| crate::canvas::clipboard::internal(ctx).map(|i| i.text.clone()));
+    app.canvas.paste_plain = plain;
+    if let Some(text) = text {
         inject(app, egui::Event::Paste(text));
     }
+}
+
+/// Copy or cut one item (a note container, a picture): it is selected, then copied.
+fn copy_item(app: &mut NoteApp, id: Guid, cut: bool) {
+    crate::canvas::edit::leave(&mut app.canvas, &mut app.session, None);
+    app.canvas.selection.elements = vec![id];
+    inject(app, if cut { egui::Event::Cut } else { egui::Event::Copy });
 }
 
 fn menu(ui: &mut Ui, app: &mut NoteApp, target: &MenuTarget) {
     match target {
         MenuTarget::Text { outline, at, issue, link } => text_menu(ui, app, *outline, *at, issue.as_ref(), link.as_deref()),
         MenuTarget::Container(id) => {
-            if let Some(cmd) = extra("copy")
-                && item(ui, Some(Icon::Copy), tl!("Copy"), true)
-            {
-                app.act(cmd, json!({"ids": [id]}));
+            if item(ui, Some(Icon::Cut), tl!("Cut"), true) {
+                copy_item(app, *id, true);
+            }
+            if item(ui, Some(Icon::Copy), tl!("Copy"), true) {
+                copy_item(app, *id, false);
             }
             if item(ui, Some(Icon::Link), tl!("Copy Link to Paragraph"), true) {
                 copy_paragraph_link(ui.ctx(), app, *id, 0);
@@ -632,13 +572,14 @@ fn menu(ui: &mut Ui, app: &mut NoteApp, target: &MenuTarget) {
             if item(ui, Some(Icon::Export), tl!("Save As…"), true) {
                 save_attachment(app, *id);
             }
-            if let Some(cmd) = extra("copy")
-                && item(ui, Some(Icon::Copy), tl!("Copy"), true)
-            {
-                app.act(cmd, json!({"ids": [id]}));
+            if item(ui, Some(Icon::Cut), tl!("Cut"), true) {
+                copy_item(app, *id, true);
+            }
+            if item(ui, Some(Icon::Copy), tl!("Copy"), true) {
+                copy_item(app, *id, false);
             }
             picture_extras(ui, app, *id);
-            order_extras(ui, app, json!({"id": id, "ids": [id]}));
+            order_extras(ui, app, json!({"elements": [id]}));
             ui.separator();
             if item(ui, Some(Icon::Delete), tl!("Delete"), true) {
                 app.act(ids::OUTLINE_DELETE, json!({"id": id}));
@@ -663,7 +604,7 @@ fn menu(ui: &mut Ui, app: &mut NoteApp, target: &MenuTarget) {
             if item(ui, Some(Icon::Export), tl!("Save Original As…"), true) {
                 save_attachment(app, *id);
             }
-            order_extras(ui, app, json!({"id": id, "ids": [id]}));
+            order_extras(ui, app, json!({"elements": [id]}));
             ui.separator();
             if item(ui, Some(Icon::Delete), tl!("Delete"), true) {
                 app.act(ids::OUTLINE_DELETE, json!({"id": id}));
@@ -685,62 +626,42 @@ fn menu(ui: &mut Ui, app: &mut NoteApp, target: &MenuTarget) {
 }
 
 fn picture_extras(ui: &mut Ui, app: &mut NoteApp, id: Guid) {
-    let p = json!({"id": id, "ids": [id], "element": id, "page": app.session.current.page});
-    let rotations: Vec<(&str, &str, Value)> = [
-        ("rotateRight", tl!("Rotate Right 90°"), json!({"degrees": 90, "direction": "right"})),
-        ("rotateLeft", tl!("Rotate Left 90°"), json!({"degrees": -90, "direction": "left"})),
-        ("flipHorizontal", tl!("Flip Horizontal"), json!({"axis": "horizontal"})),
-        ("flipVertical", tl!("Flip Vertical"), json!({"axis": "vertical"})),
-    ]
-    .into_iter()
-    .filter(|(n, _, _)| extra(n).is_some())
-    .collect();
-    if !rotations.is_empty() {
-        ui.menu_button(tl!("Rotate"), |ui| {
-            for (name, label, extra_params) in &rotations {
-                if let Some(cmd) = extra(name)
-                    && item(ui, Some(Icon::Rotate), label, true)
-                {
-                    app.act(cmd, merge(p.clone(), extra_params.clone()));
-                }
+    let p = json!({"element": id, "page": app.session.current.page});
+    ui.menu_button(tl!("Rotate"), |ui| {
+        for (icon, label, cmd, extra) in [
+            (Icon::RotateRight, tl!("Rotate Right 90°"), ids::PICTURE_ROTATE, json!({"degrees": 90})),
+            (Icon::RotateLeft, tl!("Rotate Left 90°"), ids::PICTURE_ROTATE, json!({"degrees": -90})),
+            (Icon::FlipHorizontal, tl!("Flip Horizontal"), ids::PICTURE_FLIP, json!({"axis": "horizontal"})),
+            (Icon::FlipVertical, tl!("Flip Vertical"), ids::PICTURE_FLIP, json!({"axis": "vertical"})),
+        ] {
+            if item(ui, Some(icon), label, true) {
+                app.act(cmd, merge(p.clone(), extra));
             }
-        });
+        }
+    });
+    if item(ui, Some(Icon::Crop), tl!("Crop"), true) && crate::canvas::crop::begin(&mut app.canvas, &mut app.session, id) {
+        app.set_status(tl!("Drag the black handles to crop. Press Enter to keep it, Esc to cancel."), false);
     }
-    if let Some(cmd) = extra("crop")
-        && item(ui, None, tl!("Crop"), true)
-    {
-        app.act(cmd, p.clone());
+    if item(ui, Some(Icon::AltText), tl!("Alt Text…"), true) {
+        crate::dialogs::alt_text::open(app, id);
     }
-    if extra("altText").is_some() && item(ui, None, tl!("Alt Text…"), true) {
-        let current = app
-            .session
-            .current_page()
-            .and_then(|pg| pg.element(id))
-            .and_then(|e| match &e.kind {
-                notecraft_doc::ElementKind::Image(i) => Some(i.alt.clone()),
-                _ => None,
-            })
-            .unwrap_or_default();
-        app.ui.review.alt_text = Some((id, current));
+    if item(ui, Some(Icon::ResetPicture), tl!("Reset Picture"), true) {
+        app.act(ids::PICTURE_RESET, p);
     }
 }
 
+/// Order: the z-order of the item(s) or ink `p` names (`arrange.*` params).
 fn order_extras(ui: &mut Ui, app: &mut NoteApp, p: Value) {
-    let front = extra("bringToFront");
-    let back = extra("sendToBack");
-    if front.is_none() && back.is_none() {
-        return;
-    }
     ui.menu_button(tl!("Order"), |ui| {
-        if let Some(cmd) = front
-            && item(ui, None, tl!("Bring to Front"), true)
-        {
-            app.act(cmd, p.clone());
-        }
-        if let Some(cmd) = back
-            && item(ui, None, tl!("Send to Back"), true)
-        {
-            app.act(cmd, p.clone());
+        for (icon, label, cmd) in [
+            (Icon::BringToFront, tl!("Bring to Front"), ids::ARRANGE_BRING_TO_FRONT),
+            (Icon::BringForward, tl!("Bring Forward"), ids::ARRANGE_BRING_FORWARD),
+            (Icon::SendBackward, tl!("Send Backward"), ids::ARRANGE_SEND_BACKWARD),
+            (Icon::SendToBack, tl!("Send to Back"), ids::ARRANGE_SEND_TO_BACK),
+        ] {
+            if item(ui, Some(icon), label, true) {
+                app.act(cmd, p.clone());
+            }
         }
     });
 }
@@ -811,25 +732,16 @@ fn text_menu(ui: &mut Ui, app: &mut NoteApp, outline: Guid, at: TextPos, issue: 
     }
     let selected = app.canvas.caret.as_ref().is_some_and(|c| !c.is_collapsed());
     if item(ui, Some(Icon::Cut), tl!("Cut"), selected) {
-        match extra("cut") {
-            Some(cmd) => app.act(cmd, crate::widgets::selection_params(app, json!({}))),
-            None => inject(app, egui::Event::Cut),
-        }
+        inject(app, egui::Event::Cut);
     }
     if item(ui, Some(Icon::Copy), tl!("Copy"), selected) {
-        match extra("copy") {
-            Some(cmd) => app.act(cmd, crate::widgets::selection_params(app, json!({}))),
-            None => inject(app, egui::Event::Copy),
-        }
+        inject(app, egui::Event::Copy);
     }
     if item(ui, Some(Icon::Paste), tl!("Paste"), true) {
-        paste(app);
+        paste(ui.ctx(), app, false);
     }
-    if app.services.clipboard_text.is_some()
-        && item(ui, Some(Icon::Paste), tl!("Paste as Plain Text"), true)
-        && let Some(text) = app.services.clipboard_text.as_ref().and_then(|f| f())
-    {
-        inject(app, egui::Event::Paste(text));
+    if item(ui, Some(Icon::ClearFormat), tl!("Paste as Plain Text"), true) {
+        paste(ui.ctx(), app, true);
     }
     ui.separator();
     if item(ui, Some(Icon::Link), if link.is_some() { tl!("Edit Link…") } else { tl!("Link…") }, true) {
@@ -904,12 +816,22 @@ fn ink_menu(ui: &mut Ui, app: &mut NoteApp) {
         }
     });
     let ink = app.session.ink_selection.clone();
-    if let Some(cmd) = extra("rotateRight")
-        && item(ui, Some(Icon::Rotate), tl!("Rotate Right 90°"), true)
-    {
-        app.act(cmd, json!({"ids": ink, "degrees": 90, "direction": "right"}));
+    let any = !ink.is_empty();
+    ui.menu_button(tl!("Rotate"), |ui| {
+        for (icon, label, cmd, extra) in [
+            (Icon::RotateRight, tl!("Rotate Right 90°"), ids::INK_ROTATE, json!({"degrees": 90})),
+            (Icon::RotateLeft, tl!("Rotate Left 90°"), ids::INK_ROTATE, json!({"degrees": -90})),
+            (Icon::FlipHorizontal, tl!("Flip Horizontal"), ids::INK_FLIP, json!({"axis": "horizontal"})),
+            (Icon::FlipVertical, tl!("Flip Vertical"), ids::INK_FLIP, json!({"axis": "vertical"})),
+        ] {
+            if item(ui, Some(icon), label, any) {
+                app.act(cmd, merge(json!({"ids": ink}), extra));
+            }
+        }
+    });
+    if any {
+        order_extras(ui, app, json!({"strokes": ink}));
     }
-    order_extras(ui, app, json!({"ids": ink}));
     ui.separator();
     if item(ui, Some(Icon::Delete), tl!("Delete"), !app.session.ink_selection.is_empty()) {
         app.act(ids::DRAW_DELETE_SELECTION, json!({}));
@@ -921,14 +843,11 @@ fn page_menu(ui: &mut Ui, app: &mut NoteApp, at: notecraft_doc::Point) {
     if item(ui, Some(Icon::Paste), tl!("Paste"), true) {
         // A waiting container there takes the pasted text (it is created by typing).
         app.canvas.pending = Some(crate::canvas::PendingContainer { at, merge_key: format!("new:{}", Guid::new()) });
-        paste(app);
+        paste(ui.ctx(), app, false);
     }
-    let picture_cmd = extra("pastePicture");
-    if (picture_cmd.is_some() || app.services.clipboard_image.is_some()) && item(ui, Some(Icon::Picture), tl!("Paste Picture"), true) {
-        match picture_cmd {
-            Some(cmd) => app.act(cmd, json!({"x": at.x, "y": at.y})),
-            None => paste_picture(app),
-        }
+    if app.services.clipboard_image.is_some() && item(ui, Some(Icon::Picture), tl!("Paste Picture"), true) {
+        app.canvas.pending = Some(crate::canvas::PendingContainer { at, merge_key: format!("new:{}", Guid::new()) });
+        paste_picture(ui.ctx(), app);
     }
     ui.separator();
     if item(ui, Some(Icon::Type), tl!("New Note Container Here"), true)
@@ -950,13 +869,14 @@ fn page_menu(ui: &mut Ui, app: &mut NoteApp, at: notecraft_doc::Point) {
     }
 }
 
-fn paste_picture(app: &mut NoteApp) {
+fn paste_picture(ctx: &egui::Context, app: &mut NoteApp) {
     let Some(img) = app.services.clipboard_image.as_ref().and_then(|f| f()) else {
         app.set_status(tl!("There's no picture on the clipboard."), false);
         return;
     };
     match crate::app::files::png_from_rgba(img.width, img.height, &img.rgba) {
-        Some(png) => crate::app::files::insert_bytes(app, crate::services::OpenPurpose::Picture, tl!("Pasted picture.png"), &png),
+        // At the waiting spot: one undo step, selected (`edit.pastePicture`).
+        Some(png) => crate::canvas::clipboard::paste_picture_bytes(ctx, &mut app.canvas, &mut app.session, None, &png),
         None => app.set_status(tl!("The picture on the clipboard couldn't be read."), true),
     }
 }

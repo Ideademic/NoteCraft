@@ -2,7 +2,7 @@
 //!
 //! Usage: `notecraft [notebook folder | .onetoc2 | .onepkg | .one]…`; `--help` prints `USAGE`.
 //!
-//! At start it reads its settings (`prefs.json`, `recent.json`, `read.json` in the settings folder), offers to
+//! At start it reads its settings (`prefs.json`, `recent.json`, `read.json`, `templates.json` in the settings folder), offers to
 //! restore notebooks a crash left unsaved, reopens the notebooks that were open last time (or the
 //! default "My Notebook"), then the files on the command line. Changes autosave; on exit
 //! everything is saved and the settings written.
@@ -45,6 +45,8 @@ struct Saved {
     recent: String,
     /// `read.json`: the pages the user has seen (History ▸ Unread).
     read: String,
+    /// The user's page templates (`templates.json`) were last written at this revision.
+    templates: u64,
 }
 
 /// The eframe app: [`NoteApp`] does everything; this keeps its settings on disk.
@@ -86,7 +88,8 @@ impl App {
         let prefs = self.app.prefs().to_json();
         let recent = self.app.session.recent.to_json();
         let read = self.app.read_state_json();
-        if prefs == self.saved.prefs && recent == self.saved.recent && read == self.saved.read {
+        let templates = self.app.ui.templates_revision;
+        if prefs == self.saved.prefs && recent == self.saved.recent && read == self.saved.read && templates == self.saved.templates {
             return;
         }
         if let Err(e) = std::fs::create_dir_all(dir) {
@@ -109,6 +112,12 @@ impl App {
             match std::fs::write(dir.join("read.json"), &read) {
                 Ok(()) => self.saved.read = read,
                 Err(e) => log::warn!("writing the read marks: {e}"),
+            }
+        }
+        if templates != self.saved.templates {
+            match std::fs::write(dir.join("templates.json"), self.app.templates_json()) {
+                Ok(()) => self.saved.templates = templates,
+                Err(e) => log::warn!("writing the page templates: {e}"),
             }
         }
     }
@@ -237,6 +246,7 @@ fn main() -> eframe::Result {
     let prefs = Prefs::from_json(&read(settings.as_deref(), "prefs.json"));
     let recent_json = read(settings.as_deref(), "recent.json");
     let read_json = read(settings.as_deref(), "read.json");
+    let templates_json = read(settings.as_deref(), "templates.json");
     let mac = cfg!(target_os = "macos");
     let frame = craft_window::Choice::probe(craft_window::Prefix::new("NOTECRAFT")).into_frame();
     let mut viewport = egui::ViewportBuilder::default()
@@ -290,6 +300,7 @@ fn main() -> eframe::Result {
             let mut app = NoteApp::new(session, services::desktop(dialogs.hook()));
             app.load_prefs(prefs);
             app.load_read_state(&read_json);
+            app.load_templates(&templates_json);
             // The check at start, unless File › Options turned it off.
             app.updates.enable_startup_check();
             app.integrated_titlebar = mac;
