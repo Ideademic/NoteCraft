@@ -42,6 +42,8 @@ pub enum Gesture {
     /// Dragging out a shape with the Shape tool: where the drag started and is now (page
     /// points), and whether Shift constrains it.
     Shape { kind: super::ShapeKind, from: Point, to: Point, constrain: bool },
+    /// Insert Space: the line's page y where the drag started and is now.
+    Space { from: f32, to: f32 },
 }
 
 /// Whether a drag is under way.
@@ -118,6 +120,25 @@ pub fn handle(ui: &mut Ui, state: &mut CanvasState, session: &mut Session, v: &V
     let Some(at) = p.pos else { return };
     let on_title = title.is_some_and(|t| t.contains(at)) && state.tool.types();
     let starts = p.pressed && resp.hovered() && v.clip.contains(at) && !on_title;
+    if state.tool == Tool::InsertSpace {
+        super::space::pointer(ui, state, session, v, (starts, p.down, p.released, at));
+        return;
+    }
+    // Cropping a picture: its handles first; a press elsewhere keeps the crop and goes on.
+    if state.crop.is_some() {
+        if starts && super::crop::press(state, session, v, at) {
+            return;
+        }
+        if state.crop.as_ref().is_some_and(|c| c.drag.is_some()) {
+            if p.down {
+                super::crop::drag(state, v, at);
+            }
+            if p.released {
+                super::crop::release(state);
+            }
+            return;
+        }
+    }
     if !state.tool.types() {
         ink::pointer(ui, state, session, v, (starts, p.down, p.released, at), resp);
         return;
@@ -260,7 +281,11 @@ fn press(ui: &Ui, state: &mut CanvasState, session: &mut Session, v: &View, lay:
         state.gesture = Gesture::InkMove { from: page_pt, to: page_pt };
         return;
     }
-    // 5. Empty paper: the caret waits there for a new container.
+    // 5. Empty paper: the caret waits there for a new container (a one-use Format Painter
+    // with nothing to paint goes off).
+    if state.painter.as_ref().is_some_and(|a| !a.sticky) {
+        super::format_painter::cancel(state);
+    }
     edit::leave(state, session, None);
     state.selection.elements.clear();
     clear_ink_selection(state, session);
@@ -336,6 +361,7 @@ fn release(state: &mut CanvasState, session: &mut Session) {
                 run(state, session, ids::DRAW_MOVE_SELECTION, json!({"dx": dx, "dy": dy}));
             }
         }
+        Gesture::SelectText { .. } if state.painter.is_some() => super::format_painter::apply(state, session),
         other => state.gesture = other,
     }
     if matches!(state.gesture, Gesture::SelectText { .. }) {
@@ -356,10 +382,15 @@ pub fn cursor(ui: &Ui, state: &CanvasState, session: &Session, v: &View, lay: &P
         Gesture::SelectText { .. } => CursorIcon::Text,
         Gesture::Ink { .. } | Gesture::Lasso { .. } | Gesture::Shape { .. } => CursorIcon::Crosshair,
         Gesture::Erase { .. } => CursorIcon::None,
+        Gesture::Space { .. } => CursorIcon::ResizeVertical,
         Gesture::None => match state.tool {
             Tool::Pen | Tool::Pencil | Tool::Highlighter | Tool::Lasso | Tool::Shape(_) => CursorIcon::Crosshair,
             Tool::Eraser => CursorIcon::None,
-            Tool::Type | Tool::Select => hover_icon(state, session, v, lay, at),
+            Tool::InsertSpace => CursorIcon::ResizeVertical,
+            Tool::Type | Tool::Select => match super::crop::cursor(state, v, at) {
+                Some(c) => c,
+                None => hover_icon(state, session, v, lay, at),
+            },
         },
     };
     ui.ctx().set_cursor_icon(icon);
@@ -385,7 +416,8 @@ fn hover_icon(state: &CanvasState, session: &Session, v: &View, lay: &PageLayout
             if (0..o.paras.len()).any(|i| layout::todo_box(o, v, i).is_some_and(|r| r.expand(2.0).contains(at))) {
                 return CursorIcon::PointingHand;
             }
-            return CursorIcon::Text;
+            // The Format Painter's brush.
+            return if state.painter.is_some() { CursorIcon::Copy } else { CursorIcon::Text };
         }
     }
     if images::over_picture(state, session, v, at) {

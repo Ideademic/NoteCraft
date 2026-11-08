@@ -279,6 +279,52 @@ pub fn set_clipboard_text(text: &str) -> bool {
     }
 }
 
+/// Puts HTML with its plain text on the clipboard (Copy, Cut); `false` when the browser has no
+/// clipboard here or can't take both kinds (the caller then copies the text alone).
+pub fn set_clipboard_rich(html: &str, text: &str) -> bool {
+    let Some(c) = clipboard() else { return false };
+    let blob = |s: &str, ty: &str| -> Option<web_sys::Blob> {
+        let opts = web_sys::BlobPropertyBag::new();
+        opts.set_type(ty);
+        web_sys::Blob::new_with_str_sequence_and_options(&js_sys::Array::of1(&JsValue::from_str(s)), &opts).ok()
+    };
+    let (Some(h), Some(t)) = (blob(html, "text/html"), blob(text, "text/plain")) else { return false };
+    let record = js_sys::Object::new();
+    if js_sys::Reflect::set(&record, &JsValue::from_str("text/html"), &h).is_err()
+        || js_sys::Reflect::set(&record, &JsValue::from_str("text/plain"), &t).is_err()
+    {
+        return false;
+    }
+    let Ok(item) = web_sys::ClipboardItem::new_with_record_from_str_to_blob_promise(&record) else { return false };
+    let promise = c.write(&js_sys::Array::of1(&item));
+    let fallback = text.to_owned();
+    wasm_bindgen_futures::spawn_local(async move {
+        if let Err(e) = JsFuture::from(promise).await {
+            // Some browsers take only text: copy that.
+            log::info!("rich copy refused ({}); copying the text", js(e));
+            set_clipboard_text(&fallback);
+        }
+    });
+    true
+}
+
+/// Keeps the HTML each paste event carries (pasting from another app keeps basic formatting):
+/// eframe's paste handler passes on only the text, which reaches the app a frame later, by when
+/// `stash` holds the HTML that came with it (`None` when there was none).
+pub fn listen_for_pasted_html(stash: Rc<std::cell::RefCell<Option<String>>>) -> Result<(), String> {
+    let document = window()?.document().ok_or("no document")?;
+    let on_paste = Closure::<dyn FnMut(web_sys::ClipboardEvent)>::new(move |e: web_sys::ClipboardEvent| {
+        let html =
+            e.clipboard_data().and_then(|d| d.get_data("text/html").ok()).filter(|h| !h.trim().is_empty() && h.len() <= crate::open::MAX_FILE_BYTES);
+        if let Ok(mut s) = stash.try_borrow_mut() {
+            *s = html;
+        }
+    });
+    document.add_event_listener_with_callback("paste", on_paste.as_ref().unchecked_ref()).map_err(js)?;
+    on_paste.forget();
+    Ok(())
+}
+
 /// Pictures pasted with Ctrl+V while the clipboard holds no text (a screenshot, Copy Image):
 /// eframe's paste handler only reads text, so their bytes go to `on_picture`.
 pub fn listen_for_pasted_pictures(on_picture: impl Fn(String, Vec<u8>) + 'static) -> Result<(), String> {

@@ -1,7 +1,9 @@
 //! Pictures, file printouts and attached files: decoded into textures (cached per element and
 //! picture data, decoded only once visible, scaled down past 4096 px), drawn at their place and
 //! size. A printout is a stack of page pictures with a thin border and the file's name above,
-//! meant to be inked over. The selected item shows a frame, and a picture its corner handles.
+//! meant to be inked over. A picture's rotation, flips and crop are texture coordinates on its
+//! corners (the file is never changed). The selected item shows a frame, and a picture its corner
+//! handles.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -81,11 +83,16 @@ pub fn paint(ctx: &egui::Context, painter: &Painter, state: &CanvasState, page: 
         match &el.kind {
             ElementKind::Image(img) => {
                 let Some(r) = element_rect(state, el) else { continue };
+                // While it is being cropped the whole picture shows (the crop dims the rest).
+                let (r, uv) = match &state.crop {
+                    Some(c) if c.id == el.id => (c.full, full_uvs(&img.transform)),
+                    _ => (r, uvs(&img.transform)),
+                };
                 let sr = v.rect(r);
                 if !sr.intersects(v.clip) {
                     continue;
                 }
-                draw_picture(painter, texture(ctx, &mut tex, el.id, 0, img), sr, &ink, tokens);
+                draw_transformed(painter, texture(ctx, &mut tex, el.id, 0, img), sr, uv, &ink, tokens);
             }
             ElementKind::Printout(p) => {
                 // Pages sit at their own positions (`outline.move` moves them); a drag in
@@ -109,7 +116,7 @@ pub fn paint(ctx: &egui::Context, painter: &Painter, state: &CanvasState, page: 
                     if !sr.intersects(v.clip) {
                         continue;
                     }
-                    draw_picture(painter, texture(ctx, &mut tex, el.id, i, pg), sr, &ink, tokens);
+                    draw_transformed(painter, texture(ctx, &mut tex, el.id, i, pg), sr, uvs(&pg.transform), &ink, tokens);
                     painter.rect_stroke(sr, 0.0, Stroke::new(1.0, mix(ink.paper, ink.text, 0.25)), StrokeKind::Outside);
                 }
             }
@@ -129,10 +136,29 @@ pub fn paint(ctx: &egui::Context, painter: &Painter, state: &CanvasState, page: 
     tex.map.retain(|(id, _), (_, _, used)| live.contains(id) || frame.saturating_sub(*used) < KEEP_FRAMES);
 }
 
-fn draw_picture(painter: &Painter, t: Option<TextureHandle>, sr: Rect, ink: &Ink, tokens: &Tokens) {
+/// Texture coordinates of a picture's displayed corners (top-left, clockwise): its rotation,
+/// flips and crop.
+pub fn uvs(t: &notecraft_doc::PictureTransform) -> [Pos2; 4] {
+    t.sanitized().uv_corners().map(|(u, v)| pos2(u, v))
+}
+
+/// The same for the whole, uncropped picture.
+fn full_uvs(t: &notecraft_doc::PictureTransform) -> [Pos2; 4] {
+    uvs(&notecraft_doc::PictureTransform { crop: None, ..*t })
+}
+
+/// Draws a picture into `sr` with its corners taking texture coordinates `uv` (top-left,
+/// clockwise): rotation and flips without touching the file.
+fn draw_transformed(painter: &Painter, t: Option<TextureHandle>, sr: Rect, uv: [Pos2; 4], ink: &Ink, tokens: &Tokens) {
     match t {
         Some(t) => {
-            painter.image(t.id(), sr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+            let mut mesh = egui::Mesh::with_texture(t.id());
+            for (p, uv) in corners(sr).into_iter().zip(uv) {
+                mesh.vertices.push(egui::epaint::Vertex { pos: p, uv, color: Color32::WHITE });
+            }
+            mesh.add_triangle(0, 1, 2);
+            mesh.add_triangle(0, 2, 3);
+            painter.add(egui::Shape::mesh(mesh));
         }
         None => {
             // A picture NoteCraft can't read: a grey box with a cross.
@@ -175,6 +201,9 @@ fn paint_file(painter: &Painter, sr: Rect, name: &str, ink: &Ink, tokens: &Token
 /// The frame of the selected item and a picture's corner handles.
 pub fn paint_selection(painter: &Painter, state: &CanvasState, page: &Page, tokens: &Tokens, v: &View) {
     for id in &state.selection.elements {
+        if state.crop.as_ref().is_some_and(|c| c.id == *id) {
+            continue;
+        }
         let Some(el) = page.element(*id) else { continue };
         let Some(r) = element_rect(state, el) else { continue };
         let sr = v.rect(r);
@@ -199,6 +228,9 @@ fn selected_picture<'a>(state: &CanvasState, page: &'a Page) -> Option<&'a notec
 
 /// A corner handle of the selected picture under `at`: (picture, corner, its rect).
 pub fn handle_at(state: &CanvasState, session: &Session, v: &View, at: Pos2) -> Option<(Guid, u8, notecraft_doc::Rect)> {
+    if state.crop.is_some() {
+        return None;
+    }
     let page = session.current_page()?;
     let el = selected_picture(state, page)?;
     let r = element_rect(state, el)?;

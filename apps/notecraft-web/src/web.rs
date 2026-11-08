@@ -10,7 +10,7 @@ use notecraft_ui_egui::{Inbox, InboxFile, NoteApp, OpenPurpose, Services};
 use wasm_bindgen::JsCast as _;
 
 use crate::host::{HostFiles, HostStorage, Opened};
-use crate::persist::{self, Backend, BrowserStorage, Debounce, IDB_MARKER, LOCATION_KEY, PREFS_KEY, SESSION_KEY};
+use crate::persist::{self, Backend, BrowserStorage, Debounce, IDB_MARKER, LOCATION_KEY, PREFS_KEY, SESSION_KEY, TEMPLATES_KEY};
 use crate::{browser, host, open, prefs};
 
 const CANVAS_ID: &str = "notecraft_canvas";
@@ -44,6 +44,7 @@ pub fn start() {
         let blob = if fresh || bridge.is_some() { None } else { load_session().await };
         let location = if bridge.is_some() { None } else { browser::local_get(LOCATION_KEY) };
         let stored_prefs = browser::local_get(PREFS_KEY);
+        let stored_templates = browser::local_get(TEMPLATES_KEY);
         let unsaved = Rc::new(Cell::new(false));
         if bridge.is_none()
             && let Err(e) = browser::guard_unload(unsaved.clone())
@@ -92,7 +93,11 @@ pub fn start() {
                     }) {
                         log::error!("pasting pictures is unavailable: {e}");
                     }
-                    let mut services = services(&ctx, &inbox, &batches, &pastes);
+                    let pasted_html: PastedHtml = Rc::default();
+                    if let Err(e) = browser::listen_for_pasted_html(pasted_html.clone()) {
+                        log::error!("pasting with formatting is unavailable: {e}");
+                    }
+                    let mut services = services(&ctx, &inbox, &batches, &pastes, &pasted_html);
                     if let (Some(b), Some(h)) = (&app_bridge, &hosted) {
                         b.connect(&mut services, h.opened.clone(), ctx.clone());
                     }
@@ -100,6 +105,10 @@ pub fn start() {
                     // Fonts added on earlier visits.
                     crate::font_store::load_all(ctx.clone());
                     prefs::restore(&mut app, stored_prefs.as_deref());
+                    if let Some(t) = stored_templates.as_deref() {
+                        app.load_templates(t);
+                    }
+                    let templates_revision = app.ui.templates_revision;
                     if let Some(n) = notice {
                         app.set_status(n, true);
                     }
@@ -110,6 +119,7 @@ pub fn start() {
                         pastes,
                         pasted_now: false,
                         prefs: prefs::PrefsSync::new(stored_prefs),
+                        templates_revision,
                         wanted,
                         debounce: Debounce::new(revision),
                         writer: Writer::default(),
@@ -217,7 +227,11 @@ fn deliver(files: Vec<web_sys::File>, purpose: Option<OpenPurpose>, inbox: Inbox
     });
 }
 
-fn services(ctx: &egui::Context, inbox: &Inbox, batches: &Batches, pastes: &Pastes) -> Services {
+/// The HTML the last paste event carried ([`browser::listen_for_pasted_html`]).
+type PastedHtml = Rc<RefCell<Option<String>>>;
+
+fn services(ctx: &egui::Context, inbox: &Inbox, batches: &Batches, pastes: &Pastes, pasted_html: &PastedHtml) -> Services {
+    let html = pasted_html.clone();
     let (open_ctx, open_inbox, open_batches) = (ctx.clone(), inbox.clone(), batches.clone());
     let (paste_ctx, paste_queue) = (ctx.clone(), pastes.clone());
     let (pic_ctx, pic_inbox) = (ctx.clone(), inbox.clone());
@@ -256,6 +270,8 @@ fn services(ctx: &egui::Context, inbox: &Inbox, batches: &Batches, pastes: &Past
             None
         })),
         set_clipboard_text: Some(Box::new(browser::set_clipboard_text)),
+        set_clipboard_rich: Some(Box::new(browser::set_clipboard_rich)),
+        clipboard_html: Some(Box::new(move || html.try_borrow_mut().ok().and_then(|mut h| h.take()))),
         prefers_dark: Some(browser::prefers_dark()),
         keep_font: Some(Box::new(crate::font_store::store)),
         ..Services::default()
@@ -347,6 +363,8 @@ struct WebShell {
     /// Clipboard text was pasted this frame (clear the "nothing to paste" hint).
     pasted_now: bool,
     prefs: prefs::PrefsSync,
+    /// The user's page templates were last stored at this revision.
+    templates_revision: u64,
     /// Raised by the session's storage when autosave saved.
     wanted: Rc<Cell<bool>>,
     debounce: Debounce,
@@ -437,6 +455,12 @@ impl WebShell {
             && let Err(e) = browser::local_set(PREFS_KEY, &json)
         {
             log::warn!("preferences not stored: {e}");
+        }
+        if self.templates_revision != self.app.ui.templates_revision {
+            self.templates_revision = self.app.ui.templates_revision;
+            if let Err(e) = browser::local_set(TEMPLATES_KEY, &self.app.templates_json()) {
+                self.app.set_status(format!("Couldn't keep your page templates in this browser: {e}"), true);
+            }
         }
         // eframe's web runner doesn't apply the window title; the tab shows the page, as the
         // desktop title bar does.

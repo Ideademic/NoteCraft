@@ -112,6 +112,15 @@ pub struct Services {
     pub set_clipboard_text: Option<Box<dyn Fn(&str) -> bool>>,
     /// Desktop: the picture on the system clipboard, if any (pasting screenshots).
     pub clipboard_image: Option<Box<dyn Fn() -> Option<ClipboardImage>>>,
+    /// The HTML on the system clipboard with the text being pasted, if any (pasting from a
+    /// browser or a word processor keeps basic formatting). Desktop: read now; web: what the
+    /// last paste event carried.
+    pub clipboard_html: Option<Box<dyn Fn() -> Option<String>>>,
+    /// Put HTML (a whole document) with its plain-text version on the system clipboard (Copy
+    /// and Cut); `true` on success. Without it only the text goes, through egui.
+    pub set_clipboard_rich: Option<Box<dyn Fn(&str, &str) -> bool>>,
+    /// Put a picture on the system clipboard (copying a picture); `true` on success.
+    pub set_clipboard_image: Option<Box<dyn Fn(&ClipboardImage) -> bool>>,
     /// Web: told whether anything is unsaved after each frame (the leave-page guard, a hosting
     /// page).
     pub on_dirty: Option<Box<dyn Fn(bool)>>,

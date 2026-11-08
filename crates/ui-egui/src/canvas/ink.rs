@@ -285,7 +285,7 @@ pub fn pointer(
             }
         }
         Tool::Shape(kind) => super::shape::pointer(ui, state, session, v, kind, (starts, down, released, at)),
-        Tool::Type | Tool::Select => {}
+        Tool::Type | Tool::Select | Tool::InsertSpace => {}
     }
 }
 

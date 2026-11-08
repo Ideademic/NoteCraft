@@ -38,9 +38,12 @@ pub fn show(ui: &mut Ui, app: &mut NoteApp) {
         widgets::big_menu(ui, app, b, page_color_menu);
         let b = Btn::new(Icon::RuleLines, tl!("Rule\nLines")).tip(tl!("Rule Lines")).enabled(app.can(ids::VIEW_RULE_LINES));
         widgets::big_menu(ui, app, b, rule_lines_menu);
-        let b = Btn::new(Icon::HideTitle, tl!("Hide\nPage Title")).tip(tl!("Hide Page Title")).checked(app.ui.hide_page_title).enabled(has_page);
+        let b = Btn::new(Icon::HideTitle, tl!("Hide\nPage Title"))
+            .tip(tl!("Hide Page Title"))
+            .checked(crate::ribbon::editing::title_hidden(app))
+            .enabled(has_page);
         if widgets::big(ui, app, b) {
-            app.ui.hide_page_title = !app.ui.hide_page_title;
+            crate::ribbon::editing::toggle_page_title(app);
         }
     });
     widgets::group(ui, app, tl!("Zoom"), Icon::ZoomIn, |ui, app| {

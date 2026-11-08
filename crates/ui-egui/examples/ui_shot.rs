@@ -33,6 +33,7 @@ fn main() {
             .chain(notecraft_ui_egui::app::shots::PLATFORM_SHOTS.iter())
             .chain(notecraft_ui_egui::app::shots::HISTORY_SHOTS.iter())
             .chain(notecraft_ui_egui::app::shots::FONT_SHOTS.iter())
+            .chain(notecraft_ui_egui::app::shots::EDITING_SHOTS.iter())
             .filter(|s| filter.as_ref().is_none_or(|f| s.starts_with(f.as_str())));
         for &shot in shots {
             let mut app = NoteApp::new(Session::new_default(), Services::default());

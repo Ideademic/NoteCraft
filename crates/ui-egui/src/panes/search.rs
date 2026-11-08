@@ -1,6 +1,8 @@
 //! The search box at the right end of the section tabs ("Search (Ctrl+E)") and its results:
 //! pages whose title or text holds the words, current notebook first, each with its section and
-//! a snippet. Click one to go there; Esc clears the search.
+//! a snippet. Click one to go there; Esc clears the search. The arrow in the box picks where to
+//! look: this section, this section group, this notebook or all notebooks (`search`'s scope);
+//! "This Page" opens Find on the page (Ctrl+F) instead.
 
 use egui::{Align2, Rect, Sense, Stroke, Ui, pos2, vec2};
 use notecraft_doc::Guid;
@@ -13,6 +15,14 @@ use crate::{NoteApp, tl};
 
 /// Most results listed.
 pub const MAX_RESULTS: usize = 50;
+
+/// The scopes the search box offers (as `search` names them), after This Page.
+pub const SCOPES: [&str; 4] = ["section", "sectionGroup", "notebook", "all"];
+
+/// A scope's label.
+pub fn scope_label(scope: &str) -> &'static str {
+    crate::panes::tags::scope_label(scope)
+}
 
 /// One result.
 #[derive(Clone, Debug, PartialEq)]
@@ -30,7 +40,8 @@ pub fn find(app: &mut NoteApp, query: &str) -> Vec<Hit> {
     if query.trim().is_empty() {
         return Vec::new();
     }
-    let Ok(out) = app.session.run(ids::SEARCH, &json!({ "query": query, "limit": MAX_RESULTS })) else { return Vec::new() };
+    let scope = if SCOPES.contains(&app.ui.search_scope.as_str()) { app.ui.search_scope.clone() } else { "all".to_owned() };
+    let Ok(out) = app.session.run(ids::SEARCH, &json!({ "query": query, "limit": MAX_RESULTS, "scope": scope })) else { return Vec::new() };
     let current = app.session.current.notebook.map(|g| g.to_string());
     let s = |h: &serde_json::Value, k: &str| h.get(k).and_then(serde_json::Value::as_str).unwrap_or("").to_owned();
     let mut hits: Vec<(bool, Hit)> = out
@@ -65,7 +76,8 @@ pub fn search_box(ui: &mut Ui, app: &mut NoteApp, rect: Rect) {
     ui.painter().rect(rect, RADIUS_SMALL, t.input, Stroke::new(1.0, border), egui::StrokeKind::Inside);
     let icon = Rect::from_center_size(pos2(rect.max.x - 13.0, rect.center().y), vec2(14.0, 14.0));
     icons::paint_styled(ui.painter(), icon, Icon::Search, icons::Style::mono(t.text_dim));
-    let edit_rect = Rect::from_min_max(rect.min + vec2(2.0, 1.0), pos2(rect.max.x - 26.0, rect.max.y - 1.0));
+    scope_button(ui, app, Rect::from_min_max(pos2(rect.max.x - 42.0, rect.min.y + 2.0), pos2(rect.max.x - 26.0, rect.max.y - 2.0)));
+    let edit_rect = Rect::from_min_max(rect.min + vec2(2.0, 1.0), pos2(rect.max.x - 44.0, rect.max.y - 1.0));
     let key = crate::widgets::shortcut_text("Mod+E");
     let hint = crate::i18n::fmt_plain(tl!("Search ({key})"), &[("key", &key)]);
     let mut text = app.ui.search.clone();
@@ -101,8 +113,8 @@ pub fn search_box(ui: &mut Ui, app: &mut NoteApp, rect: Rect) {
     // Searched again only when the words or the notebooks change.
     let query = app.ui.search.clone();
     let cache = box_id().with("cache");
-    let key = (query.clone(), app.session.revision);
-    let hits = match ui.data(|d| d.get_temp::<((String, u64), Vec<Hit>)>(cache)) {
+    let key = (query.clone(), app.session.revision, app.ui.search_scope.clone());
+    let hits = match ui.data(|d| d.get_temp::<((String, u64, String), Vec<Hit>)>(cache)) {
         Some((k, hits)) if k == key => hits,
         _ => {
             let hits = find(app, &query);
@@ -119,12 +131,13 @@ pub fn search_box(ui: &mut Ui, app: &mut NoteApp, rect: Rect) {
             ui.set_width(width - 10.0);
             ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
             let count = hits.len();
-            let label = match count {
+            let found = match count {
                 0 => tl!("No pages found").to_owned(),
                 1 => tl!("1 page found").to_owned(),
                 n if n >= MAX_RESULTS => crate::i18n::fmt_plain(tl!("{n}+ pages found"), &[("n", &n.to_string())]),
                 n => crate::i18n::fmt_plain(tl!("{n} pages found"), &[("n", &n.to_string())]),
             };
+            let label = format!("{found} \u{00b7} {}", scope_label(&app.ui.search_scope));
             ui.label(egui::RichText::new(label).font(regular(11.5)).color(t.text_dim));
             ui.add_space(3.0);
             egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
@@ -190,4 +203,34 @@ mod tests {
         app.act(ids::NOTEBOOK_NEW, json!({"name": "Second"}));
         assert_eq!(find(&mut app, "binder").len(), 1);
     }
+}
+
+/// The arrow in the search box: where to search.
+fn scope_button(ui: &mut Ui, app: &mut NoteApp, r: Rect) {
+    let t = app.tokens.clone();
+    let resp = ui.interact(r, box_id().with("scope"), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!("Search scope")));
+    if resp.hovered() {
+        ui.painter().rect_filled(r, RADIUS_SMALL, t.hover);
+    }
+    icons::paint_styled(ui.painter(), Rect::from_center_size(r.center(), vec2(10.0, 10.0)), Icon::Dropdown, icons::Style::mono(t.text_dim));
+    let resp = resp.on_hover_text(crate::i18n::fmt_plain(tl!("Searching {scope}"), &[("scope", scope_label(&app.ui.search_scope))]));
+    crate::widgets::popup_menu(&resp, app, |ui, app| {
+        let page = format!("{}    {}", tl!("This Page"), crate::widgets::shortcut_text("Mod+F"));
+        if crate::widgets::menu_item(ui, Some(Icon::Search), &page, app.session.current_page().is_some()) {
+            let q = app.ui.search.clone();
+            crate::dialogs::find::open(app);
+            if let Some(f) = app.ui.find.as_mut()
+                && !q.trim().is_empty()
+            {
+                f.query = q;
+            }
+        }
+        ui.separator();
+        for s in SCOPES {
+            if crate::widgets::check_item(ui, app.ui.search_scope == s, scope_label(s)) {
+                app.ui.search_scope = s.to_owned();
+            }
+        }
+    });
 }

@@ -3264,6 +3264,7 @@ dependencies = [
  "notecraft-doc",
  "notecraft-engine",
  "notecraft-fonts",
+ "notecraft-formats",
  "notecraft-geom",
  "notecraft-pdf",
  "serde",
