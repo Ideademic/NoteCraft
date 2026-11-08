@@ -22,6 +22,7 @@ mod history;
 pub mod ids;
 pub mod io;
 mod session;
+pub mod templates;
 pub mod text;
 pub mod unread;
 

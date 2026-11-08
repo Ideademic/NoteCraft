@@ -62,6 +62,9 @@ pub struct Session {
     /// Messages for the user (a file with content NoteCraft can't keep, a failed autosave…),
     /// oldest first. The UI shows and drains them.
     pub notices: Vec<String>,
+    /// The user's page templates (Insert › Page Templates › Save current page as a template).
+    /// The app loads and stores them; `template.saveCurrent` and `template.delete` change them.
+    pub templates: Vec<crate::templates::Template>,
     /// Bumped by every change to the notebooks (commands, undo, redo): caches compare it.
     pub revision: u64,
     /// Recently opened notebooks (File ▸ Open). The app loads and stores it
@@ -114,6 +117,7 @@ impl Session {
             ink_to_shape: false,
             storage: None,
             notices: Vec::new(),
+            templates: Vec::new(),
             revision: 0,
             recent: RecentNotebooks::default(),
             default_location: None,

@@ -106,7 +106,7 @@ inserts.
 
 | id | shortcut | undo | params | effect / output |
 |---|---|---|---|---|
-| `page.new` | `Mod+N` | yes | `{"section"?: guid, "title"?: string}` | New page after the current page's family; made current. → `{id}` |
+| `page.new` | `Mod+N` | yes | `{"section"?: guid, "title"?: string, "blank"?: bool}` | New page after the current page's family; made current. A section with a default template (`section.defaultTemplate`) starts the page from it unless `blank` is true. → `{id}` |
 | `page.newSubpage` | `Mod+Shift+Alt+N` | yes | `{"title"?: string}` | New subpage under the current page. → `{id}` |
 | `page.delete` |  | yes | `{"id"?: guid}` | Deletes a page into the notebook's recycle bin (its subpages move up a level where needed). |
 | `page.rename` |  | yes | `{"id"?: guid, "title": string}` | Sets the page title. |
@@ -184,6 +184,7 @@ inserts.
 |---|---|---|---|---|
 | `view.ruleLines` |  | yes | `{"rule": "none"\|"narrow"\|"college"\|"standard"\|"wide"\|"gridSmall"\|"gridMedium"\|"gridLarge", "page"?: guid}` | Rule lines / grid of the page. |
 | `view.pageColor` |  | yes | `{"color": "#rrggbb" \| null, "page"?: guid}` | Page colour; `null` = none. |
+| `view.hidePageTitle` |  | yes | `{"value"?: bool (default: toggle), "page"?: guid} -> {"value": bool}` | Hide Page Title, kept with the page (`Page::hide_title`; a private property in `.one`). |
 
 ### Undo
 
@@ -211,7 +212,7 @@ inserts.
 | `nav.notebook` |  | — | `{"id": guid}` | Goes to a notebook. |
 | `nav.section` |  | — | `{"id": guid}` | Goes to a section. |
 | `nav.page` |  | — | `{"id": guid}` | Goes to a page. |
-| `search` | `Mod+E` | — | `{"query": string, "scope"?: "all" (default)\|"notebook"\|"section", "limit"?: number} -> {"hits": [{"notebook", "notebookName", "section", "sectionName", "page", "pageTitle", "snippet"}], "truncated": bool}` | Searches page titles and text in the open notebooks (case-insensitive; one hit per page). |
+| `search` | `Mod+E` | — | `{"query": string, "scope"?: "all" (default)\|"notebook"\|"sectionGroup"\|"section"\|"page", "limit"?: number} -> {"hits": [{"notebook", "notebookName", "section", "sectionName", "page", "pageTitle", "snippet"}], "truncated": bool}` | Searches page titles and text in the open notebooks (case-insensitive; one hit per page). `sectionGroup` is the innermost group holding the current section (the notebook when it is in none); `page` the current page. |
 
 ### History
 
@@ -235,6 +236,55 @@ The notebook recycle bin, page versions, unread pages and recent edits. Deleted 
 | `history.toggleRead` |  | — | `{"page"?: guid} -> {"unread": bool}` | Mark as Read / Unread for one page. |
 | `history.nextUnread` |  | — | `{} -> {"page"} \| null` | Goes to the next unread page after the current one (all open notebooks, wrapping round). |
 | `history.recentEdits` |  | — | `{"since"?: "today"\|"yesterday"\|"7d" (default)\|"14d"\|"30d"\|"6m"\|"all", "utcOffsetMinutes"?: number} -> [{"page", "title", "section", "sectionName", "notebook", "notebookName", "modified", "unread"}]` | Pages changed in the period, newest first (at most 500). "today" and "yesterday" follow the local day. |
+
+### Editing: Format Painter, clipboard, find, pictures, arrange, space, tags, templates
+
+**Format Painter.** `format.painterPick` reads the formatting at the start of a range (or what a
+caret would type with); the canvas keeps it while the brush is on and hands it to
+`format.painterApply`. Text formatting (font, size, colour, highlight, bold, italic, underline,
+strike) replaces the painted characters' (links stay); paragraph formatting (style, alignment,
+list) goes onto the paragraphs the range covers whole. A caret paints the word it is in. Tags and
+links are never painted.
+
+**Clipboard.** `edit.copy` returns a `Clip` (NoteCraft JSON: `{"paragraphs": [Paragraph],
+"elements": [PageElement], "ink": [InkStroke]}`, the front end's internal clipboard) with its
+plain `text` and an `html` fragment for other apps. `edit.paste` takes a clip, `html` (basic
+formatting: b/i/u/s, headings, lists, links, line breaks, colours, fonts and sizes) or `text`;
+`plain` keeps the text only, in the formatting at the caret. Each paste is one undo step.
+
+**Pictures** are never re-encoded: rotation, flips and crop are `ImageElement::transform`
+(`PictureTransform`: quarter turns clockwise, flips in the source image before the turn, crop in
+fractions of the source), drawn by the canvas, baked into PDF and HTML exports, and kept in
+`.one` as a private property. `pos`/`size` are the visible (cropped, turned) picture.
+
+| id | shortcut | undo | params | effect / output |
+|---|---|---|---|---|
+| `format.painterPick` |  | — | `{"outline": guid, "start"?/"end"?/"at"?: pos, "page"?: guid} -> {"run": {"bold", "italic", "underline", "strike": bool, "highlight", "color": "#rrggbb"\|null, "font": string\|null, "size": number\|null}, "para": {"style", "align", "list": "bullet"\|"numbered"\|null, "listStyle": string\|null}}` | The formatting to paint. |
+| `format.painterApply` |  | yes | `{"outline": guid, "start": pos, "end": pos, "format": painterPick's output, "page"?: guid} -> {"caret": pos} \| {"collapsed": true}` | Paints the format (see above); a caret outside a word changes nothing (`collapsed`). |
+| `edit.copy` |  | — | `{"outline": guid, "start": pos, "end": pos} \| {"elements": [guid], "strokes"?: [guid], "ink"?: true (the lasso selection)}, "page"?: guid -> {"clip": Clip, "text": string, "html": string}` | Copies a text range (partial runs and paragraph formatting kept) or whole items and ink. An empty selection is an error. |
+| `edit.cut` |  | yes | as `edit.copy` `-> {"clip", "text", "html", "caret"?}` | Copies, then deletes what was copied in the same step. |
+| `edit.paste` |  | yes | `{"clip"?: Clip, "html"?: string, "text"?: string, "plain"?: bool, "outline"?: guid, "start"?/"end"?/"at"?: pos, "x"?: number, "y"?: number, "page"?: guid} -> {"caret"?: pos, "outline"?: guid, "ids"?: [guid]}` | Precedence clip > html > text. With `outline`, the paragraphs go in at the range: the first joins the caret's paragraph (an empty line takes its formatting), the last takes the text after the caret. Without it, a new note container at `x`,`y` (default: below the content). A clip's items and ink get new ids and go with their top-left corner at `x`,`y`, else 18 pt from the originals; pasted ink becomes the lasso selection. Caps: 64 MB of clip, the page's item, ink and paragraph limits. |
+| `edit.pastePicture` |  | yes | `{"bytesBase64": string, "name"?: string, "x"?: number, "y"?: number, "page"?: guid} -> {"id": guid}` | A picture from the clipboard, as `insert.image`. |
+| `text.find` | `Mod+F` | — | `{"query": string, "matchCase"?: bool, "wholeWord"?: bool, "page"?: guid} -> {"matches": [{"outline": guid\|null (null: the title), "para", "start", "end"}]}` | Matches on the page (title first, then the note containers in page order; character offsets; at most 10 000). |
+| `text.replace` |  | yes | `{"query": string, "with": string, "matchCase"?: bool, "wholeWord"?: bool, "at"?: a text.find match, "page"?: guid} -> {"replaced": number}` | Replaces every match on the page in one undo step (or only `at`); the new text takes the replaced text's formatting. No match: `changed: false`. |
+| `picture.rotate` |  | yes | `{"element": guid (or "id"), "degrees": 90\|-90\|180\|270, "page"?: guid} -> {"rotation": 0..3}` | Turns a picture clockwise by quarter turns about its centre (width and height swap). |
+| `picture.flip` |  | yes | `{"element": guid, "axis": "horizontal"\|"vertical", "page"?: guid}` | Flips the picture as it looks on the page. |
+| `picture.crop` |  | yes | `{"element": guid, "rect": {"x", "y", "w", "h"}} \| {"element", "crop": [left, top, right, bottom]} \| {"element", "reset": true}, "page"?: guid` | Keeps the part of the picture in `rect` (page points, clamped to the whole picture's rect) or the `crop` fractions of the original; `reset` shows the whole picture again at the same scale. |
+| `picture.altText` |  | yes | `{"element": guid, "text": string, "page"?: guid}` | Alt text (≤ 4096 characters; kept in `.one` as MS-ONE ImageAltText). |
+| `picture.reset` |  | yes | `{"element": guid, "page"?: guid}` | No rotation, flip or crop; the whole picture at its current scale. |
+| `arrange.bringToFront` |  | yes | `{"element"?: guid, "elements"?: [guid], "strokes"?: [guid], "ink"?: true, "page"?: guid}` | Moves items (or ink strokes) in front of all others. Ink is always drawn over the items, so the two are ordered separately. |
+| `arrange.bringForward` |  | yes | as above | In front of the next item above that they overlap (one step when none does). |
+| `arrange.sendBackward` |  | yes | as above | Behind the next item below that they overlap (one step when none does). |
+| `arrange.sendToBack` |  | yes | as above | Behind all others. |
+| `ink.rotate` |  | yes | `{"degrees": 90\|-90\|180\|270, "ids"?: [guid] (default: the lasso selection), "page"?: guid} -> {"ids"}` | Turns the strokes clockwise about the centre of their bounding box; they stay selected. |
+| `ink.flip` |  | yes | `{"axis": "horizontal"\|"vertical", "ids"?: [guid], "page"?: guid} -> {"ids"}` | Mirrors the strokes about their centre. |
+| `page.insertSpace` |  | yes | `{"y": number, "dy": number, "page"?: guid} -> {"moved": number}` | Insert Space: moves every note container, picture, printout, file and stroke whose top is at or below `y` down by `dy` (up when negative, never above the top of the page; ±100 000 pt). |
+| `tags.summary` |  | — | `{"scope"?: "page"\|"section"\|"sectionGroup"\|"notebook" (default)\|"all", "uncheckedOnly"?: bool, "limit"?: number (default 2000, max 10 000)} -> {"items": [{"notebook", "notebookName", "section", "sectionName", "page", "pageTitle", "outline", "para", "tag", "label", "checked": bool\|null, "text", "modified"}], "truncated": bool}` | Find Tags: every tagged paragraph in the scope, in notebook order (`checked` for To Do only; `uncheckedOnly` keeps unticked To Dos). |
+| `template.list` |  | — | `{} -> {"templates": [{"id", "name", "category", "builtin": bool}]}` | NoteCraft's own templates (ids `nc:…`: blank pages in several colours and rule lines, meeting notes, to-do list, lecture notes, project overview, weekly planner, journal), then the user's (`Session::templates`, category "My Templates"). |
+| `template.saveCurrent` |  | — | `{"name": string, "page"?: guid} -> {"template": {"id", "name", "category", "page"}}` | Saves the page as a user template (`user:…`; the same name replaces one; at most 64, 16 MB each). Changes `Session::templates`, not the notebooks: the app stores them. |
+| `template.delete` |  | — | `{"id": string}` | Deletes a user template. |
+| `page.newFromTemplate` |  | yes | `{"template": string, "title"?: string, "section"?: guid} -> {"id": guid}` | A new page after the current page's family, copied from the template (new ids); made current. |
+| `section.defaultTemplate` |  | yes | `{"template": string \| null, "section"?: guid}` | The template new pages in the section start from (`page.new`); `null` for none. Kept in `.one` as a private property. |
 
 ## Session lifecycle (Rust API, not commands)
 

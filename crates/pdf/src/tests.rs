@@ -73,6 +73,7 @@ pub(crate) fn rich_page() -> Page {
         data: Arc::new(png(64, 48)),
         format: ImageFormat::Png,
         alt: "gradient".into(),
+        transform: Default::default(),
     })));
     page.elements.push(PageElement::new(ElementKind::EmbeddedFile {
         name: "budget.xlsx".into(),
@@ -165,6 +166,28 @@ fn a_page_becomes_a_pdf_with_its_text_ink_and_pictures() {
 }
 
 #[test]
+fn a_rotated_cropped_picture_exports_as_drawn() {
+    let mut page = Page::new("Turned");
+    let mut img = ImageElement {
+        pos: Point::new(40.0, 120.0),
+        size: Size::new(48.0, 64.0),
+        data: Arc::new(png(64, 48)),
+        format: ImageFormat::Png,
+        alt: String::new(),
+        transform: Default::default(),
+    };
+    img.transform.rotation = 1;
+    img.transform.flip_h = true;
+    img.transform.crop = Some(notecraft_doc::Crop { left: 0.25, top: 0.0, right: 1.0, bottom: 1.0 });
+    page.elements.push(PageElement::new(ElementKind::Image(img)));
+    let pdf = export(&Doc::page(&page), &Options::default(), &BundledFonts).unwrap();
+    let raw = String::from_utf8_lossy(&pdf).into_owned();
+    assert!(raw.contains("/Image"), "the picture is embedded");
+    // The baked picture is 48 × 48 px (three quarters of 64 wide, turned).
+    assert!(raw.contains("/Width 48") && raw.contains("/Height 48"), "the picture as drawn");
+}
+
+#[test]
 fn paper_sizes_tile_long_pages() {
     let mut page = Page::new("Long");
     let text: Vec<String> = (0..200).map(|i| format!("Line number {i} of a long page")).collect();
@@ -226,6 +249,7 @@ fn sections_get_bookmarks_and_hostile_pages_dont_break_it() {
         data: Arc::new(b"\x89PNG\r\n\x1a\nnot really".to_vec()),
         format: ImageFormat::Png,
         alt: String::new(),
+        transform: Default::default(),
     })));
     junk.ink.push(InkStroke::new(InkTool::Pen, vec![InkPoint::new(1e6, 1e6, f32::NAN), InkPoint::new(-1e6, 0.0, 2.0)]));
     sec.pages.push(junk);

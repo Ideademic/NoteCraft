@@ -210,6 +210,15 @@ pub mod prop {
     /// Note tag definition: the NoteCraft tag name ([`notecraft_doc::Tag::name`], UTF-16), so a
     /// tag reads back exactly even where its shape and label are shared or translated.
     pub const NC_TAG: u32 = 0x1FFC_000C;
+    /// Picture: how it is drawn, `[rotation, flags]` (quarter turns clockwise; bit 0 flips
+    /// horizontally, bit 1 vertically, both in the source image before the rotation) and, when
+    /// cropped, four little-endian f32 (left, top, right, bottom fractions of the source).
+    /// MS-ONE has no rotation, flip or crop properties.
+    pub const NC_PICTURE_TRANSFORM: u32 = 0x1FFC_0040;
+    /// Page node: View ▸ Hide Page Title is on for the page (written only when true).
+    pub const NC_HIDE_TITLE: u32 = 0x0BFC_0041;
+    /// Section metadata: the page template new pages start from (a template id, UTF-16).
+    pub const NC_SECTION_TEMPLATE: u32 = 0x1FFC_0042;
 
     // .onetoc2 (MS-ONE names these without numbering them; NoteCraft-chosen, see README).
     /// TOC: the entries (sections and section groups) in order.
