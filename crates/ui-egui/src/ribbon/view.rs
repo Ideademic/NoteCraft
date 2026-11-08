@@ -29,7 +29,7 @@ pub fn show(ui: &mut Ui, app: &mut NoteApp) {
             app.ui.full_page_view = !app.ui.full_page_view;
         }
         let b =
-            Btn::new(Icon::DockDesktop, tl!("Dock to\nDesktop")).tip(tl!("Dock to Desktop")).enabled(false).help(tl!("Not available in NoteCraft."));
+            Btn::new(Icon::DockDesktop, tl!("Dock to\nDesktop")).tip(tl!("Dock to Desktop")).coming_soon().help(tl!("Not available in NoteCraft."));
         widgets::big(ui, app, b);
     });
     widgets::group(ui, app, tl!("Page Setup"), Icon::PageColor, |ui, app| {

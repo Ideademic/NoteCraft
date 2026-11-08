@@ -163,6 +163,7 @@ fn finish(app: &mut NoteApp, ui: &mut Ui) {
     crate::ribbon::table::dialog(&ctx, app);
     crate::dialogs::alt_text::show(&ctx, app);
     crate::updates::show(app, &ctx);
+    crate::toast::show(&ctx, &mut app.ui.toast, &app.tokens);
     app.ui.keytips.paint(&ctx, &app.tokens);
     app.ui.keytips.end_frame();
 }

@@ -55,6 +55,8 @@ pub struct Btn<'a> {
     /// A shortcut shown in the tooltip (`Ctrl+B`).
     pub shortcut: String,
     pub enabled: bool,
+    /// Greyed out because the feature isn't built yet: a click says "Coming soon" in a toast.
+    pub coming_soon: bool,
     pub checked: bool,
     /// Draw the label (small buttons; a compact group drops it).
     pub show_label: bool,
@@ -64,7 +66,18 @@ pub struct Btn<'a> {
 
 impl<'a> Btn<'a> {
     pub fn new(icon: Icon, label: &'a str) -> Btn<'a> {
-        Btn { icon, label, tip: "", help: "", shortcut: String::new(), enabled: true, checked: false, show_label: true, swatch: None }
+        Btn {
+            icon,
+            label,
+            tip: "",
+            help: "",
+            shortcut: String::new(),
+            enabled: true,
+            coming_soon: false,
+            checked: false,
+            show_label: true,
+            swatch: None,
+        }
     }
     pub fn tip(mut self, tip: &'a str) -> Self {
         self.tip = tip;
@@ -80,6 +93,13 @@ impl<'a> Btn<'a> {
     }
     pub fn enabled(mut self, on: bool) -> Self {
         self.enabled = on;
+        self
+    }
+    /// Not built yet: drawn disabled, and a click shows "Coming soon" in a toast. (Not for a
+    /// control that is only disabled for now, such as Cut with nothing selected.)
+    pub fn coming_soon(mut self) -> Self {
+        self.enabled = false;
+        self.coming_soon = true;
         self
     }
     pub fn checked(mut self, on: bool) -> Self {
@@ -101,8 +121,11 @@ impl<'a> Btn<'a> {
         if let Some(k) = notecraft_engine::registry().get(id).and_then(|s| s.shortcut) {
             self.shortcut = shortcut_text(k);
         }
-        if !app.has_command(id) && self.help.is_empty() {
-            self.help = crate::tl!("Coming in a later version of NoteCraft.");
+        if !app.has_command(id) {
+            self.coming_soon = true;
+            if self.help.is_empty() {
+                self.help = crate::tl!("Coming in a later version of NoteCraft.");
+            }
         }
         self
     }
@@ -157,10 +180,20 @@ fn sense(enabled: bool) -> Sense {
     if enabled { Sense::click() } else { Sense::hover() }
 }
 
-/// Whether a button was used: clicked while enabled, or its KeyTip typed.
-fn used(app: &mut NoteApp, resp: &Response, enabled: bool) -> bool {
+/// A ribbon button's sense: clickable when enabled, or to say it's coming soon.
+fn btn_sense(b: &Btn<'_>) -> Sense {
+    sense(b.enabled || b.coming_soon)
+}
+
+/// Whether a button was used: clicked while enabled, or its KeyTip typed. A click on a button
+/// that is [coming soon](Btn::coming_soon) shows a toast instead.
+fn used(app: &mut NoteApp, resp: &Response, b: &Btn<'_>) -> bool {
     let keyed = app.ui.keytips.control(resp.rect);
-    enabled && (resp.clicked() || keyed)
+    let hit = resp.clicked() || keyed;
+    if hit && !b.enabled && b.coming_soon {
+        app.coming_soon();
+    }
+    b.enabled && hit
 }
 
 /// One centred label line (top at `y`); `marker` puts the drop-down marker after it.
@@ -197,11 +230,11 @@ fn paint_big(ui: &Ui, r: Rect, b: &Btn<'_>, t: &Tokens, marker: bool) {
 pub fn big(ui: &mut Ui, app: &mut NoteApp, b: Btn<'_>) -> bool {
     let t = app.tokens.clone();
     let w = (label_width(ui, b.label) + 12.0).max(44.0);
-    let (r, resp) = ui.allocate_exact_size(vec2(w, CONTENT_H), sense(b.enabled));
+    let (r, resp) = ui.allocate_exact_size(vec2(w, CONTENT_H), btn_sense(&b));
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, b.enabled, b.checked, b.label.replace('\n', " ")));
     bg(ui, r, &resp, b.checked, b.enabled, &t);
     paint_big(ui, r, &b, &t, false);
-    let go = used(app, &resp, b.enabled);
+    let go = used(app, &resp, &b);
     tooltip(resp, &b);
     go
 }
@@ -210,7 +243,7 @@ pub fn big(ui: &mut Ui, app: &mut NoteApp, b: Btn<'_>) -> bool {
 pub fn big_menu(ui: &mut Ui, app: &mut NoteApp, b: Btn<'_>, menu: impl FnOnce(&mut Ui, &mut NoteApp)) {
     let t = app.tokens.clone();
     let w = (label_width(ui, b.label) + 22.0).max(44.0);
-    let (r, resp) = ui.allocate_exact_size(vec2(w, CONTENT_H), sense(b.enabled));
+    let (r, resp) = ui.allocate_exact_size(vec2(w, CONTENT_H), btn_sense(&b));
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, b.enabled, b.label.replace('\n', " ")));
     let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
     bg(ui, r, &resp, b.checked || open, b.enabled, &t);
@@ -218,6 +251,9 @@ pub fn big_menu(ui: &mut Ui, app: &mut NoteApp, b: Btn<'_>, menu: impl FnOnce(&m
     let keyed = app.ui.keytips.control(resp.rect);
     if keyed && b.enabled {
         egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&resp));
+    }
+    if b.coming_soon && !b.enabled && (keyed || resp.clicked()) {
+        app.coming_soon();
     }
     let resp = tooltip(resp, &b);
     if b.enabled {
@@ -233,7 +269,7 @@ pub fn big_split(ui: &mut Ui, app: &mut NoteApp, b: Btn<'_>, menu: impl FnOnce(&
     let top = Rect::from_min_max(r.min, pos2(r.max.x, r.min.y + BIG_LABEL_Y - 2.0));
     let bottom = Rect::from_min_max(pos2(r.min.x, top.max.y), r.max);
     let id = ui.scope_id().with(("big_split", b.label));
-    let tresp = ui.interact(top, id.with("top"), sense(b.enabled));
+    let tresp = ui.interact(top, id.with("top"), btn_sense(&b));
     let bresp = ui.interact(bottom, id.with("menu"), sense(b.enabled));
     tresp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, b.enabled, b.checked, b.label.replace('\n', " ")));
     let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&bresp));
@@ -245,7 +281,7 @@ pub fn big_split(ui: &mut Ui, app: &mut NoteApp, b: Btn<'_>, menu: impl FnOnce(&
     }
     bg(ui, r, &tresp, b.checked || open, b.enabled, &t);
     paint_big(ui, r, &b, &t, true);
-    let go = used(app, &tresp, b.enabled);
+    let go = used(app, &tresp, &b);
     let resp = tooltip(tresp, &b);
     let _ = resp;
     let bresp = bresp.on_hover_text(crate::i18n::fmt_plain(crate::tl!("{name} options"), &[("name", b.title())]));
@@ -263,7 +299,7 @@ pub fn small(ui: &mut Ui, app: &mut NoteApp, b: Btn<'_>) -> bool {
     if b.show_label && !b.label.is_empty() {
         crate::ribbon_fit::add_saving(ui.ctx(), text_w);
     }
-    let (r, resp) = ui.allocate_exact_size(vec2(24.0 + text_w, SMALL_H), sense(b.enabled));
+    let (r, resp) = ui.allocate_exact_size(vec2(24.0 + text_w, SMALL_H), btn_sense(&b));
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, b.enabled, b.checked, b.title()));
     bg(ui, r, &resp, b.checked, b.enabled, &t);
     let ic = Rect::from_center_size(pos2(r.min.x + 12.0, r.center().y), vec2(16.0, 16.0));
@@ -276,7 +312,7 @@ pub fn small(ui: &mut Ui, app: &mut NoteApp, b: Btn<'_>) -> bool {
         let color = if b.enabled { t.text } else { t.text_disabled };
         ui.painter().text(pos2(r.min.x + 24.0, r.center().y), egui::Align2::LEFT_CENTER, b.label, regular(11.5), color);
     }
-    let go = used(app, &resp, b.enabled);
+    let go = used(app, &resp, &b);
     tooltip(resp, &b);
     go
 }
@@ -284,7 +320,7 @@ pub fn small(ui: &mut Ui, app: &mut NoteApp, b: Btn<'_>) -> bool {
 /// A small split button: the icon part runs the button, the arrow opens `menu`.
 pub fn small_split(ui: &mut Ui, app: &mut NoteApp, b: Btn<'_>, menu: impl FnOnce(&mut Ui, &mut NoteApp)) -> bool {
     let t = app.tokens.clone();
-    let (r, resp) = ui.allocate_exact_size(vec2(24.0, SMALL_H), sense(b.enabled));
+    let (r, resp) = ui.allocate_exact_size(vec2(24.0, SMALL_H), btn_sense(&b));
     let (ar, aresp) = ui.allocate_exact_size(vec2(12.0, SMALL_H), sense(b.enabled));
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, b.enabled, b.checked, b.title()));
     bg(ui, r, &resp, b.checked, b.enabled, &t);
@@ -300,7 +336,7 @@ pub fn small_split(ui: &mut Ui, app: &mut NoteApp, b: Btn<'_>, menu: impl FnOnce
     }
     let mono = if b.enabled { t.icon } else { t.text_disabled };
     icons::paint_styled(ui.painter(), Rect::from_center_size(ar.center(), vec2(DROPDOWN, DROPDOWN)), Icon::Dropdown, icons::Style::mono(mono));
-    let go = used(app, &resp, b.enabled);
+    let go = used(app, &resp, &b);
     tooltip(resp, &b);
     let aresp = aresp.on_hover_text(crate::i18n::fmt_plain(crate::tl!("{name} options"), &[("name", b.title())]));
     if b.enabled {
@@ -314,7 +350,7 @@ pub fn small_menu(ui: &mut Ui, app: &mut NoteApp, b: Btn<'_>, menu: impl FnOnce(
     let t = app.tokens.clone();
     let show_label = b.show_label && !b.label.is_empty() && !crate::ribbon_fit::compact(ui.ctx());
     let text_w = if show_label { crate::theme::text_width(ui.ctx(), b.label, regular(11.5)) + 6.0 } else { 0.0 };
-    let (r, resp) = ui.allocate_exact_size(vec2(24.0 + text_w + 12.0, SMALL_H), sense(b.enabled));
+    let (r, resp) = ui.allocate_exact_size(vec2(24.0 + text_w + 12.0, SMALL_H), btn_sense(&b));
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, b.enabled, b.title()));
     let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
     bg(ui, r, &resp, b.checked || open, b.enabled, &t);
@@ -332,6 +368,9 @@ pub fn small_menu(ui: &mut Ui, app: &mut NoteApp, b: Btn<'_>, menu: impl FnOnce(
     let keyed = app.ui.keytips.control(resp.rect);
     if keyed && b.enabled {
         egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&resp));
+    }
+    if b.coming_soon && !b.enabled && (keyed || resp.clicked()) {
+        app.coming_soon();
     }
     let resp = tooltip(resp, &b);
     if b.enabled {

@@ -350,3 +350,23 @@ fn dragging_a_pane_stops_short_of_squeezing_the_page() {
     assert!(!h.state().ui.narrow.notebooks_folded, "the pane stays pinned");
     assert!(canvas_width(&h) >= narrow::MIN_CANVAS_WIDTH, "page only {} wide", canvas_width(&h));
 }
+
+#[test]
+fn a_control_not_built_yet_says_coming_soon_and_the_toast_fades() {
+    let mut h = harness(app());
+    h.run_steps(3);
+    // Cut with nothing selected is only disabled for now: no toast.
+    h.get_by_label("Cut").click();
+    h.run_steps(2);
+    assert_eq!(h.state().toast_text(), None);
+    h.get_by_label("Draw").click();
+    h.run_steps(3);
+    h.get_by_label("Ink to Text").click();
+    h.run_steps(2);
+    assert_eq!(h.state().toast_text(), Some("Coming soon"));
+    h.run_steps(4);
+    assert_eq!(h.state().toast_text(), Some("Coming soon"), "still showing after a second");
+    // Steps are a quarter of a second: gone after the timeout.
+    h.run_steps((crate::toast::DURATION / 0.25) as usize + 2);
+    assert_eq!(h.state().toast_text(), None);
+}

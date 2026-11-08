@@ -31,6 +31,7 @@ pub mod ribbon;
 pub mod ribbon_fit;
 pub mod services;
 pub mod theme;
+pub mod toast;
 pub mod updates;
 pub mod widgets;
 

@@ -256,6 +256,8 @@ pub struct UiState {
     pub page_list_open: bool,
     /// Panes folded for room in a narrow window, for now ([`narrow`]).
     pub narrow: narrow::NarrowPanes,
+    /// The message fading at the bottom of the window ([`crate::toast`]).
+    pub toast: Option<crate::toast::Toast>,
     /// View › Full Page View: the page alone (no ribbon, panes or tabs).
     pub full_page_view: bool,
     /// View › Hide Page Title. The canvas should skip the title block while this is on.
@@ -323,6 +325,7 @@ impl Default for UiState {
             notebook_pane_open: prefs.notebook_pane_open,
             page_list_open: prefs.page_list_open,
             narrow: narrow::NarrowPanes::default(),
+            toast: None,
             full_page_view: false,
             hide_page_title: false,
             dark: false,
@@ -477,6 +480,21 @@ impl NoteApp {
     /// Whether command `id` exists and can run now.
     pub fn can(&self, id: &str) -> bool {
         self.session.is_enabled(id)
+    }
+
+    /// Shows `text` in a toast that fades by itself.
+    pub fn toast(&mut self, text: impl Into<String>) {
+        self.ui.toast = Some(crate::toast::Toast::new(text));
+    }
+
+    /// The toast for a control that isn't built yet.
+    pub fn coming_soon(&mut self) {
+        self.toast(crate::tl!("Coming soon"));
+    }
+
+    /// The toast showing, if any (for tests).
+    pub fn toast_text(&self) -> Option<&str> {
+        self.ui.toast.as_ref().map(|t| t.text.as_str())
     }
 
     /// Runs a command; an error is also shown in the status bar.

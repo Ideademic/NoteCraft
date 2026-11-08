@@ -91,7 +91,7 @@ pub fn show(ui: &mut Ui, app: &mut NoteApp) {
         }
         let b = Btn::new(Icon::InkToText, tl!("Ink to\nText"))
             .tip(tl!("Ink to Text"))
-            .enabled(false)
+            .coming_soon()
             .help(tl!("Handwriting recognition isn't part of NoteCraft yet."));
         widgets::big(ui, app, b);
     });
