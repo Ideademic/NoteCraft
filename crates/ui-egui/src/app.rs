@@ -199,8 +199,8 @@ pub struct UiState {
     pub ribbon_layout: RibbonLayout,
     /// Always show the ribbon, show tabs only, or full-screen mode.
     pub ribbon_display: RibbonDisplay,
-    /// A hidden ribbon shown for one use (Show tabs only: a tab was clicked; full-screen mode:
-    /// the strip at the top was clicked).
+    /// Full-screen mode: the tabs and ribbon are revealed for one use (the strip at the top was
+    /// clicked). Show tabs only never peeks: a click on a tab shows the ribbon for good.
     pub ribbon_peek: bool,
     pub notebook_pane_open: bool,
     pub page_list_open: bool,
