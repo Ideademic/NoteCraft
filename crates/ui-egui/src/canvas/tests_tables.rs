@@ -432,3 +432,83 @@ fn table_screenshots() {
         }
     }
 }
+
+/// The screen point just right of character `ch` of paragraph `para` in cell `cell` (the app's
+/// canvas).
+fn cell_spot(h: &Harness<'_, NoteApp>, outline: notecraft_doc::Guid, cell: CellRef, para: usize, ch: usize) -> Pos2 {
+    let st = h.state();
+    let v = view::View::new(&st.canvas, page::sheet_rect(st.canvas.last_rect.unwrap()));
+    let lay = layout::page_layout(&h.ctx, &st.canvas, &st.session, &st.tokens, &v);
+    let r = lay.outline(outline).unwrap().frame_caret_rect(&v, notecraft_engine::text::Frame::Cell(cell), TextPos::new(para, ch)).unwrap();
+    egui::pos2(r.left() + 2.0, r.center().y)
+}
+
+fn app_click(h: &mut Harness<'_, NoteApp>, p: Pos2, button: PointerButton, mods: Modifiers) {
+    h.event(Event::PointerMoved(p));
+    h.step();
+    if mods != Modifiers::NONE {
+        h.event(Event::ModifiersChanged(mods));
+    }
+    h.event(Event::PointerButton { pos: p, button, pressed: true, modifiers: mods });
+    h.step();
+    h.event(Event::PointerButton { pos: p, button, pressed: false, modifiers: mods });
+    if mods != Modifiers::NONE {
+        h.event(Event::ModifiersChanged(Modifiers::NONE));
+    }
+    h.run_steps(3);
+}
+
+#[test]
+fn spelling_menus_and_links_work_in_cells() {
+    let mut session = Session::new_default();
+    session.run(ids::PAGE_NEW, &json!({"title": "Review in tables"})).unwrap();
+    let mut t = Table::new(1, 2, 160.0);
+    *t.cell_mut(0, 0).unwrap() = Cell::with_text("I like ovr cats");
+    let o = Outline { pos: Point::new(80.0, 150.0), width: 340.0, blocks: vec![Block::table(t)] };
+    let el = notecraft_doc::PageElement::new(ElementKind::Outline(o));
+    let oid = el.id;
+    session.current_page_mut().unwrap().elements.push(el);
+    let mut h = app_harness(NoteApp::new(session, Services::default()));
+    h.run_steps(3);
+    let first = CellRef::new(0, 0, 0);
+    // The misspelling in the cell is underlined.
+    for _ in 0..400 {
+        h.step();
+        if !h.state().canvas.review.marks.is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(h.state().canvas.review.marks, vec![(oid, notecraft_engine::text::Frame::Cell(first), 0, 7, 10)]);
+    // Its right-click menu fixes it, in the cell.
+    let p = cell_spot(&h, oid, first, 0, 8);
+    app_click(&mut h, p, PointerButton::Secondary, Modifiers::NONE);
+    assert_eq!(h.state().canvas.caret.as_ref().and_then(|c| c.cell), Some(first), "the caret goes into the cell");
+    let _ = h.get_by_label("Possible spelling mistake");
+    h.get_by_label("over").click();
+    h.run_steps(4);
+    let cell_text = |h: &Harness<'_, NoteApp>, c: usize| app_table(h).unwrap().cell(0, c).unwrap().text();
+    assert_eq!(cell_text(&h, 0), "I like over cats");
+    // The Spelling pane finds a misspelling in a cell and selects it there.
+    h.state_mut().session.run(ids::TEXT_INSERT, &json!({"outline": oid, "cell": [0, 0, 1], "text": "brwn"})).unwrap();
+    h.key_press(Key::F7);
+    h.run_steps(4);
+    let c = h.state().canvas.caret.clone().unwrap();
+    assert_eq!((c.cell, c.range()), (Some(CellRef::new(0, 0, 1)), (TextPos::new(0, 0), TextPos::new(0, 4))));
+    h.key_press(Key::F7);
+    h.run_steps(2);
+    // Typing a wiki link in a cell makes it, and Ctrl+click on it in the cell jumps.
+    let host = h.state().session.current.page;
+    let p = cell_spot(&h, oid, CellRef::new(0, 0, 1), 0, 4);
+    app_click(&mut h, p, PointerButton::Primary, Modifiers::NONE);
+    for s in [" see ", "[[Cell page]", "]"] {
+        h.event(Event::Text(s.into()));
+        h.run_steps(2);
+    }
+    assert_eq!(cell_text(&h, 1), "brwn see Cell page");
+    let target = h.state().session.current_section().unwrap().pages.iter().find(|p| p.title == "Cell page").map(|p| p.id).expect("made");
+    assert_eq!(h.state().session.current.page, host);
+    let p = cell_spot(&h, oid, CellRef::new(0, 0, 1), 0, 12);
+    app_click(&mut h, p, PointerButton::Primary, Modifiers::COMMAND);
+    assert_eq!(h.state().session.current.page, Some(target), "Ctrl+click in a cell follows the link");
+}

@@ -164,6 +164,13 @@ fn page_menu(ui: &mut Ui, app: &mut NoteApp, id: Guid, can_indent: bool, can_pro
     if widgets::menu_item(ui, Some(Icon::Delete), tl!("Delete"), true) {
         app.act(ids::PAGE_DELETE, json!({ "id": id }));
     }
+    if widgets::menu_item(ui, Some(Icon::Link), tl!("Copy Link to Page"), true)
+        && let Ok(out) = app.run(ids::LINK_TO_PAGE, json!({ "id": id }))
+        && let Some(url) = out.value.get("url").and_then(serde_json::Value::as_str)
+    {
+        ui.ctx().copy_text(url.to_owned());
+        app.set_status(tl!("Link copied."), false);
+    }
     ui.separator();
     if widgets::menu_item(ui, Some(Icon::Indent), tl!("Make Subpage"), can_indent) {
         app.act(ids::PAGE_INDENT, json!({ "id": id }));

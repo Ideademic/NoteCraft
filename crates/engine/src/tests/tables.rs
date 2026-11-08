@@ -258,11 +258,14 @@ fn table_commands_survive_hostile_params() {
         json!({"block": 1, "at": [u64::MAX, u64::MAX], "rows": 2, "cols": 2, "addColumn": true, "paras": [u64::MAX, 0]}),
         json!({"cell": [0, 0, 0], "at": [99, 99], "start": [5, 5], "end": [0, 0], "rows": 64, "cols": 64}),
     ];
-    for spec in registry()
-        .all()
-        .iter()
-        .filter(|s| s.id.starts_with("table.") || s.id == ids::INSERT_TABLE || s.id.starts_with("text.") || s.id.starts_with("format."))
-    {
+    for spec in registry().all().iter().filter(|s| {
+        s.id.starts_with("table.")
+            || s.id == ids::INSERT_TABLE
+            || s.id.starts_with("text.")
+            || s.id.starts_with("format.")
+            || s.id.starts_with("link.")
+            || s.id.starts_with("proof.")
+    }) {
         for params in &junk {
             let (mut s, o) = with_table(2, 3);
             s.run(ids::OUTLINE_NEW, &json!({"x": 1, "y": 1, "text": "a\tb"})).unwrap();
@@ -276,4 +279,39 @@ fn table_commands_survive_hostile_params() {
             }
         }
     }
+}
+
+#[test]
+fn spelling_links_and_word_count_reach_cells() {
+    let (mut s, o) = with_table(1, 2);
+    type_in(&mut s, o, (0, 0, 1), "a brwn fox");
+    // Spelling: the cell's misspelling names the cell, and applying a fix works there.
+    let mut issues = Vec::new();
+    for _ in 0..400 {
+        let out = s.run(ids::PROOF_CHECK, &json!({})).unwrap().value;
+        issues = out["issues"].as_array().cloned().unwrap_or_default();
+        if !issues.is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let issue = issues.first().cloned().expect("a misspelling in the cell");
+    assert_eq!((issue["cell"].clone(), issue["word"].clone()), (CellRef::new(0, 0, 1).to_json(), json!("brwn")));
+    let sug = s.run(ids::PROOF_SUGGESTIONS, &with(cell(o, (0, 0, 1)), json!({"at": [0, 3]}))).unwrap().value;
+    assert_eq!(sug["word"], "brwn");
+    s.run(ids::PROOF_APPLY, &with(cell(o, (0, 0, 1)), json!({"para": 0, "start": 2, "end": 6, "text": "brown", "word": "brwn"}))).unwrap();
+    assert_eq!(table(&s, o, 0).cell(0, 1).unwrap().text(), "a brown fox");
+    // Links in a cell.
+    s.run(ids::LINK_SET, &with(cell(o, (0, 0, 1)), json!({"start": [0, 2], "end": [0, 7], "url": "example.com"}))).unwrap();
+    let got = s.run(ids::LINK_GET, &with(cell(o, (0, 0, 1)), json!({"at": [0, 3]}))).unwrap().value;
+    assert_eq!(got["url"], "https://example.com");
+    type_in(&mut s, o, (0, 0, 0), "[[Elsewhere]]");
+    let out = s.run(ids::LINK_WIKI, &with(cell(o, (0, 0, 0)), json!({"at": [0, 13]}))).unwrap().value;
+    assert_eq!(out["created"], true);
+    assert_eq!(table(&s, o, 0).cell(0, 0).unwrap().text(), "Elsewhere");
+    // Word count and proofing language see cells.
+    let wc = s.run(ids::REVIEW_WORD_COUNT, &json!({})).unwrap().value;
+    assert!(wc["words"].as_u64().unwrap() >= 4, "{wc}");
+    s.run(ids::PROOF_SET_LANGUAGE, &json!({"outline": o.to_string(), "lang": "en-GB"})).unwrap();
+    assert!(table(&s, o, 0).paragraphs().all(|p| p.lang.as_deref() == Some("en-GB")));
 }

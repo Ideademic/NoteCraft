@@ -200,6 +200,16 @@ pub fn mime_for(name: &str) -> &'static str {
     }
 }
 
+/// Opens a web or mail link in a new tab. Only those: a note's `javascript:` or `file:` link
+/// never runs in the page.
+pub fn open_link(url: &str) -> Result<(), String> {
+    if !matches!(notecraft_doc::link::scheme(url).as_deref(), Some("http" | "https" | "mailto")) {
+        return Err("The browser opens web and e-mail links only.".to_owned());
+    }
+    window()?.open_with_url_and_target_and_features(url, "_blank", "noopener,noreferrer").map_err(js)?;
+    Ok(())
+}
+
 /// Hands `bytes` to the browser as a download named `name`.
 pub fn download(name: &str, bytes: &[u8]) -> Result<(), String> {
     let window = window()?;

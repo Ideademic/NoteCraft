@@ -15,6 +15,7 @@ pub mod notebooks;
 pub mod pages;
 pub mod search;
 pub mod sections;
+pub mod spelling;
 
 use egui::{Rect, Sense, Ui, vec2};
 use notecraft_doc::{Guid, SectionEntry};

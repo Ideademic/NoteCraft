@@ -14,6 +14,7 @@ pub mod color;
 pub mod guid;
 pub mod history;
 pub mod ink;
+pub mod link;
 pub mod notebook;
 pub mod page;
 pub mod table;

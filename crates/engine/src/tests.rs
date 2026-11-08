@@ -1,6 +1,7 @@
 mod commands;
 mod history;
 mod lifecycle;
+mod review;
 mod roundtrip;
 mod tables;
 

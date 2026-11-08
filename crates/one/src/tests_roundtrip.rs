@@ -43,6 +43,22 @@ fn rich_outline() -> Outline {
         Paragraph { tag: Some(Tag::Question), style: ParaStyle::Code, ..Paragraph::plain("question?") },
         Paragraph::plain(""),
         Paragraph::plain("line one\nsoft break, ünïcödé ✓ 𝄞"),
+        // Proofing languages: one with an LCID, one without (don't check), US English kept as chosen.
+        Paragraph { lang: Some("en-GB".into()), ..Paragraph::plain("colour") },
+        Paragraph { lang: Some("zxx".into()), ..Paragraph::plain("qzxv") },
+        Paragraph { lang: Some("en-US".into()), ..Paragraph::plain("color") },
+        Paragraph {
+            runs: vec![
+                Run::plain("See "),
+                Run {
+                    text: "Plans".into(),
+                    link: Some("notecraft:page?id=0A1B2C3D-0000-4000-8000-000000000001&para=2&title=Plans%20%26%20ideas".into()),
+                    ..Run::default()
+                },
+            ],
+            lang: Some("pl-PL".into()),
+            ..Paragraph::default()
+        },
     ];
     for s in [ParaStyle::Heading2, ParaStyle::Heading3, ParaStyle::Heading4, ParaStyle::Heading5, ParaStyle::Heading6, ParaStyle::Title] {
         paragraphs.push(Paragraph { style: s, ..Paragraph::plain(s.name()) });

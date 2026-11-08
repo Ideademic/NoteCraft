@@ -95,6 +95,8 @@ struct PageWriter {
     created: u32,
     styles: HashMap<&'static str, ExtendedGuid>,
     formats: HashMap<String, ExtendedGuid>,
+    /// The language of the paragraph being written (LanguageID of its runs).
+    lcid: u32,
     /// Tag definitions by NoteCraft tag name.
     tags: HashMap<&'static str, ExtendedGuid>,
 }
@@ -109,6 +111,7 @@ pub(crate) fn page_space(page: &Page) -> Result<(ObjectSpace, PropertySet)> {
         created: to_time32(page.created),
         styles: HashMap::new(),
         formats: HashMap::new(),
+        lcid: LCID_EN_US,
         tags: HashMap::new(),
     };
     let title = w.title(page);
@@ -214,8 +217,8 @@ impl PageWriter {
     /// A jcidParagraphStyleObjectForText for a run's formatting, shared between equal formats.
     fn format(&mut self, run: &Run, hyperlink: bool, hidden: bool) -> ExtendedGuid {
         let key = format!(
-            "{}{}{}{}|{:?}|{:?}|{:?}|{:?}|{hyperlink}{hidden}",
-            run.bold as u8, run.italic as u8, run.underline as u8, run.strike as u8, run.font, run.size, run.color, run.highlight
+            "{}{}{}{}|{:?}|{:?}|{:?}|{:?}|{hyperlink}{hidden}|{}",
+            run.bold as u8, run.italic as u8, run.underline as u8, run.strike as u8, run.font, run.size, run.color, run.highlight, self.lcid
         );
         if let Some(id) = self.formats.get(&key) {
             return *id;
@@ -249,7 +252,7 @@ impl PageWriter {
         if ca != 0xFF || ha != 0xFF {
             p.push(prop::NC_RUN_ALPHA, PropertyValue::U16((u16::from(ca) << 8) | u16::from(ha)));
         }
-        p.push(prop::LANGUAGE_ID, PropertyValue::U32(LCID_EN_US));
+        p.push(prop::LANGUAGE_ID, PropertyValue::U32(self.lcid));
         if hyperlink {
             p.push(prop::HYPERLINK, PropertyValue::Bool(true));
             if !hidden {
@@ -470,6 +473,8 @@ impl PageWriter {
         let runs: Vec<&Run> = para.runs.iter().filter(|r| !r.text.is_empty()).collect();
         let default = Run::default();
         let runs = if runs.is_empty() { vec![para.runs.first().unwrap_or(&default)] } else { runs };
+        // The paragraph's proofing language (LanguageID on its runs, RichEditTextLangID on it).
+        self.lcid = para.lang.as_deref().and_then(crate::lcid::from_tag).unwrap_or(LCID_EN_US);
         for run in runs {
             if let Some(url) = run.link.as_deref() {
                 let field = format!("\u{FDDF}HYPERLINK \"{}\"", url.replace('"', "%22"));
@@ -491,7 +496,11 @@ impl PageWriter {
         bytes.extend_from_slice(&[0, 0]);
         rt.push(prop::PARAGRAPH_STYLE, PropertyValue::Ids(vec![style]))
             .push(prop::RICH_EDIT_TEXT_UNICODE, PropertyValue::Bytes(bytes))
-            .push(prop::RICH_EDIT_TEXT_LANG_ID, PropertyValue::U16(LCID_EN_US as u16));
+            .push(prop::RICH_EDIT_TEXT_LANG_ID, PropertyValue::U16(u16::try_from(self.lcid).unwrap_or(LCID_EN_US as u16)));
+        self.lcid = LCID_EN_US;
+        if let Some(lang) = para.lang.as_deref() {
+            rt.push(prop::NC_PARA_LANG, wz_bytes(lang));
+        }
         if let Some(tag) = para.tag {
             let state = self.tag_state(tag);
             rt.push(prop::NOTE_TAG_STATES, PropertyValue::Sets(vec![state]));

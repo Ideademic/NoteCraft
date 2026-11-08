@@ -28,6 +28,7 @@ mod build;
 mod icon;
 pub mod ids;
 mod ink;
+mod lcid;
 mod notebook;
 mod opaque;
 mod read;
@@ -47,6 +48,7 @@ use notecraft_doc::{Color, Guid, Section};
 use notecraft_doc::Notebook;
 
 pub use notebook::{NotebookFile, notebook_files, notebook_from_files};
+pub use opaque::{OpaqueInfo, OpaqueKind, describe as describe_opaque};
 pub use recycle::{
     DELETED_PAGES_FILE, RECYCLE_BIN_FOLDER, read_recycle_bin, recycle_bin_files, recycle_bin_names, write_deleted_pages, write_deleted_section,
 };

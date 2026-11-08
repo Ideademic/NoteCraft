@@ -352,3 +352,23 @@ fn alignment_list_styles_and_tags_print() {
         assert!(text.contains(want), "{want:?} in {text:?}");
     }
 }
+
+#[test]
+fn notecraft_links_go_to_pages_of_the_same_pdf() {
+    let mut sec = Section::new("Work", Color::NOTECRAFT);
+    let target = Page::new("Target page");
+    let url = notecraft_doc::link::InternalLink::to_page(notecraft_doc::Guid::new(), sec.id, target.id, "Target page").to_url();
+    let mut from = Page::new("From");
+    let mut o = Outline::with_text(notecraft_doc::page::CONTENT_ORIGIN, "");
+    o.para_mut(0).unwrap().runs = vec![Run::plain("Go to "), Run { text: "the target".into(), link: Some(url), ..Run::default() }];
+    from.elements.push(PageElement::new(ElementKind::Outline(o)));
+    sec.pages.push(from.clone());
+    sec.pages.push(target);
+    let pdf = export(&Doc::section(&sec), &Options::default(), &BundledFonts).unwrap();
+    let raw = String::from_utf8_lossy(&pdf).into_owned();
+    assert!(raw.contains("/Link") && raw.contains("/XYZ"), "a link to a page of the PDF");
+    assert!(!raw.contains("/URI"), "not a web link");
+    // On its own the page has nowhere to send the link: no annotation.
+    let alone = String::from_utf8_lossy(&export(&Doc::page(&from), &Options::default(), &BundledFonts).unwrap()).into_owned();
+    assert!(!alone.contains("/URI") && !alone.contains("/Link"));
+}

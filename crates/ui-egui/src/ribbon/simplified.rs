@@ -12,6 +12,7 @@ pub mod draw;
 pub mod history;
 pub mod home;
 pub mod insert;
+pub mod review;
 pub mod table;
 pub mod view;
 
@@ -53,6 +54,7 @@ pub fn segments(tab: RibbonTab) -> &'static [Segment] {
         RibbonTab::Insert => &insert::SEGMENTS,
         RibbonTab::Draw => &draw::SEGMENTS,
         RibbonTab::History => &history::SEGMENTS,
+        RibbonTab::Review => &review::SEGMENTS,
         RibbonTab::View => &view::SEGMENTS,
         RibbonTab::Table => &table::SEGMENTS,
     }

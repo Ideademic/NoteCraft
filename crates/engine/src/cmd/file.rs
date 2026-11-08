@@ -39,7 +39,7 @@ pub fn specs() -> Vec<CommandSpec> {
 }
 
 /// Hands an exported file back: bytes as base64, or written to `params.path`.
-fn deliver(params: &Value, file_name: String, mime: &str, bytes: Vec<u8>) -> CmdResult {
+pub(crate) fn deliver(params: &Value, file_name: String, mime: &str, bytes: Vec<u8>) -> CmdResult {
     let size = bytes.len();
     if let Some(path) = p::str(params, "path") {
         return write_to(path, &bytes).map(|()| CmdOutput::query(json!({"path": path, "size": size})));

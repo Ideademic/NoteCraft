@@ -73,7 +73,7 @@ A crash loses notes. **This outranks feature work.**
 - Never copy Microsoft wording beyond feature names.
 
 ## Licences
-Dependencies must be within the allowlist above, and NoteCraft narrows it: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, OFL-1.1, CC0-1.0 (plus Unicode-3.0, Zlib and BSL-1.0 only where WordCraft's lock already carries them transitively). **No MPL, GPL, LGPL or AGPL** (so no `onenote_parser`). Every dependency is declared once in the root `[workspace.dependencies]`; check its licence before adding it.
+Dependencies must be within the allowlist above, and NoteCraft narrows it: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, OFL-1.1, CC0-1.0 (plus Unicode-3.0, Zlib and BSL-1.0 only where WordCraft's lock already carries them transitively). For spelling data only (craft-proof's word lists, recorded in `ATTRIBUTION.md`), the public-domain Moby word list (`LicenseRef-Public-Domain`) and SCOWL's dictionaries under their own permissive licence are allowed too. **No MPL, GPL, LGPL or AGPL** (so no `onenote_parser`). Every dependency is declared once in the root `[workspace.dependencies]`; check its licence before adding it.
 
 ## Architecture
 | Layer | Crate (`notecraft-*`) | Job |

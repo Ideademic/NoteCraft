@@ -386,6 +386,7 @@ fn export_inner(doc: &Doc<'_>, opts: &Options, source: &dyn FontSource) -> Resul
         planned.push((pi, plan_sheets(lay.bounds, &lay.rows, &lay.boxes, opts)));
     }
     let total: usize = planned.iter().map(|(_, s)| s.len()).fold(0, usize::saturating_add).min(MAX_SHEETS);
+    let targets = link_targets(&pages, &planned, opts);
     for (pi, sheets) in planned {
         let Some(p) = pages.get(pi) else { continue };
         if sheet_no >= MAX_SHEETS {
@@ -429,7 +430,7 @@ fn export_inner(doc: &Doc<'_>, opts: &Options, source: &dyn FontSource) -> Resul
                 s.finish();
             }
             for l in links {
-                if let Some(a) = link_annotation(&l, &sh) {
+                if let Some(a) = link_annotation(&l, &sh, &targets) {
                     page_out.add_annotation(a);
                 }
             }
@@ -446,9 +447,33 @@ fn export_inner(doc: &Doc<'_>, opts: &Options, source: &dyn FontSource) -> Resul
     writer.finish().map_err(Into::into)
 }
 
-/// A link area as an annotation on its sheet, clipped to the sheet's area.
-fn link_annotation(l: &text::LinkArea, sh: &Sheet) -> Option<Annotation> {
-    let target = write::uri_target(&l.url)?;
+/// The sheet each page starts on in the PDF (as the loop below numbers what it writes), for
+/// `notecraft:` links to pages of the same export.
+fn link_targets(pages: &[&Page], planned: &[(usize, Vec<Sheet>)], opts: &Options) -> std::collections::HashMap<notecraft_doc::Guid, usize> {
+    let mut out = std::collections::HashMap::new();
+    let (mut sheet_no, mut written) = (0usize, 0usize);
+    for (pi, sheets) in planned {
+        let Some(p) = pages.get(*pi) else { continue };
+        for _ in sheets {
+            sheet_no += 1;
+            if sheet_no > MAX_SHEETS || !in_ranges(sheet_no, &opts.sheets) {
+                continue;
+            }
+            out.entry(p.id).or_insert(written);
+            written += 1;
+        }
+    }
+    out
+}
+
+/// A link area as an annotation on its sheet, clipped to the sheet's area. A `notecraft:` link
+/// to a page in the same PDF goes to that page's first sheet.
+fn link_annotation(l: &text::LinkArea, sh: &Sheet, targets: &std::collections::HashMap<notecraft_doc::Guid, usize>) -> Option<Annotation> {
+    let internal = notecraft_doc::link::InternalLink::parse(&l.url).and_then(|t| t.page).and_then(|id| targets.get(&id).copied());
+    let target = match internal {
+        Some(sheet) => k::annotation::Target::Destination(XyzDestination::new(sheet, Point::from_xy(0.0, 0.0)).into()),
+        None => write::uri_target(&l.url)?,
+    };
     let a = &sh.area;
     let (x0, y0) = (l.rect.x.max(a.x), l.rect.y.max(a.y));
     let (x1, y1) = ((l.rect.x + l.rect.w).min(a.x + a.w), (l.rect.y + l.rect.h).min(a.y + a.h));

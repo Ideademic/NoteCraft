@@ -56,6 +56,8 @@ pub struct Session {
     /// Draw › Ink to Shape is on: `draw.stroke` redraws strokes that look like shapes
     /// ([`Session::ink_to_shape`]; set with `draw.inkToShape`).
     pub(crate) ink_to_shape: bool,
+    /// Spelling: the default proofing language and words ignored once (Review › Spelling).
+    pub proof: crate::proof::ProofState,
     /// Saves notebooks ([`Session::save_dirty`], autosave). `None`: nothing is saved (tests,
     /// the CLI).
     pub storage: Option<Box<dyn Storage>>,
@@ -112,6 +114,7 @@ impl Session {
             read_state: ReadState::default(),
             ink_selection: Vec::new(),
             ink_to_shape: false,
+            proof: crate::proof::ProofState::default(),
             storage: None,
             notices: Vec::new(),
             revision: 0,

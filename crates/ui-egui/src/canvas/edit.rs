@@ -166,7 +166,7 @@ pub fn insert(state: &mut CanvasState, session: &mut Session, t: &str) {
     }
     let mut params = range_params(state, &c);
     if let Value::Object(m) = &mut params {
-        m.insert("text".into(), Value::String(t));
+        m.insert("text".into(), Value::String(t.clone()));
         m.insert("mergeKey".into(), Value::String(c.merge_key.clone()));
         if !state.pending_style.is_empty() {
             m.insert("style".into(), state.pending_style.to_json());
@@ -177,6 +177,7 @@ pub fn insert(state: &mut CanvasState, session: &mut Session, t: &str) {
         if let Some(pos) = caret_from(&out) {
             set_head(state, pos, false);
         }
+        super::links::after_insert(state, session, &t);
     }
 }
 

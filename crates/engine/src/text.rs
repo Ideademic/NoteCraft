@@ -270,6 +270,26 @@ impl Flow for Cell {
     }
 }
 
+/// Every paragraph of `o` in reading order with its flow and index there: the container's own,
+/// and at each table its cells' (row by row).
+pub fn all_paragraphs(o: &Outline) -> Vec<(Frame, usize, &Paragraph)> {
+    let mut out = Vec::new();
+    for (b, block) in o.blocks.iter().enumerate() {
+        match block {
+            Block::Paragraph(p) => out.push((Frame::Top, b, p)),
+            Block::Table { table } => {
+                for (r, row) in table.rows.iter().enumerate() {
+                    for (c, cell) in row.cells.iter().enumerate() {
+                        let f = Frame::Cell(CellRef::new(b, r, c));
+                        out.extend(cell.paragraphs.iter().enumerate().map(|(i, p)| (f, i, p)));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 /// The paragraphs of blocks `lo..=hi` (tables skipped).
 pub fn paras_in<F: Flow + ?Sized>(f: &F, lo: usize, hi: usize) -> Vec<&Paragraph> {
     (lo..=hi.min(f.count().saturating_sub(1))).filter_map(|i| f.para(i)).collect()
@@ -506,7 +526,7 @@ pub fn continuation(p: &Paragraph) -> Paragraph {
         Some(Tag::ToDo { .. }) => Some(Tag::ToDo { checked: false }),
         other => other,
     };
-    Paragraph { runs: Vec::new(), indent: p.indent, list: p.list, list_style: p.list_style, tag, style, align: p.align }
+    Paragraph { runs: Vec::new(), indent: p.indent, list: p.list, list_style: p.list_style, tag, style, align: p.align, lang: p.lang.clone() }
 }
 
 /// Deletes the text between `start` and `end` (merging the end paragraph into the start one,
