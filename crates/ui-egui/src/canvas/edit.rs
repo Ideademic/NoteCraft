@@ -295,6 +295,8 @@ pub fn current_format(state: &CanvasState, session: &Session) -> Option<CurrentF
             size: common(runs.iter().map(|r| r.size)),
             style: common(paras.iter().map(|pg| pg.style)),
             list: common(paras.iter().map(|pg| pg.list)),
+            list_style: common(paras.iter().map(notecraft_doc::Paragraph::marker_style)),
+            align: common(paras.iter().map(|pg| pg.align)),
             tag: common(paras.iter().map(|pg| pg.tag)),
         }
     } else if state.pending.is_some() {
@@ -309,6 +311,8 @@ pub fn current_format(state: &CanvasState, session: &Session) -> Option<CurrentF
             size: Some(None),
             style: Some(notecraft_doc::ParaStyle::Normal),
             list: Some(None),
+            list_style: Some(None),
+            align: Some(notecraft_doc::Align::Left),
             tag: Some(None),
         }
     } else {
@@ -433,7 +437,7 @@ fn vertical(o: &OutlineLayout, pos: TextPos, goal_x: f32, down: bool) -> TextPos
     let mut base = 0;
     for (i, r) in q.galley.rows.iter().enumerate() {
         if i == row {
-            let col = r.char_at(goal_x - q.text_x - r.pos.x).0;
+            let col = r.char_at(goal_x - q.galley_x() - r.pos.x).0;
             return TextPos::new(para, (base + col).min(q.chars));
         }
         base += r.char_count_including_newline().0;
@@ -442,7 +446,7 @@ fn vertical(o: &OutlineLayout, pos: TextPos, goal_x: f32, down: bool) -> TextPos
 }
 
 fn caret_x(o: &OutlineLayout, pos: TextPos) -> f32 {
-    o.paras.get(pos.para).map_or(0.0, |p| p.text_x + p.galley.pos_from_cursor(CCursor::new(pos.char)).left())
+    o.paras.get(pos.para).map_or(0.0, |p| p.galley_x() + p.galley.pos_from_cursor(CCursor::new(pos.char)).left())
 }
 
 fn home_end(o: &OutlineLayout, pos: TextPos, end: bool) -> TextPos {
@@ -454,6 +458,21 @@ fn home_end(o: &OutlineLayout, pos: TextPos, end: bool) -> TextPos {
 
 fn mods_cmd(m: &Modifiers) -> bool {
     m.command || m.ctrl
+}
+
+/// The tag shortcuts (Mod+2 … Mod+9 put a tag on, Mod+0 takes them off; Mod+1, To Do, is the
+/// To Do command's own): `format.tag` with its params.
+fn tag_shortcut(key: Key, m: Modifiers) -> Option<Value> {
+    use notecraft_engine::cmd::format::{TAG_KEYS, TAG_REMOVE_KEY};
+    let matches = |k: &str| {
+        crate::app::keys::parse_shortcut(k).is_some_and(|sc| {
+            sc.logical_key == key && sc.modifiers.command == m.command && sc.modifiers.alt == m.alt && sc.modifiers.shift == m.shift
+        })
+    };
+    if matches(TAG_REMOVE_KEY) {
+        return Some(json!({ "tag": null }));
+    }
+    TAG_KEYS.iter().filter(|(_, t)| !matches!(t, notecraft_doc::Tag::ToDo { .. })).find(|(k, _)| matches(k)).map(|(_, t)| json!({ "tag": t.name() }))
 }
 
 /// The registry command a key press is the shortcut of (formatting and Insert Date/Time).
@@ -556,6 +575,10 @@ fn type_keys(ui: &mut Ui, state: &mut CanvasState, session: &mut Session, lay: &
 }
 
 fn key_press(ui: &Ui, state: &mut CanvasState, session: &mut Session, lay: &PageLayout, _v: &View, key: Key, m: Modifiers) {
+    if let Some(params) = tag_shortcut(key, m) {
+        let _ = format(state, session, ids::FORMAT_TAG, params);
+        return;
+    }
     if let Some(cmd) = shortcut_command(key, m) {
         if cmd == ids::INSERT_DATE_TIME {
             if let Some(c) = ensure_outline(state, session)

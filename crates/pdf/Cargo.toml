@@ -17,7 +17,8 @@ craft-pdf = { workspace = true }
 epaint = { workspace = true, features = ["default_fonts"] }
 skrifa = { workspace = true }
 harfrust = { workspace = true }
-craft-font-catalog = { workspace = true }
+# The fonts the canvas draws with (installed, added, bundled) and its fallback chain.
+notecraft-fonts = { workspace = true }
 image = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }

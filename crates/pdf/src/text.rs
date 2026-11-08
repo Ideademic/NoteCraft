@@ -10,7 +10,7 @@ use epaint::text::{FontId, Galley, LayoutJob, TextFormat, TextWrapping};
 use k::geom::{Point, Transform};
 use k::surface::Surface;
 use k::text::{GlyphId, KrillaGlyph};
-use notecraft_doc::{Color, Outline, Paragraph, Run, Tag};
+use notecraft_doc::{Align, Color, Outline, Paragraph, Run, Tag};
 use notecraft_geom::Rect;
 
 use crate::draw;
@@ -71,10 +71,26 @@ fn format(fs: &FontSet, sec: &Section) -> TextFormat {
     TextFormat { font_id: FontId::new(sec.look.size, family), ..TextFormat::default() }
 }
 
-/// Lays out `runs` (a paragraph's, or a label's) wrapped at `wrap` points (`None`: no wrap).
+/// Lays out `runs` (a paragraph's, or a label's) wrapped at `wrap` points (`None`: no wrap), left
+/// aligned.
 pub fn layout_runs(fs: &mut FontSet, runs: &[(String, Section)], wrap: Option<f32>, empty: Section) -> Block {
-    let mut job =
-        LayoutJob { wrap: wrap.map_or_else(TextWrapping::no_max_width, |w| TextWrapping::wrap_at_width(w.max(8.0))), ..LayoutJob::default() };
+    layout_aligned(fs, runs, wrap, empty, Align::Left)
+}
+
+/// [`layout_runs`] with the paragraph's alignment, as the canvas lays it out (centred and right
+/// rows around x = 0, see [`style::align_dx`]; justified rows fill the wrap width).
+pub fn layout_aligned(fs: &mut FontSet, runs: &[(String, Section)], wrap: Option<f32>, empty: Section, align: Align) -> Block {
+    let halign = match align {
+        Align::Center => epaint::emath::Align::Center,
+        Align::Right => epaint::emath::Align::RIGHT,
+        Align::Left | Align::Justify => epaint::emath::Align::LEFT,
+    };
+    let mut job = LayoutJob {
+        wrap: wrap.map_or_else(TextWrapping::no_max_width, |w| TextWrapping::wrap_at_width(w.max(8.0))),
+        halign,
+        justify: align == Align::Justify,
+        ..LayoutJob::default()
+    };
     let mut char_section = Vec::new();
     let mut sections = Vec::new();
     for (text, sec) in runs {
@@ -99,7 +115,7 @@ pub fn layout_runs(fs: &mut FontSet, runs: &[(String, Section)], wrap: Option<f3
 
 /// A run's section.
 pub fn section_of(fs: &FontSet, run: &Run, p: &Paragraph, ink: &Ink) -> Section {
-    let look = style::run_look(run, p.style, ink);
+    let look = style::para_run_look(run, p, ink);
     Section { style: fs.style(&key_of(&look)), link: run.link.clone().filter(|l| !l.trim().is_empty()), look }
 }
 
@@ -126,8 +142,10 @@ pub fn plain_look(size: f32, color: Color) -> RunLook {
 
 /// One laid-out paragraph, page points.
 pub struct ParaLay {
-    /// The text's top-left corner.
+    /// The text area's left edge (after the indent, tag and marker).
     pub x: f32,
+    /// Where the block's origin is from `x` (centred and right-aligned rows sit around it).
+    pub align_dx: f32,
     pub top: f32,
     pub height: f32,
     pub block: Block,
@@ -168,7 +186,7 @@ pub fn layout_outline(fs: &mut FontSet, o: &Outline, ink: &Ink) -> OutlineLay {
         let wrap = (width - text_x).max(24.0).round();
         let runs: Vec<(String, Section)> = p.runs.iter().map(|r| (r.text.clone(), section_of(fs, r, p, ink))).collect();
         let empty = section_of(fs, &Run::default(), p, ink);
-        let block = layout_runs(fs, &runs, Some(wrap), empty);
+        let block = layout_aligned(fs, &runs, Some(wrap), empty, p.align);
         let first = p.runs.iter().find(|r| !r.text.is_empty()).or(p.runs.first()).map_or(p.style.font_size(), |r| style::size_pt(r, p.style));
         if i > 0 && p.style.heading_level().is_some() {
             y += HEADING_SPACE;
@@ -186,7 +204,9 @@ pub fn layout_outline(fs: &mut FontSet, o: &Outline, ink: &Ink) -> OutlineLay {
         let h = block.height().max(first);
         paras.push(ParaLay {
             x: pos.x + text_x,
+            align_dx: style::align_dx(p.align, wrap),
             top: pos.y + y,
+
             height: h,
             block,
             marker,

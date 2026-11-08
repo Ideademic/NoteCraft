@@ -243,8 +243,8 @@ pub fn insert(o: &mut Outline, at: TextPos, text: &str, fmt: &Run) -> TextPos {
     TextPos::new(para, last_line_len)
 }
 
-/// A new paragraph following `p` (Enter): same list, indent and style (a heading is followed by
-/// normal text), a To Do tag unchecked, no runs.
+/// A new paragraph following `p` (Enter): same list (and list style), indent, alignment and
+/// style (a heading is followed by normal text), a To Do tag unchecked, no runs.
 fn continuation(p: &Paragraph) -> Paragraph {
     let style =
         if p.style.heading_level().is_some() || p.style == notecraft_doc::ParaStyle::Title { notecraft_doc::ParaStyle::Normal } else { p.style };
@@ -252,7 +252,7 @@ fn continuation(p: &Paragraph) -> Paragraph {
         Some(Tag::ToDo { .. }) => Some(Tag::ToDo { checked: false }),
         other => other,
     };
-    Paragraph { runs: Vec::new(), indent: p.indent, list: p.list, tag, style }
+    Paragraph { runs: Vec::new(), indent: p.indent, list: p.list, list_style: p.list_style, tag, style, align: p.align }
 }
 
 /// Deletes the text between `start` and `end` (merging the end paragraph into the start one);

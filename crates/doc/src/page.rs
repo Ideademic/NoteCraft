@@ -335,6 +335,263 @@ pub enum ListKind {
     Numbered,
 }
 
+/// How a list item's marker looks: a bullet shape or a numbering format. A paragraph without
+/// one ([`Paragraph::list_style`] `None`) takes its marker from its indent level (bullets: disc,
+/// circle, square; numbers: `1.`, `a.`, `i.`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ListStyle {
+    /// `•`
+    Disc,
+    /// `◦`
+    Circle,
+    /// `▪`
+    Square,
+    /// `–`
+    Dash,
+    /// `➢`
+    Arrow,
+    /// `1.` `2.` `3.`
+    Decimal,
+    /// `a.` `b.` `c.`
+    LowerAlpha,
+    /// `A.` `B.` `C.`
+    UpperAlpha,
+    /// `i.` `ii.` `iii.`
+    LowerRoman,
+    /// `I.` `II.` `III.`
+    UpperRoman,
+}
+
+impl ListStyle {
+    pub const BULLETS: [ListStyle; 5] = [ListStyle::Disc, ListStyle::Circle, ListStyle::Square, ListStyle::Dash, ListStyle::Arrow];
+    pub const NUMBERS: [ListStyle; 5] =
+        [ListStyle::Decimal, ListStyle::LowerAlpha, ListStyle::UpperAlpha, ListStyle::LowerRoman, ListStyle::UpperRoman];
+
+    /// Whether this is a bullet or a numbering format.
+    pub fn kind(self) -> ListKind {
+        if ListStyle::BULLETS.contains(&self) { ListKind::Bullet } else { ListKind::Numbered }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            ListStyle::Disc => "disc",
+            ListStyle::Circle => "circle",
+            ListStyle::Square => "square",
+            ListStyle::Dash => "dash",
+            ListStyle::Arrow => "arrow",
+            ListStyle::Decimal => "decimal",
+            ListStyle::LowerAlpha => "lowerAlpha",
+            ListStyle::UpperAlpha => "upperAlpha",
+            ListStyle::LowerRoman => "lowerRoman",
+            ListStyle::UpperRoman => "upperRoman",
+        }
+    }
+
+    /// By [`ListStyle::name`] (any case), or by a sample of the marker (`"1."`, `"a."`, `"I."`,
+    /// `"•"`).
+    pub fn parse(s: &str) -> Option<ListStyle> {
+        let t = s.trim();
+        if let Some(st) = ListStyle::BULLETS.into_iter().chain(ListStyle::NUMBERS).find(|x| x.name().eq_ignore_ascii_case(t)) {
+            return Some(st);
+        }
+        let sample = t.trim_end_matches(['.', ')']);
+        let mut chars = sample.chars();
+        if let (Some(c), None) = (chars.next(), chars.next())
+            && !c.is_ascii_alphanumeric()
+        {
+            return ListStyle::from_bullet_char(c);
+        }
+        Some(match sample {
+            "1" => ListStyle::Decimal,
+            "a" => ListStyle::LowerAlpha,
+            "A" => ListStyle::UpperAlpha,
+            "i" => ListStyle::LowerRoman,
+            "I" => ListStyle::UpperRoman,
+            "o" => ListStyle::Circle,
+            _ => return None,
+        })
+    }
+
+    /// The bullet character (bullets only).
+    pub fn bullet_char(self) -> Option<char> {
+        match self {
+            ListStyle::Disc => Some('\u{2022}'),
+            ListStyle::Circle => Some('\u{25E6}'),
+            ListStyle::Square => Some('\u{25AA}'),
+            ListStyle::Dash => Some('\u{2013}'),
+            ListStyle::Arrow => Some('\u{27A2}'),
+            _ => None,
+        }
+    }
+
+    /// The bullet for a character a file uses: the shapes NoteCraft draws, look-alikes, and the
+    /// private-use codes symbol fonts put bullets at. `None` for characters it doesn't recognise.
+    pub fn from_bullet_char(c: char) -> Option<ListStyle> {
+        Some(match c {
+            '\u{2022}' | '\u{25CF}' | '\u{F0B7}' | '\u{F06C}' | '\u{00B7}' | '\u{2219}' => ListStyle::Disc,
+            '\u{25E6}' | '\u{25CB}' | 'o' | '\u{F06F}' => ListStyle::Circle,
+            '\u{25AA}' | '\u{25A0}' | '\u{25FE}' | '\u{F0A7}' | '\u{F06E}' => ListStyle::Square,
+            '\u{2013}' | '\u{2014}' | '-' | '\u{2012}' => ListStyle::Dash,
+            '\u{27A2}' | '\u{2192}' | '\u{25B6}' | '\u{25BA}' | '\u{27A4}' | '>' | '\u{F0D8}' | '\u{F0E0}' => ListStyle::Arrow,
+            _ => return None,
+        })
+    }
+
+    /// The marker text of item `n` (from 1) in this numbering format, with its full stop:
+    /// `"3."`, `"c."`, `"III."`. Bullets give their character.
+    pub fn label(self, n: u32) -> String {
+        match self {
+            ListStyle::Decimal => format!("{n}."),
+            ListStyle::LowerAlpha => format!("{}.", letters(n)),
+            ListStyle::UpperAlpha => format!("{}.", letters(n).to_uppercase()),
+            ListStyle::LowerRoman => format!("{}.", roman(n)),
+            ListStyle::UpperRoman => format!("{}.", roman(n).to_uppercase()),
+            b => b.bullet_char().map(String::from).unwrap_or_default(),
+        }
+    }
+
+    /// The default style at indent level `indent`: bullets go disc, circle, square; numbers
+    /// `1.`, `a.`, `i.`; then again.
+    pub fn by_level(kind: ListKind, indent: u8) -> ListStyle {
+        match (kind, indent % 3) {
+            (ListKind::Bullet, 0) => ListStyle::Disc,
+            (ListKind::Bullet, 1) => ListStyle::Circle,
+            (ListKind::Bullet, _) => ListStyle::Square,
+            (ListKind::Numbered, 0) => ListStyle::Decimal,
+            (ListKind::Numbered, 1) => ListStyle::LowerAlpha,
+            (ListKind::Numbered, _) => ListStyle::LowerRoman,
+        }
+    }
+}
+
+/// A paragraph's list marker, as the canvas and the PDF draw it.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Marker {
+    /// Drawn as a shape: disc, circle, square, dash or arrow.
+    Bullet(ListStyle),
+    /// "1.", "a.", "IV." …
+    Number(String),
+}
+
+/// Each paragraph's marker. Numbers count per level and numbering style (as MS-ONE counts list
+/// items with the same NumberListFormat at the same level); a paragraph at a lower level, or
+/// another kind at the same level, starts the count again.
+pub fn markers(paras: &[Paragraph]) -> Vec<Option<Marker>> {
+    const LEVELS: usize = MAX_INDENT as usize + 1;
+    let mut counters = [0u32; LEVELS];
+    let mut styles: [Option<ListStyle>; LEVELS] = [None; LEVELS];
+    let mut out = Vec::with_capacity(paras.len());
+    for p in paras {
+        let level = usize::from(p.indent.min(MAX_INDENT));
+        // Deeper levels start again under this paragraph.
+        for c in counters.iter_mut().skip(level + 1) {
+            *c = 0;
+        }
+        match (p.list, p.marker_style()) {
+            (Some(ListKind::Numbered), Some(st)) => {
+                let same = styles.get(level).copied().flatten() == Some(st);
+                let n = if same { counters.get(level).copied().unwrap_or(0).saturating_add(1) } else { 1 };
+                if let (Some(c), Some(s)) = (counters.get_mut(level), styles.get_mut(level)) {
+                    *c = n;
+                    *s = Some(st);
+                }
+                out.push(Some(Marker::Number(st.label(n))));
+            }
+            (Some(ListKind::Bullet), Some(st)) => {
+                if let (Some(c), Some(s)) = (counters.get_mut(level), styles.get_mut(level)) {
+                    *c = 0;
+                    *s = None;
+                }
+                out.push(Some(Marker::Bullet(st)));
+            }
+            _ => {
+                if let (Some(c), Some(s)) = (counters.get_mut(level), styles.get_mut(level)) {
+                    *c = 0;
+                    *s = None;
+                }
+                out.push(None);
+            }
+        }
+    }
+    out
+}
+
+/// `1` → `a`, `26` → `z`, `27` → `aa` (at most 8 letters).
+fn letters(mut n: u32) -> String {
+    let mut s = Vec::new();
+    while n > 0 && s.len() < 8 {
+        let d = ((n - 1) % 26) as u8;
+        s.push(char::from(b'a' + d));
+        n = (n - 1) / 26;
+    }
+    s.iter().rev().collect()
+}
+
+/// Lower-case roman numerals for 1–3999, digits otherwise.
+fn roman(n: u32) -> String {
+    if n == 0 || n >= 4000 {
+        return n.to_string();
+    }
+    const TABLE: [(u32, &str); 13] = [
+        (1000, "m"),
+        (900, "cm"),
+        (500, "d"),
+        (400, "cd"),
+        (100, "c"),
+        (90, "xc"),
+        (50, "l"),
+        (40, "xl"),
+        (10, "x"),
+        (9, "ix"),
+        (5, "v"),
+        (4, "iv"),
+        (1, "i"),
+    ];
+    let mut out = String::new();
+    let mut n = n;
+    for (v, s) in TABLE {
+        while n >= v {
+            out.push_str(s);
+            n -= v;
+        }
+    }
+    out
+}
+
+/// Paragraph alignment (Home ▸ Paragraph Alignment).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Align {
+    #[default]
+    Left,
+    Center,
+    Right,
+    /// Word-wrapped lines fill the container's width (the last line stays on the left).
+    Justify,
+}
+
+impl Align {
+    pub const ALL: [Align; 4] = [Align::Left, Align::Center, Align::Right, Align::Justify];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Align::Left => "left",
+            Align::Center => "center",
+            Align::Right => "right",
+            Align::Justify => "justify",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Align> {
+        let t = s.trim();
+        if t.eq_ignore_ascii_case("centre") {
+            return Some(Align::Center);
+        }
+        Align::ALL.into_iter().find(|a| a.name().eq_ignore_ascii_case(t))
+    }
+}
+
 /// A note tag on a paragraph.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -342,6 +599,89 @@ pub enum Tag {
     ToDo { checked: bool },
     Important,
     Question,
+    RememberForLater,
+    Definition,
+    Highlight,
+    Contact,
+    Address,
+    Phone,
+    Idea,
+    Critical,
+}
+
+impl Tag {
+    /// Every tag in gallery order (To Do unchecked): the Mod+1…Mod+9 ones first.
+    pub const ALL: [Tag; 11] = [
+        Tag::ToDo { checked: false },
+        Tag::Important,
+        Tag::Question,
+        Tag::RememberForLater,
+        Tag::Definition,
+        Tag::Highlight,
+        Tag::Contact,
+        Tag::Address,
+        Tag::Phone,
+        Tag::Idea,
+        Tag::Critical,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Tag::ToDo { .. } => "toDo",
+            Tag::Important => "important",
+            Tag::Question => "question",
+            Tag::RememberForLater => "rememberForLater",
+            Tag::Definition => "definition",
+            Tag::Highlight => "highlight",
+            Tag::Contact => "contact",
+            Tag::Address => "address",
+            Tag::Phone => "phone",
+            Tag::Idea => "idea",
+            Tag::Critical => "critical",
+        }
+    }
+
+    /// The English label (menus, exports, the `.one` tag definition).
+    pub fn label(self) -> &'static str {
+        match self {
+            Tag::ToDo { .. } => "To Do",
+            Tag::Important => "Important",
+            Tag::Question => "Question",
+            Tag::RememberForLater => "Remember for later",
+            Tag::Definition => "Definition",
+            Tag::Highlight => "Highlight",
+            Tag::Contact => "Contact",
+            Tag::Address => "Address",
+            Tag::Phone => "Phone number",
+            Tag::Idea => "Idea",
+            Tag::Critical => "Critical",
+        }
+    }
+
+    /// By [`Tag::name`] or [`Tag::label`] (any case; spaces, `-` and `_` ignored); To Do comes
+    /// unchecked.
+    pub fn parse(s: &str) -> Option<Tag> {
+        let key: String = s.chars().filter(|c| !c.is_whitespace() && *c != '-' && *c != '_').collect::<String>().to_ascii_lowercase();
+        let key = match key.as_str() {
+            "phonenumber" => "phone",
+            k => k,
+        };
+        Tag::ALL.into_iter().find(|t| t.name().eq_ignore_ascii_case(key))
+    }
+
+    /// The colour a highlight tag paints behind the text; `None` for the tags with an icon.
+    pub fn highlight(self) -> Option<Color> {
+        match self {
+            Tag::RememberForLater | Tag::Highlight => Some(Color::rgb(0xFF, 0xF2, 0x00)),
+            Tag::Definition => Some(Color::rgb(0x92, 0xD0, 0x50)),
+            _ => None,
+        }
+    }
+
+    /// Whether the tag draws an icon before the text (the highlight tags don't).
+    pub fn has_icon(self) -> bool {
+        self.highlight().is_none()
+    }
 }
 
 /// Paragraph styles (Home ▸ Styles).
@@ -428,8 +768,12 @@ pub struct Paragraph {
     /// Indent level, 0..=[`MAX_INDENT`].
     pub indent: u8,
     pub list: Option<ListKind>,
+    /// The marker's look; `None` (or a style of the other list kind) takes the level's default
+    /// ([`Paragraph::marker_style`]).
+    pub list_style: Option<ListStyle>,
     pub tag: Option<Tag>,
     pub style: ParaStyle,
+    pub align: Align,
 }
 
 impl Paragraph {
@@ -446,6 +790,13 @@ impl Paragraph {
     pub fn sanitized(mut self) -> Paragraph {
         self.indent = self.indent.min(MAX_INDENT);
         self
+    }
+
+    /// The list marker style in effect: the paragraph's own when it matches its list kind, else
+    /// the level's default. `None` outside a list.
+    pub fn marker_style(&self) -> Option<ListStyle> {
+        let kind = self.list?;
+        Some(self.list_style.filter(|s| s.kind() == kind).unwrap_or_else(|| ListStyle::by_level(kind, self.indent)))
     }
 }
 
@@ -663,6 +1014,48 @@ mod tests {
         let para: Paragraph = serde_json::from_str(r#"{"runs":[{"text":"hi","bold":true}],"tag":{"type":"toDo","checked":true}}"#).unwrap();
         assert_eq!(para.tag, Some(Tag::ToDo { checked: true }));
         assert!(para.runs[0].bold);
+    }
+
+    #[test]
+    fn list_styles_tags_and_alignment_parse() {
+        for s in ListStyle::BULLETS.into_iter().chain(ListStyle::NUMBERS) {
+            assert_eq!(ListStyle::parse(s.name()), Some(s));
+            if let Some(c) = s.bullet_char() {
+                assert_eq!(ListStyle::from_bullet_char(c), Some(s));
+                assert_eq!(s.kind(), ListKind::Bullet);
+            } else {
+                assert_eq!(s.kind(), ListKind::Numbered);
+            }
+        }
+        assert_eq!(ListStyle::parse("I."), Some(ListStyle::UpperRoman));
+        assert_eq!(ListStyle::parse("a)"), Some(ListStyle::LowerAlpha));
+        assert_eq!(ListStyle::parse("\u{2022}"), Some(ListStyle::Disc));
+        assert_eq!(ListStyle::parse("nope"), None);
+        assert_eq!(ListStyle::UpperRoman.label(14), "XIV.");
+        assert_eq!(ListStyle::UpperAlpha.label(28), "AB.");
+        assert_eq!(ListStyle::Decimal.label(u32::MAX), format!("{}.", u32::MAX));
+        assert_eq!(ListStyle::LowerRoman.label(0), "0.");
+        let mut p = Paragraph { list: Some(ListKind::Numbered), indent: 1, ..Paragraph::plain("x") };
+        assert_eq!(p.marker_style(), Some(ListStyle::LowerAlpha));
+        p.list_style = Some(ListStyle::Square);
+        assert_eq!(p.marker_style(), Some(ListStyle::LowerAlpha), "a bullet style doesn't apply to a numbered item");
+        p.list_style = Some(ListStyle::UpperRoman);
+        assert_eq!(p.marker_style(), Some(ListStyle::UpperRoman));
+        for t in Tag::ALL {
+            assert_eq!(Tag::parse(t.name()), Some(t));
+            assert_eq!(Tag::parse(t.label()), Some(t));
+        }
+        assert_eq!(Tag::parse("to-do"), Some(Tag::ToDo { checked: false }));
+        assert!(Tag::Definition.highlight().is_some() && !Tag::Definition.has_icon() && Tag::Idea.has_icon());
+        for a in Align::ALL {
+            assert_eq!(Align::parse(a.name()), Some(a));
+        }
+        assert_eq!(Align::parse("Centre"), Some(Align::Center));
+        // Older JSON (no align, no list style) still reads.
+        let old: Paragraph = serde_json::from_str(r#"{"runs":[{"text":"x"}],"list":"bullet","tag":{"type":"idea"}}"#).unwrap();
+        assert_eq!((old.align, old.list_style, old.tag), (Align::Left, None, Some(Tag::Idea)));
+        let j = serde_json::to_string(&p).unwrap();
+        assert_eq!(serde_json::from_str::<Paragraph>(&j).unwrap(), p);
     }
 
     #[test]

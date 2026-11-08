@@ -9,7 +9,7 @@ use craft_pdf::write::backend as k;
 use k::image::Image;
 use k::surface::Surface;
 use notecraft_doc::page::TITLE_ORIGIN;
-use notecraft_doc::{Color, ElementKind, ImageElement, ImageFormat, InkTool, Page, Tag};
+use notecraft_doc::{Color, ElementKind, ImageElement, ImageFormat, InkTool, ListStyle, Page, Tag};
 use notecraft_geom::Rect;
 
 use crate::draw;
@@ -183,7 +183,7 @@ pub fn draw(s: &mut Surface, fs: &mut FontSet, images: &mut Images, lay: &PageLa
             }
             marker(s, fs, p, clip, links);
             tag(s, fs, p, clip, links);
-            text::draw_block(s, fs, &p.block, p.x, p.top, clip, links);
+            text::draw_block(s, fs, &p.block, p.x + p.align_dx, p.top, clip, links);
         }
     }
     ink_layer(s, page, ink, clip, false);
@@ -265,13 +265,24 @@ fn marker(s: &mut Surface, fs: &mut FontSet, p: &text::ParaLay, clip: Rect, link
     let cy = (a + b) / 2.0;
     let color = p.block.sections.first().map_or(Color::BLACK, |s| s.look.color);
     match m {
-        Marker::Bullet(level) => {
+        Marker::Bullet(style) => {
+            // The canvas's shapes (`icons::paint_bullet`).
             let r = (p.size * 0.15).clamp(1.5, 12.0);
             let cx = p.marker_x + MARKER_W * 0.4;
-            match level % 3 {
-                0 => draw::fill_disc(s, cx, cy, r, color),
-                1 => draw::stroke_disc(s, cx, cy, r - 0.5, (r * 0.35).max(1.0), color),
-                _ => draw::fill_rect(s, cx - r * 0.85, cy - r * 0.85, r * 1.7, r * 1.7, color),
+            match style {
+                ListStyle::Circle => draw::stroke_disc(s, cx, cy, r - 0.5, (r * 0.35).max(1.0), color),
+                ListStyle::Square => draw::fill_rect(s, cx - r * 0.85, cy - r * 0.85, r * 1.7, r * 1.7, color),
+                ListStyle::Dash => draw::line(s, (cx - r * 1.4, cy), (cx + r * 1.4, cy), (r * 0.4).max(1.0), color),
+                ListStyle::Arrow => {
+                    let w = r * 1.5;
+                    let pts = [(cx - w * 0.7, cy - w), (cx + w * 0.9, cy), (cx - w * 0.7, cy + w), (cx - w * 0.2, cy)];
+                    let mut pb = k::geom::PathBuilder::new();
+                    draw::polygon(&mut pb, &pts);
+                    if let Some(path) = pb.finish() {
+                        draw::fill_path(s, &path, draw::fill(color, 1.0));
+                    }
+                }
+                _ => draw::fill_disc(s, cx, cy, r, color),
             }
         }
         Marker::Number(_) => {
@@ -281,9 +292,11 @@ fn marker(s: &mut Surface, fs: &mut FontSet, p: &text::ParaLay, clip: Rect, link
     }
 }
 
-/// The To Do box (ticked in the accent colour), the Important star and the Question mark.
+/// The To Do box (ticked in the accent colour), and the other tags' icons, simplified from the
+/// canvas's drawings (`icons::deck::extra`). The highlight tags have no icon: their colour is
+/// behind the text.
 fn tag(s: &mut Surface, fs: &mut FontSet, p: &text::ParaLay, clip: Rect, links: &mut Vec<LinkArea>) {
-    let Some(tag) = p.tag else { return };
+    let Some(tag) = p.tag.filter(|t| t.has_icon()) else { return };
     let (a, b) = p.first_row();
     let side = (p.size * 0.85).clamp(6.0, 60.0);
     let (cx, cy) = (p.tag_x + TAG_W / 2.0, (a + b) / 2.0);
@@ -321,8 +334,51 @@ fn tag(s: &mut Surface, fs: &mut FontSet, p: &text::ParaLay, clip: Rect, links: 
             let q = text::simple(fs, "?", text::plain_look(r * 1.6, style::WHITE));
             text::draw_block(s, fs, &q, cx - q.width() / 2.0, cy + r * 0.05 - q.height() / 2.0, clip, links);
         }
+        Tag::Critical => {
+            let r = side * 0.55;
+            draw::fill_disc(s, cx, cy, r, Color::rgb(0xD2, 0x3B, 0x2E));
+            draw::line(s, (cx, cy - r * 0.55), (cx, cy + r * 0.15), (r * 0.22).max(1.0), style::WHITE);
+            draw::fill_disc(s, cx, cy + r * 0.5, (r * 0.13).max(0.6), style::WHITE);
+        }
+        Tag::Idea => {
+            let r = side * 0.36;
+            let gold = Color::rgb(0xF6, 0xC3, 0x2C);
+            draw::fill_disc(s, cx, cy - r * 0.35, r, mix(gold, style::WHITE, 0.55));
+            draw::stroke_disc(s, cx, cy - r * 0.35, r, 1.0, ink_line());
+            draw::stroke_rect(s, cx - r * 0.42, cy + r * 0.62, r * 0.84, r * 0.55, 1.0, ink_line());
+        }
+        Tag::Contact => {
+            let (w, h) = (side * 0.95, side * 0.7);
+            draw::stroke_rect(s, cx - w / 2.0, cy - h / 2.0, w, h, 1.0, ink_line());
+            draw::fill_disc(s, cx - w * 0.22, cy - h * 0.12, h * 0.17, BLUE);
+            draw::fill_rect(s, cx - w * 0.38, cy + h * 0.1, w * 0.32, h * 0.22, BLUE);
+            draw::line(s, (cx + w * 0.05, cy - h * 0.12), (cx + w * 0.38, cy - h * 0.12), 1.0, ink_line());
+            draw::line(s, (cx + w * 0.05, cy + h * 0.15), (cx + w * 0.3, cy + h * 0.15), 1.0, ink_line());
+        }
+        Tag::Address => {
+            let w = side * 0.8;
+            draw::fill_rect(s, cx - w * 0.36, cy - w * 0.05, w * 0.72, w * 0.5, mix(BLUE, style::WHITE, 0.75));
+            draw::stroke_rect(s, cx - w * 0.36, cy - w * 0.05, w * 0.72, w * 0.5, 1.0, ink_line());
+            draw::polyline(s, &[(cx - w * 0.5, cy + w * 0.02), (cx, cy - w * 0.42), (cx + w * 0.5, cy + w * 0.02)], 1.0, ink_line());
+            draw::fill_rect(s, cx - w * 0.08, cy + w * 0.17, w * 0.16, w * 0.28, BLUE);
+        }
+        Tag::Phone => {
+            let (w, h) = (side * 0.45, side * 0.85);
+            draw::stroke_rect(s, cx - w / 2.0, cy - h / 2.0, w, h, 1.0, ink_line());
+            draw::fill_rect(s, cx - w * 0.32, cy - h * 0.36, w * 0.64, h * 0.6, mix(BLUE, style::WHITE, 0.75));
+            draw::fill_disc(s, cx, cy + h * 0.38, (w * 0.08).max(0.6), ink_line());
+        }
+        Tag::RememberForLater | Tag::Definition | Tag::Highlight => {}
     }
 }
+
+/// The tag icons' line colour (the canvas's light-theme icon ink).
+fn ink_line() -> Color {
+    Color::rgb(0x44, 0x44, 0x4A)
+}
+
+/// The tag icons' blue accent.
+const BLUE: Color = Color::rgb(0x2F, 0x7B, 0xE0);
 
 fn ink_layer(s: &mut Surface, page: &Page, ink: &Ink, clip: Rect, highlighter: bool) {
     for st in &page.ink {

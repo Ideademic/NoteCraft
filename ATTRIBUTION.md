@@ -13,7 +13,9 @@ MIT OR Apache-2.0) into `crates/ui-egui/src/icons/deck/`; NoteCraft's additions 
 images, templates, fonts, sounds or other assets**, and no ArtCraft or Storyteller logos. Every
 asset is original work by NoteCraft contributors or third-party material under a licence in the
 allowlist in [`AGENTS.md`](AGENTS.md). Screenshots of other vendors' software are never committed.
-Font files belong in [storytold/craft-fonts](https://github.com/storytold/craft-fonts), not here.
+Font files belong in [storytold/craft-fonts](https://github.com/storytold/craft-fonts), not here:
+builds made with `CRAFT_FONTS_DIR` embed Carlito, Caladea and Liberation Sans/Serif/Mono (OFL-1.1)
+from its `fonts/latin-manifest.txt` at build time (`crates/fonts/build.rs`, see `NOTICE`).
 
 | File | Author | Source | Licence | Notes |
 |---|---|---|---|---|

@@ -2,10 +2,14 @@
 //!
 //! A run asks for a family (its font name, else [`DEFAULT_FONT`]; the Code style asks for
 //! [`DEFAULT_MONO`]) in bold and/or italic. [`resolve`] finds a face for that through a
-//! [`FontSource`]: the family itself, then metric-compatible alternatives (Calibri → Carlito,
-//! Arial → Liberation Sans…), and finally the face egui bundles (Ubuntu Light, or Hack for
-//! monospace names), so text always draws. When the face found isn't bold or italic and the run
-//! is, the PDF fakes it (an outline stroke, a slant), as the canvas does without a real face.
+//! [`FontSource`]: the family itself, then the chain the canvas uses too
+//! ([`notecraft_fonts::fallback_chain`]: metric-compatible alternatives such as Calibri →
+//! Carlito, then faces of the same kind), and finally the face egui bundles (Ubuntu Light, or
+//! Hack for monospace names), so text always draws. Families come from
+//! [`notecraft_fonts::FontLibrary`] — the installed fonts, fonts added this session and the
+//! craft-fonts faces bundled at build time — so the screen and the PDF draw with the same faces.
+//! When the face found isn't bold or italic and the run is, the PDF fakes it (an outline stroke,
+//! a slant), as the canvas does without a real face.
 //!
 //! Each requested style becomes one epaint font family, named like the canvas's
 //! (`nc:{family}:{b|n}{i|n}`), whose faces are the resolved face, then the bundled faces, then
@@ -13,8 +17,8 @@
 //! the family that has it; [`FontSet::glyph`] makes the same choice, so the PDF draws every glyph
 //! from the face the layout measured. Faces are embedded as subsets by Krilla.
 //!
-//! The source is swappable: [`SystemFonts`] reads the installed fonts (craft-font-catalog, which
-//! the canvas uses too); [`BundledFonts`] only the bundled faces (tests, reproducible output).
+//! The source is swappable: [`SystemFonts`] reads the installed, added and bundled fonts (the
+//! canvas's library); [`BundledFonts`] only the bundled faces (tests, reproducible output).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -26,31 +30,15 @@ use skrifa::MetadataProvider as _;
 /// Font file bytes, shared without copying (the same type epaint's `FontData` holds).
 pub type FontBytes = Arc<dyn AsRef<[u8]> + Send + Sync>;
 
-/// The family text uses when a run names none (OneNote's default).
-pub const DEFAULT_FONT: &str = "Calibri";
-/// The family of the Code paragraph style.
-pub const DEFAULT_MONO: &str = "Consolas";
+/// The family text uses when a run names none (OneNote's default), as on the canvas.
+pub use notecraft_fonts::DEFAULT_FONT;
+/// The family of the Code paragraph style, as on the canvas.
+pub use notecraft_fonts::DEFAULT_MONO_FONT as DEFAULT_MONO;
 /// Most distinct styles one export lays out (hostile files can name thousands of fonts):
 /// further ones draw with the default font's.
 pub const MAX_STYLES: usize = 64;
 /// Most fallback faces added for characters the fonts asked for don't have.
 const MAX_SCRIPT_FALLBACKS: usize = 4;
-
-/// Names of monospace families: these fall back to the bundled monospace face.
-const MONO: [&str; 12] = [
-    "consolas",
-    "courier new",
-    "courier",
-    "lucida console",
-    "menlo",
-    "monaco",
-    "cascadia code",
-    "cascadia mono",
-    "monospace",
-    "sf mono",
-    "dejavu sans mono",
-    "liberation mono",
-];
 
 /// Installed families tried for characters the requested fonts lack (other scripts, symbols).
 const SCRIPT_FALLBACKS: [&str; 14] = [
@@ -103,65 +91,47 @@ pub trait FontSource: Send + Sync {
     fn face(&self, family: &str, bold: bool, italic: bool) -> Option<FaceData>;
 }
 
-/// The installed fonts and fonts added this session, from craft-font-catalog's process catalog.
+/// A face the font library resolved, as the PDF embeds it.
+fn face_data(r: notecraft_fonts::Resolved) -> Option<FaceData> {
+    // OS/2 fsType: "restricted licence embedding" (bit 1 alone in the low nibble) forbids
+    // putting the font in a document; such text falls back to a face that may be embedded.
+    if !r.embeddable {
+        log::info!("pdf: {} may not be embedded; using another font", r.family);
+        return None;
+    }
+    Some(FaceData { key: r.face.key, bytes: r.face.bytes, index: r.face.index, variations: r.face.coords, bold: r.face_bold, italic: r.face_italic })
+}
+
+/// The installed fonts, fonts added this session and the bundled craft-fonts faces: the font
+/// library the canvas draws with ([`notecraft_fonts::FontLibrary::global`]).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SystemFonts;
 
 impl FontSource for SystemFonts {
     fn face(&self, family: &str, bold: bool, italic: bool) -> Option<FaceData> {
-        let catalog = craft_font_catalog::Catalog::global();
-        let style = match (bold, italic) {
-            (false, false) => "Regular",
-            (true, false) => "Bold",
-            (false, true) => "Italic",
-            (true, true) => "Bold Italic",
-        };
-        let (info, _) = catalog.resolve(family, style)?;
-        // OS/2 fsType: "restricted licence embedding" (bit 1 alone in the low nibble) forbids
-        // putting the font in a document; such text falls back to a face that may be embedded.
-        if info.fs_type & 0x000F == 0x0002 {
-            log::info!("pdf: {} may not be embedded; using another font", info.family);
-            return None;
-        }
-        let data = catalog.load(&info).ok()?;
-        let key =
-            format!("{}#{}#{:?}", info.path.as_ref().map_or_else(|| info.family.clone(), |p| p.display().to_string()), info.index, info.variations);
-        let bytes: FontBytes = Arc::new(data.bytes);
-        Some(FaceData { key, bytes, index: data.index, variations: info.variations.clone(), bold: info.weight >= 600.0, italic: info.italic })
+        let lib = notecraft_fonts::FontLibrary::global();
+        lib.wait_until_ready();
+        face_data(lib.own(family, bold, italic)?)
     }
 }
 
-/// No installed fonts: everything draws with the bundled faces. Reproducible output.
+/// No installed fonts: the bundled craft-fonts faces (when the build has them), else egui's.
+/// Reproducible output.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BundledFonts;
 
 impl FontSource for BundledFonts {
-    fn face(&self, _: &str, _: bool, _: bool) -> Option<FaceData> {
-        None
+    fn face(&self, family: &str, bold: bool, italic: bool) -> Option<FaceData> {
+        face_data(notecraft_fonts::FontLibrary::global().bundled_face(family, bold, italic)?)
     }
 }
 
 /// Whether `family` names a monospace font.
 pub fn is_mono(family: &str) -> bool {
-    MONO.contains(&family.trim().to_ascii_lowercase().as_str())
+    notecraft_fonts::Class::of(family) == notecraft_fonts::Class::Mono
 }
 
-/// Families that set text in the same widths (or close), tried when `family` isn't installed.
-pub fn alternatives(family: &str) -> &'static [&'static str] {
-    match family.trim().to_ascii_lowercase().as_str() {
-        "calibri" | "calibri light" => &["Carlito"],
-        "cambria" => &["Caladea"],
-        "arial" | "helvetica" | "helvetica neue" | "arimo" => &["Liberation Sans", "Arimo", "Helvetica", "Arial"],
-        "times new roman" | "times" | "tinos" => &["Liberation Serif", "Tinos", "Times New Roman", "Times"],
-        "courier new" | "courier" | "cousine" => &["Liberation Mono", "Cousine", "Courier New", "Courier"],
-        "consolas" | "menlo" | "monaco" | "cascadia mono" | "cascadia code" => {
-            &["Consolas", "Menlo", "Cascadia Mono", "DejaVu Sans Mono", "Liberation Mono", "Courier New"]
-        }
-        "segoe ui" => &["Selawik", "Helvetica Neue", "Liberation Sans"],
-        "georgia" => &["Gelasio"],
-        _ => &[],
-    }
-}
+pub use notecraft_fonts::alternatives;
 
 /// The bundled faces: (proportional, monospace).
 fn bundled() -> (FaceData, FaceData) {
@@ -173,10 +143,12 @@ fn bundled() -> (FaceData, FaceData) {
     (get("Ubuntu-Light", "bundled:Ubuntu-Light"), get("Hack", "bundled:Hack"))
 }
 
-/// The face for `family` in this style: the family, its alternatives, else `None` (the caller
-/// uses the bundled face). The source decides which face of a family is nearest.
+/// The face for `family` in this style: the family, then the canvas's fallback chain, else
+/// `None` (the caller uses egui's bundled face). The source decides which face of a family is
+/// nearest.
 pub fn resolve(source: &dyn FontSource, family: &str, bold: bool, italic: bool) -> Option<FaceData> {
-    std::iter::once(family).chain(alternatives(family).iter().copied()).find_map(|f| source.face(f, bold, italic))
+    let chain: Vec<&str> = std::iter::once(family).chain(notecraft_fonts::fallback_chain(family)).collect();
+    chain.into_iter().find_map(|f| source.face(f, bold, italic))
 }
 
 /// A style of text: a family name and bold/italic, as runs ask for it.
@@ -375,8 +347,9 @@ impl FontSet {
         for (i, f) in faces.iter().enumerate() {
             let mut data = FontData::from_blob(f.data.bytes.clone(), f.data.index);
             if !f.data.variations.is_empty() {
-                data =
-                    data.tweak(FontTweak { coords: VariationCoords::new(f.data.variations.iter().map(|(t, v)| (*t, *v))), ..FontTweak::default() });
+                // Tags as numbers: a hostile font's axis tag can't be a malformed tag here.
+                let coords = VariationCoords::new(f.data.variations.iter().map(|(t, v)| (u32::from_be_bytes(*t), *v)));
+                data = data.tweak(FontTweak { coords, ..FontTweak::default() });
             }
             defs.font_data.insert(face_name(i), Arc::new(data));
         }
@@ -468,7 +441,10 @@ mod tests {
         let text: HashSet<char> = "Hello".chars().collect();
         let mut set = FontSet::new(&BundledFonts, &[StyleKey::new("Calibri", true, false), StyleKey::new("Consolas", false, false)], &text);
         let bold = set.style(&StyleKey::new("Calibri", true, false));
-        assert!(set.style_info(bold).is_some_and(|s| s.fake_bold && !s.fake_italic));
+        // With the craft-fonts faces built in, Calibri's bold is Carlito Bold; else it's faked.
+        let faked = notecraft_fonts::CRAFT_FONTS.iter().all(|f| f.family != "Carlito");
+        assert!(set.style_info(bold).is_some_and(|s| s.fake_bold == faked && !s.fake_italic));
+
         let (face, gid) = set.glyph(bold, 'H').expect("a glyph");
         assert!(gid > 0);
         assert!(set.pdf_font(face).is_some());

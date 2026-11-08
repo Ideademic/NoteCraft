@@ -4,7 +4,7 @@
 //! with no note container being edited they say so in the status bar.
 
 use egui::{Align2, Color32, Rect, Sense, Stroke, Ui, pos2, vec2};
-use notecraft_doc::{ListKind, ParaStyle};
+use notecraft_doc::{ParaStyle, Tag};
 use notecraft_engine::ids;
 use serde_json::{Value, json};
 
@@ -14,10 +14,6 @@ use crate::theme::{RADIUS_SMALL, regular};
 use crate::widgets::{self, Btn, CONTENT_H, color};
 use crate::{NoteApp, tl};
 
-/// Fonts offered in the font box (names only: the text keeps the name, NoteCraft draws it with
-/// the closest face it has).
-pub const FONTS: [&str; 10] =
-    ["Calibri", "Arial", "Cambria", "Consolas", "Courier New", "Georgia", "Segoe UI", "Tahoma", "Times New Roman", "Verdana"];
 pub const SIZES: [f32; 16] = [8.0, 9.0, 10.0, 10.5, 11.0, 12.0, 14.0, 16.0, 18.0, 20.0, 24.0, 28.0, 32.0, 36.0, 48.0, 72.0];
 
 pub fn show(ui: &mut Ui, app: &mut NoteApp) {
@@ -120,53 +116,42 @@ fn paste_now(ui: &Ui, app: &mut NoteApp, with_pictures: bool) {
     app.set_status(crate::i18n::fmt_plain(tl!("Nothing to paste here. Press {key} to paste into a note."), &[("key", &key)]), false);
 }
 
-fn current_font(ui: &Ui) -> String {
-    ui.data(|d| d.get_temp::<String>(egui::Id::unique("nc_font"))).unwrap_or_else(|| "Calibri".to_owned())
-}
-
-fn current_size(ui: &Ui) -> f32 {
-    ui.data(|d| d.get_temp::<f32>(egui::Id::unique("nc_size"))).unwrap_or(11.0)
+/// The size the size box shows: the caret's (the paragraph style's for text without one), else
+/// the size last shown or picked; `None` for a selection in several sizes.
+pub fn shown_size(app: &NoteApp, ui: &Ui) -> Option<f32> {
+    match format_state(app) {
+        Some(st) => match st.size {
+            Some(Some(s)) => Some(s),
+            Some(None) => Some(st.style.unwrap_or(ParaStyle::Normal).font_size()),
+            None => None,
+        },
+        None => Some(ui.data(|d| d.get_temp::<f32>(egui::Id::unique("nc_size"))).unwrap_or(11.0)),
+    }
 }
 
 fn basic_text(ui: &mut Ui, app: &mut NoteApp) {
     let state = format_state(app);
-    if let Some(st) = &state {
-        if let Some(Some(f)) = &st.font {
-            ui.data_mut(|d| d.insert_temp(egui::Id::unique("nc_font"), f.clone()));
-        }
-        if let Some(Some(sz)) = st.size {
-            ui.data_mut(|d| d.insert_temp(egui::Id::unique("nc_size"), sz));
-        }
+    if let Some(sz) = shown_size(app, ui)
+        && state.is_some()
+    {
+        ui.data_mut(|d| d.insert_temp(egui::Id::unique("nc_size"), sz));
     }
     widgets::rows(ui, app, |ui, app| {
         widgets::row(ui, app, |ui, app| {
-            ui.add_enabled_ui(app.can(ids::FORMAT_FONT), |ui| {
-                let font = current_font(ui);
-                let mut pick = None;
-                let r = craft_ui::ComboBox::from_id_salt("nc_font_box").width(118.0).selected_text(font.clone()).show_ui(ui, |ui| {
-                    for f in FONTS {
-                        if ui.selectable_label(f == font, f).clicked() {
-                            pick = Some(f);
-                        }
-                    }
-                });
-                r.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tl!("Font")));
-                r.response.on_hover_text(tl!("Font"));
-                if let Some(f) = pick {
-                    ui.data_mut(|d| d.insert_temp(egui::Id::unique("nc_font"), f.to_owned()));
-                    format(app, ids::FORMAT_FONT, json!({ "font": f }));
-                }
-            });
+            crate::ribbon::font_box::show(ui, app, "classic", 118.0);
             ui.add_enabled_ui(app.can(ids::FORMAT_SIZE), |ui| {
-                let size = current_size(ui);
+                let size = shown_size(app, ui);
                 let mut pick = None;
-                let r = craft_ui::ComboBox::from_id_salt("nc_size_box").width(48.0).selected_text(size_text(size)).show_ui(ui, |ui| {
-                    for s in SIZES {
-                        if ui.selectable_label(s == size, size_text(s)).clicked() {
-                            pick = Some(s);
+                let r = craft_ui::ComboBox::from_id_salt("nc_size_box").width(48.0).selected_text(size.map(size_text).unwrap_or_default()).show_ui(
+                    ui,
+                    |ui| {
+                        for s in SIZES {
+                            if ui.selectable_label(Some(s) == size, size_text(s)).clicked() {
+                                pick = Some(s);
+                            }
                         }
-                    }
-                });
+                    },
+                );
                 r.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tl!("Font Size")));
                 r.response.on_hover_text(tl!("Font Size"));
                 if let Some(s) = pick {
@@ -175,34 +160,8 @@ fn basic_text(ui: &mut Ui, app: &mut NoteApp) {
                 }
             });
             ui.add_space(4.0);
-            let list = state.as_ref().and_then(|f| f.list).flatten();
-            let b = Btn::new(Icon::Bullets, tl!("Bullets")).checked(list == Some(ListKind::Bullet)).for_command(app, ids::FORMAT_BULLETS);
-            if widgets::small_split(ui, app, b, |ui, app| {
-                for (glyph, name) in [("•", "disc"), ("o", "circle"), ("·", "square"), ("–", "dash")] {
-                    if widgets::menu_item(ui, None, &format!("{glyph}   {}", bullet_name(name)), true) {
-                        format(app, ids::FORMAT_BULLETS, json!({ "bullet": name }));
-                    }
-                }
-                if widgets::menu_item(ui, None, tl!("None"), true) {
-                    format(app, ids::FORMAT_BULLETS, json!({ "value": false }));
-                }
-            }) {
-                format(app, ids::FORMAT_BULLETS, Value::Null);
-            }
-            let b = Btn::new(Icon::Numbering, tl!("Numbering")).checked(list == Some(ListKind::Numbered)).for_command(app, ids::FORMAT_NUMBERING);
-            if widgets::small_split(ui, app, b, |ui, app| {
-                for (sample, name) in [("1. 2. 3.", "decimal"), ("a. b. c.", "lowerAlpha"), ("A. B. C.", "upperAlpha"), ("i. ii. iii.", "lowerRoman")]
-                {
-                    if widgets::menu_item(ui, None, sample, true) {
-                        format(app, ids::FORMAT_NUMBERING, json!({ "format": name }));
-                    }
-                }
-                if widgets::menu_item(ui, None, tl!("None"), true) {
-                    format(app, ids::FORMAT_NUMBERING, json!({ "value": false }));
-                }
-            }) {
-                format(app, ids::FORMAT_NUMBERING, Value::Null);
-            }
+            crate::ribbon::paragraph::bullets(ui, app);
+            crate::ribbon::paragraph::numbering(ui, app);
             for (icon, label, id) in
                 [(Icon::Outdent, tl!("Decrease Indent"), ids::FORMAT_OUTDENT), (Icon::Indent, tl!("Increase Indent"), ids::FORMAT_INDENT)]
             {
@@ -257,29 +216,9 @@ fn basic_text(ui: &mut Ui, app: &mut NoteApp) {
                 format(app, ids::FORMAT_COLOR, json!({ "color": color::hex(fc) }));
             }
             ui.add_space(4.0);
-            let align = Btn::new(Icon::AlignLeft, tl!("Paragraph Alignment")).icon_only().for_command(app, "format.align");
-            widgets::small_menu(ui, app, align, |ui, app| {
-                for (icon, label, value) in [
-                    (Icon::AlignLeft, tl!("Align Left"), "left"),
-                    (Icon::AlignCenter, tl!("Center"), "center"),
-                    (Icon::AlignRight, tl!("Align Right"), "right"),
-                ] {
-                    if widgets::menu_item(ui, Some(icon), label, true) {
-                        format(app, "format.align", json!({ "align": value }));
-                    }
-                }
-            });
+            crate::ribbon::paragraph::alignment(ui, app);
         });
     });
-}
-
-fn bullet_name(name: &str) -> &'static str {
-    match name {
-        "disc" => tl!("Filled round bullet"),
-        "circle" => tl!("Hollow round bullet"),
-        "square" => tl!("Square bullet"),
-        _ => tl!("Dash bullet"),
-    }
 }
 
 fn size_text(s: f32) -> String {
@@ -411,35 +350,13 @@ fn styles(ui: &mut Ui, app: &mut NoteApp) {
     });
 }
 
-/// Tags in gallery order: (icon, label, shortcut, command, params).
-fn tag_rows() -> [(Icon, &'static str, &'static str, &'static str, Value); 3] {
-    [
-        (Icon::ToDo, tl!("To Do"), "Mod+1", ids::FORMAT_TAG_TODO, Value::Null),
-        (Icon::Important, tl!("Important"), "Mod+2", "format.tag", json!({"tag": "important"})),
-        (Icon::Question, tl!("Question"), "Mod+3", "format.tag", json!({"tag": "question"})),
-    ]
-}
-
+/// The Tags gallery: every tag with its shortcut, three at a time, all in its drop-down.
 fn tags(ui: &mut Ui, app: &mut NoteApp) {
-    let rows = tag_rows();
-    gallery_frame(ui, app, "tags", 150.0, rows.len(), |ui, app, i, w| {
-        let Some((icon, label, key, id, params)) = rows.get(i).cloned() else { return };
-        let t = app.tokens.clone();
-        let enabled = app.can(id);
-        let (r, resp) = ui.allocate_exact_size(vec2(w, 20.0), if enabled { Sense::click() } else { Sense::hover() });
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
-        if enabled && resp.hovered() {
-            ui.painter().rect_filled(r, RADIUS_SMALL, t.hover);
-        }
-        let style = if enabled { icons::Style::new(t.icon, t.accent) } else { icons::Style::disabled(t.icon) };
-        icons::paint_styled(ui.painter(), Rect::from_center_size(pos2(r.min.x + 12.0, r.center().y), vec2(15.0, 15.0)), icon, style);
-        let color = if enabled { t.text } else { t.text_disabled };
-        ui.painter().text(pos2(r.min.x + 24.0, r.center().y), Align2::LEFT_CENTER, label, regular(11.5), color);
-        ui.painter().text(pos2(r.max.x - 4.0, r.center().y), Align2::RIGHT_CENTER, widgets::shortcut_text(key), regular(10.5), t.text_dim);
-        let keyed = app.ui.keytips.control(r);
-        let resp = if enabled { resp } else { resp.on_hover_text(tl!("Coming in a later version of NoteCraft.")) };
-        if enabled && (resp.clicked() || keyed) {
-            format(app, id, params);
+    let current = crate::ribbon::paragraph::current_tag(app);
+    gallery_frame(ui, app, "tags", 170.0, Tag::ALL.len(), |ui, app, i, w| {
+        let Some(t) = Tag::ALL.get(i).copied() else { return };
+        if crate::ribbon::paragraph::tag_row(ui, app, t, w, current.is_some_and(|c| c.name() == t.name())) {
+            crate::ribbon::paragraph::apply_tag(app, t);
             ui.close();
         }
     });

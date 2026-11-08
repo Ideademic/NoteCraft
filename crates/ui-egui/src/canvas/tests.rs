@@ -177,6 +177,45 @@ fn ctrl_b_bolds_the_selection_and_sets_pending_style() {
     assert_eq!(sel["start"], json!({"para": 0, "char": 12}));
 }
 
+#[test]
+fn tag_shortcuts_and_centred_text() {
+    let mut h = harness(blank());
+    h.run_steps(2);
+    let p = at(&h, 100.0, 200.0);
+    click(&mut h, p);
+    type_text(&mut h, "remember this");
+    // Mod+4: Remember for later; Mod+4 again takes it off; Mod+9 Phone; Mod+0 removes it.
+    for (key, want) in [
+        (Key::Num4, Some(notecraft_doc::Tag::RememberForLater)),
+        (Key::Num4, None),
+        (Key::Num9, Some(notecraft_doc::Tag::Phone)),
+        (Key::Num0, None),
+        (Key::Num2, Some(notecraft_doc::Tag::Important)),
+    ] {
+        h.key_press_modifiers(Modifiers::COMMAND, key);
+        h.run_steps(2);
+        assert_eq!(outlines(&h)[0].paragraphs[0].tag, want, "{key:?}");
+    }
+    // Centred text: the caret at the end sits right of the container's middle, the start left of it.
+    let id = h.state().canvas.caret.as_ref().map(|c| c.outline).unwrap();
+    let page = h.state().session.current.page;
+    h.state_mut().session.run(ids::FORMAT_ALIGN, &json!({"outline": id, "page": page, "align": "center"})).unwrap();
+    h.run_steps(3);
+    assert_eq!(outlines(&h)[0].paragraphs[0].align, notecraft_doc::Align::Center);
+    let t = h.state();
+    let tokens = crate::theme::Tokens::light();
+    let rect = t.canvas.last_rect.unwrap();
+    let v = super::view::View::new(&t.canvas, super::page::sheet_rect(rect));
+    let lay = super::layout::page_layout(&h.ctx, &t.canvas, &t.session, &tokens, &v);
+    let o = lay.outline(id).unwrap();
+    // The middle of the text area (after the tag's room).
+    let r = o.rect(&v);
+    let mid = (r.left() + o.paras[0].text_x + r.right()) / 2.0;
+    let start = o.caret_rect(&v, notecraft_engine::TextPos::new(0, 0)).unwrap().left();
+    let end = o.caret_rect(&v, notecraft_engine::TextPos::new(0, 13)).unwrap().left();
+    assert!(start < mid && end > mid && ((start + end) / 2.0 - mid).abs() < 6.0, "{start} {mid} {end}");
+}
+
 fn add_outline(t: &mut T, x: f32, y: f32, paragraphs: Value) -> notecraft_doc::Guid {
     let out = t.session.run(ids::OUTLINE_NEW, &json!({"x": x, "y": y})).unwrap();
     let id = out.value["id"].as_str().and_then(notecraft_doc::Guid::parse).unwrap();

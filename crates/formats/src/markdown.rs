@@ -8,7 +8,7 @@ use std::fmt::Write as _;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use notecraft_doc::{ElementKind, ImageElement, ImageFormat, ListKind, Outline, Page, PageElement, ParaStyle, Paragraph, Run, Tag};
+use notecraft_doc::{Align, ElementKind, ImageElement, ImageFormat, ListKind, Outline, Page, PageElement, ParaStyle, Paragraph, Run, Tag};
 
 use crate::html::{reading_key, safe_href};
 use crate::svg::{ink_bounds, ink_svg};
@@ -102,13 +102,24 @@ fn outline_md(o: &Outline) -> String {
     out
 }
 
+/// One paragraph. Markdown has no alignment, marker styles or tags: a centred or right-aligned
+/// paragraph outside a list is wrapped in `<div align>` (GitHub and most renderers honour it),
+/// numbered items are `1.`-style whatever their format, tags with an icon get its symbol, and the
+/// highlight tags wrap the text in `<mark>`.
 fn para_md(p: &Paragraph, number: u32, out: &mut String) {
     let indent = "  ".repeat(usize::from(p.indent));
-    let text: String = p.runs.iter().map(run_md).collect();
+    let mut text: String = p.runs.iter().map(run_md).collect();
     let checkbox = match p.tag {
         Some(Tag::ToDo { checked }) => Some(if checked { "[x] " } else { "[ ] " }),
         _ => None,
     };
+    if let Some(t) = p.tag {
+        if let Some(sym) = crate::tag_symbol(t) {
+            text = format!("{sym} {text}");
+        } else if t.highlight().is_some() && !text.is_empty() {
+            text = format!("<mark>{text}</mark>");
+        }
+    }
     match (p.list, checkbox) {
         (Some(ListKind::Numbered), c) => {
             let _ = write!(out, "{indent}{number}. {}{text}", c.unwrap_or(""));
@@ -124,8 +135,14 @@ fn para_md(p: &Paragraph, number: u32, out: &mut String) {
                 ParaStyle::Quote => "> ".to_owned(),
                 s => s.heading_level().map(|l| format!("{} ", "#".repeat(usize::from(l + 1).min(6)))).unwrap_or_default(),
             };
-            let important = if p.tag == Some(Tag::Important) { "\u{2605} " } else { "" };
-            let _ = write!(out, "{indent}{prefix}{important}{text}");
+            match p.align {
+                Align::Center | Align::Right => {
+                    let _ = write!(out, "<div align=\"{}\">\n\n{indent}{prefix}{text}\n\n</div>", p.align.name());
+                }
+                Align::Left | Align::Justify => {
+                    let _ = write!(out, "{indent}{prefix}{text}");
+                }
+            }
         }
     }
 }
@@ -207,6 +224,22 @@ mod tests {
         assert!(md.contains("```\nx = 1\n```"), "{md}");
         assert!(md.contains("\\*literal\\*"), "{md}");
         assert!(md.ends_with("\\*\n") && !md.ends_with("\n\n"), "{md:?}");
+    }
+
+    #[test]
+    fn alignment_and_tags() {
+        let mut page = Page::new("T");
+        let mut o = Outline::with_text(Point::new(0.0, 0.0), "mid\nright\nidea\nhl");
+        o.paragraphs[0].align = Align::Center;
+        o.paragraphs[1].align = Align::Right;
+        o.paragraphs[2].tag = Some(Tag::Idea);
+        o.paragraphs[3].tag = Some(Tag::Highlight);
+        page.elements.push(PageElement::new(ElementKind::Outline(o)));
+        let md = page_to_markdown(&page).unwrap();
+        assert!(md.contains("<div align=\"center\">\n\nmid\n\n</div>"), "{md}");
+        assert!(md.contains("<div align=\"right\">\n\nright\n\n</div>"), "{md}");
+        assert!(md.contains("\u{1F4A1} idea"), "{md}");
+        assert!(md.contains("<mark>hl</mark>"), "{md}");
     }
 
     #[test]

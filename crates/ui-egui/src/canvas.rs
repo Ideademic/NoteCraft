@@ -363,6 +363,9 @@ pub struct CurrentFormat {
     pub size: Option<Option<f32>>,
     pub style: Option<notecraft_doc::ParaStyle>,
     pub list: Option<Option<notecraft_doc::ListKind>>,
+    /// The list marker style in effect (the level's default included).
+    pub list_style: Option<Option<notecraft_doc::ListStyle>>,
+    pub align: Option<notecraft_doc::Align>,
     pub tag: Option<Option<notecraft_doc::Tag>>,
 }
 
@@ -376,6 +379,7 @@ pub fn current_format(state: &CanvasState, session: &Session) -> Option<CurrentF
 pub fn show(ui: &mut egui::Ui, state: &mut CanvasState, session: &mut Session, tokens: &Tokens, services: &Services) {
     let rect = ui.available_rect_before_wrap();
     let id = ui.scope_id().with("nc_canvas");
+    crate::fonts::sync(ui.ctx());
     sync(state, session);
     let resp = ui.interact(rect, id, Sense::click_and_drag());
     state.last_rect = Some(rect);

@@ -32,6 +32,8 @@ mod prefs;
 #[cfg(target_arch = "wasm32")]
 mod browser;
 #[cfg(target_arch = "wasm32")]
+mod font_store;
+#[cfg(target_arch = "wasm32")]
 mod print;
 #[cfg(target_arch = "wasm32")]
 mod web;

@@ -26,10 +26,12 @@ use crate::theme::Tokens;
 pub struct ParaLayout {
     pub top: f32,
     pub height: f32,
-    /// Where the text starts.
+    /// Where the text area starts (after the indent, tag and marker).
     pub text_x: f32,
+    /// Where the galley's origin is from `text_x`: centred and right-aligned rows sit around it.
+    pub align_dx: f32,
     pub galley: Arc<Galley>,
-    /// Only the bold runs, painted again `bold_dx` to the right.
+    /// Only the bold runs whose face has no bold, painted again `bold_dx` to the right.
     pub bold: Option<Arc<Galley>>,
     pub bold_dx: f32,
     pub marker: Option<Marker>,
@@ -42,6 +44,11 @@ pub struct ParaLayout {
 }
 
 impl ParaLayout {
+    /// The galley's origin, pixels from the container's left.
+    pub fn galley_x(&self) -> f32 {
+        self.text_x + self.align_dx
+    }
+
     /// The first line's vertical span, pixels from the container's top.
     pub fn first_row(&self) -> (f32, f32) {
         let r = self.galley.rows.first().map_or(Rect::from_min_size(Pos2::ZERO, vec2(0.0, self.height)), |r| r.rect());
@@ -75,7 +82,7 @@ impl OutlineLayout {
     /// Screen position of paragraph `i`'s galley origin.
     pub fn galley_origin(&self, v: &View, i: usize) -> Option<Pos2> {
         let p = self.paras.get(i)?;
-        Some(v.to_screen(self.pos) + vec2(p.text_x, p.top))
+        Some(v.to_screen(self.pos) + vec2(p.galley_x(), p.top))
     }
 
     /// The text position nearest to screen point `at`.
@@ -90,7 +97,7 @@ impl OutlineLayout {
             }
         }
         let Some(p) = self.paras.get(best) else { return TextPos::default() };
-        let local = vec2(at.x - top.x - p.text_x, (y - p.top).clamp(0.0, p.height.max(0.0)));
+        let local = vec2(at.x - top.x - p.galley_x(), (y - p.top).clamp(0.0, p.height.max(0.0)));
         let c = p.galley.cursor_from_pos(local);
         TextPos::new(best, c.index.0.min(p.chars))
     }
@@ -122,6 +129,7 @@ struct ParaSpec {
     job: Arc<LayoutJob>,
     bold: Option<Arc<LayoutJob>>,
     text_x: f32,
+    align_dx: f32,
     marker_x: f32,
     tag_x: f32,
     marker: Option<Marker>,
@@ -144,8 +152,11 @@ fn cache(ctx: &egui::Context) -> Arc<Mutex<Cache>> {
     ctx.data_mut(|d| d.get_temp_mut_or_default::<Arc<Mutex<Cache>>>(egui::Id::unique("nc_canvas_layout_cache")).clone())
 }
 
-fn ink_hash(ink: &Ink) -> u64 {
+/// What the jobs depend on besides the text: the colours, and the fonts (which faces resolve, or
+/// egui's own while the provider isn't active).
+fn ink_hash(ink: &Ink, fonts: Option<u64>) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
+    fonts.hash(&mut h);
     ink.text.hash(&mut h);
     ink.paper.hash(&mut h);
     ink.link.hash(&mut h);
@@ -163,7 +174,7 @@ fn para_hash(p: &Paragraph, marker: &Option<Marker>, wrap_bits: u32, scale_bits:
         r.size.map(f32::to_bits).hash(&mut h);
         r.link.is_some().hash(&mut h);
     }
-    (p.indent, p.list, p.tag, p.style).hash(&mut h);
+    (p.indent, p.list, p.list_style, p.tag, p.style, p.align).hash(&mut h);
     match marker {
         Some(Marker::Bullet(l)) => (1u8, *l).hash(&mut h),
         Some(Marker::Number(s)) => (2u8, s).hash(&mut h),
@@ -173,9 +184,9 @@ fn para_hash(p: &Paragraph, marker: &Option<Marker>, wrap_bits: u32, scale_bits:
     h.finish()
 }
 
-fn specs_for(c: &mut Cache, o: &Outline, width: f32, scale: f32, ink: &Ink) -> Vec<ParaSpec> {
+fn specs_for(c: &mut Cache, o: &Outline, width: f32, scale: f32, ink: &Ink, fonts: Option<u64>) -> Vec<ParaSpec> {
     let markers = style::markers(&o.paragraphs);
-    let ink_h = ink_hash(ink);
+    let ink_h = ink_hash(ink, fonts);
     let mut out = Vec::with_capacity(o.paragraphs.len());
     for (i, p) in o.paragraphs.iter().enumerate() {
         let marker = markers.get(i).cloned().flatten();
@@ -192,13 +203,14 @@ fn specs_for(c: &mut Cache, o: &Outline, width: f32, scale: f32, ink: &Ink) -> V
             out.push(s);
             continue;
         }
-        let (job, bold) = style::jobs(p, scale, wrap_px, ink);
+        let (job, bold) = style::jobs(p, scale, wrap_px, ink, fonts.is_some());
         let first_size = p.runs.iter().find(|r| !r.text.is_empty()).or(p.runs.first()).map_or(p.style.font_size(), |r| style::size_pt(r, p.style));
         let size_px = style::px(first_size, scale);
         let spec = ParaSpec {
             job: Arc::new(job),
             bold: bold.map(Arc::new),
             text_x: text_x_pt * scale,
+            align_dx: style::align_dx(p.align, wrap_px),
             marker_x: (indent + tag_w) * scale,
             tag_x: indent * scale,
             marker,
@@ -225,7 +237,8 @@ pub fn page_layout(ctx: &egui::Context, state: &CanvasState, session: &Session, 
         Err(p) => p.into_inner(),
     };
     c.used.clear();
-    let ink_h = ink_hash(&ink);
+    let fonts = crate::fonts::state(ctx);
+    let ink_h = ink_hash(&ink, fonts);
     let mut outlines = Vec::new();
     for el in &page.elements {
         let ElementKind::Outline(o) = &el.kind else { continue };
@@ -235,7 +248,7 @@ pub fn page_layout(ctx: &egui::Context, state: &CanvasState, session: &Session, 
         let specs = match c.outlines.get(&el.id) {
             Some((r, w, s, i, specs)) if (*r, *w, *s, *i) == key => specs.clone(),
             _ => {
-                let specs = Arc::new(specs_for(&mut c, o, width, scale, &ink));
+                let specs = Arc::new(specs_for(&mut c, o, width, scale, &ink, fonts));
                 c.outlines.insert(el.id, (key.0, key.1, key.2, key.3, specs.clone()));
                 specs
             }
@@ -251,7 +264,9 @@ pub fn page_layout(ctx: &egui::Context, state: &CanvasState, session: &Session, 
                 top: y,
                 height: h,
                 text_x: s.text_x,
+                align_dx: s.align_dx,
                 galley,
+
                 bold,
                 bold_dx: style::bold_offset(s.size_px),
                 marker: s.marker.clone(),

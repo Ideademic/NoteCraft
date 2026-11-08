@@ -97,6 +97,7 @@ pub fn file_dialog(request: &PathRequest) -> FileDialog {
             OpenPurpose::Picture => "Insert Pictures",
             OpenPurpose::Printout => "Insert File Printout",
             OpenPurpose::Attachment => "Insert File Attachment",
+            OpenPurpose::Font => "Add Fonts",
         })),
         PathRequest::Folder(purpose) => FileDialog::folder().title(t(match purpose {
             FolderFor::OpenNotebook => "Open Notebook Folder",

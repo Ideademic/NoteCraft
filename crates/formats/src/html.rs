@@ -10,7 +10,8 @@ use std::fmt::Write as _;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use notecraft_doc::{
-    ElementKind, ImageElement, ImageFormat, ListKind, Outline, Page, PageElement, ParaStyle, Paragraph, Printout, Rect, Run, Section, Tag,
+    Align, ElementKind, ImageElement, ImageFormat, ListKind, ListStyle, Outline, Page, PageElement, ParaStyle, Paragraph, Printout, Rect, Run,
+    Section, Tag,
 };
 
 use crate::svg::{ink_bounds, ink_svg, num};
@@ -219,30 +220,70 @@ fn img_tag(img: &ImageElement, class: &str, positioned: bool) -> Option<String> 
     ))
 }
 
-/// An outline's paragraphs: consecutive list paragraphs of one kind share a list.
+/// An outline's paragraphs: consecutive list paragraphs of one kind and (chosen) marker style
+/// share a list.
 fn outline_html(o: &Outline, out: &mut String) {
-    let mut open: Option<ListKind> = None;
+    let mut open: Option<(ListKind, Option<ListStyle>)> = None;
     for p in &o.paragraphs {
-        if p.list != open {
-            if let Some(k) = open {
-                out.push_str(list_tag(k).1);
+        let key = p.list.map(|k| (k, chosen_style(p)));
+        if key != open {
+            if let Some((k, _)) = open {
+                out.push_str(list_close(k));
             }
-            if let Some(k) = p.list {
-                out.push_str(list_tag(k).0);
+            if let Some((k, st)) = key {
+                list_open(k, st, out);
             }
-            open = p.list;
+            open = key;
         }
         para_html(p, out);
     }
-    if let Some(k) = open {
-        out.push_str(list_tag(k).1);
+    if let Some((k, _)) = open {
+        out.push_str(list_close(k));
     }
 }
 
-fn list_tag(k: ListKind) -> (&'static str, &'static str) {
+/// The list style the paragraph chose (one of its list's kind), not the level's default.
+fn chosen_style(p: &Paragraph) -> Option<ListStyle> {
+    p.list_style.filter(|s| Some(s.kind()) == p.list)
+}
+
+/// CSS `list-style-type` for a marker style.
+fn list_css(style: ListStyle) -> &'static str {
+    match style {
+        ListStyle::Disc => "disc",
+        ListStyle::Circle => "circle",
+        ListStyle::Square => "square",
+        ListStyle::Dash => "&quot;\u{2013}  &quot;",
+        ListStyle::Arrow => "&quot;\u{27A2}  &quot;",
+        ListStyle::Decimal => "decimal",
+        ListStyle::LowerAlpha => "lower-alpha",
+        ListStyle::UpperAlpha => "upper-alpha",
+        ListStyle::LowerRoman => "lower-roman",
+        ListStyle::UpperRoman => "upper-roman",
+    }
+}
+
+/// `<ul>` / `<ol>`, with a chosen marker style as CSS and, for numbers, `type`.
+fn list_open(k: ListKind, style: Option<ListStyle>, out: &mut String) {
+    let tag = if k == ListKind::Bullet { "ul" } else { "ol" };
+    let Some(st) = style else {
+        let _ = write!(out, "<{tag}>");
+        return;
+    };
+    let ty = match st {
+        ListStyle::LowerAlpha => " type=\"a\"",
+        ListStyle::UpperAlpha => " type=\"A\"",
+        ListStyle::LowerRoman => " type=\"i\"",
+        ListStyle::UpperRoman => " type=\"I\"",
+        _ => "",
+    };
+    let _ = write!(out, "<{tag}{ty} style=\"list-style-type:{}\">", list_css(st));
+}
+
+fn list_close(k: ListKind) -> &'static str {
     match k {
-        ListKind::Bullet => ("<ul>", "</ul>"),
-        ListKind::Numbered => ("<ol>", "</ol>"),
+        ListKind::Bullet => "</ul>",
+        ListKind::Numbered => "</ol>",
     }
 }
 
@@ -261,16 +302,37 @@ fn para_html(p: &Paragraph, out: &mut String) {
         }
     };
     out.push_str(&open);
+    let mut css = String::new();
     if p.indent > 0 {
-        let _ = write!(out, " style=\"margin-left:{}pt\"", u32::from(p.indent) * 18);
+        let _ = write!(css, "margin-left:{}pt;", u32::from(p.indent) * 18);
+    }
+    // A nested item without a chosen style takes its level's marker, as on the canvas.
+    if let Some(k) = p.list
+        && chosen_style(p).is_none()
+        && !p.indent.is_multiple_of(3)
+    {
+        let _ = write!(css, "list-style-type:{};", list_css(ListStyle::by_level(k, p.indent)));
+    }
+    if p.align != Align::Left {
+        let _ = write!(css, "text-align:{};", p.align.name());
+    }
+    if !css.is_empty() {
+        let _ = write!(out, " style=\"{}\"", css.trim_end_matches(';'));
     }
     out.push('>');
+    let mut mark = false;
     match p.tag {
         Some(Tag::ToDo { checked }) => {
             let _ = write!(out, "<input type=\"checkbox\" class=\"todo\" disabled{}> ", if checked { " checked" } else { "" });
         }
-        Some(Tag::Important) => out.push_str("<span class=\"tag\" aria-label=\"Important\">\u{2605}</span> "),
-        Some(Tag::Question) => out.push_str("<span class=\"tag\" aria-label=\"Question\">?</span> "),
+        Some(t) => {
+            if let Some(sym) = crate::tag_symbol(t) {
+                let _ = write!(out, "<span class=\"tag\" aria-label=\"{}\">{sym}</span> ", esc(t.label()));
+            } else if let Some(c) = t.highlight() {
+                let _ = write!(out, "<mark class=\"tag\" title=\"{}\" style=\"background-color:{}\">", esc(t.label()), c.to_hex());
+                mark = true;
+            }
+        }
         None => {}
     }
     if p.style == ParaStyle::Code && p.list.is_none() {
@@ -281,6 +343,9 @@ fn para_html(p: &Paragraph, out: &mut String) {
     }
     if p.style == ParaStyle::Code && p.list.is_none() {
         out.push_str("</code>");
+    }
+    if mark {
+        out.push_str("</mark>");
     }
     if p.runs.iter().all(|r| r.text.is_empty()) {
         out.push_str("<br>");
@@ -399,7 +464,7 @@ mod tests {
         assert!(html.starts_with("<!DOCTYPE html>"));
         assert!(html.contains("<title>Plans &lt;&amp;&gt;</title>"));
         assert!(html.contains("<h2>Heading</h2>"));
-        assert!(html.contains("<ul><li>first</li><li style=\"margin-left:18pt\">second</li></ul>"), "{html}");
+        assert!(html.contains("<ul><li>first</li><li style=\"margin-left:18pt;list-style-type:circle\">second</li></ul>"), "{html}");
         assert!(html.contains("<input type=\"checkbox\" class=\"todo\" disabled checked> done"));
         assert!(html.contains("<strong>bold</strong>"));
         assert!(html.contains("<a href=\"https://example.com\"><span style=\"color:#c44df0;\">link</span></a>"));
@@ -413,6 +478,30 @@ mod tests {
         assert!(!flow.contains("position:absolute"));
         // The picture (y = 50) comes before the outline (y = 108) in reading order.
         assert!(flow.find("<img").unwrap() < flow.find("<div class=\"outline\"").unwrap());
+    }
+
+    #[test]
+    fn alignment_list_styles_and_tags_export() {
+        let mut page = Page::new("x");
+        let mut o = Outline::with_text(Point::new(0.0, 0.0), "mid\nsq1\nsq2\nrom\nidea\ndef\nleft");
+        o.paragraphs[0].align = Align::Center;
+        for i in [1, 2] {
+            o.paragraphs[i].list = Some(ListKind::Bullet);
+            o.paragraphs[i].list_style = Some(ListStyle::Square);
+        }
+        o.paragraphs[2].align = Align::Justify;
+        o.paragraphs[3].list = Some(ListKind::Numbered);
+        o.paragraphs[3].list_style = Some(ListStyle::UpperRoman);
+        o.paragraphs[4].tag = Some(Tag::Idea);
+        o.paragraphs[5].tag = Some(Tag::Definition);
+        page.elements.push(PageElement::new(ElementKind::Outline(o)));
+        let html = page_to_html(&page).unwrap();
+        assert!(html.contains("<p style=\"text-align:center\">mid</p>"), "{html}");
+        assert!(html.contains("<ul style=\"list-style-type:square\"><li>sq1</li><li style=\"text-align:justify\">sq2</li></ul>"), "{html}");
+        assert!(html.contains("<ol type=\"I\" style=\"list-style-type:upper-roman\"><li>rom</li></ol>"), "{html}");
+        assert!(html.contains("<span class=\"tag\" aria-label=\"Idea\">\u{1F4A1}</span> idea"), "{html}");
+        assert!(html.contains("<mark class=\"tag\" title=\"Definition\" style=\"background-color:#92d050\">def</mark>"), "{html}");
+        assert!(html.contains("<p>left</p>"));
     }
 
     #[test]

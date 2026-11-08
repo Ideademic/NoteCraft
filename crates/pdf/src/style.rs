@@ -1,7 +1,10 @@
 //! How runs, paragraphs and the paper look in print: the same rules as the canvas
 //! (`crates/ui-egui/src/canvas/style.rs` and `canvas/page.rs`), in the light theme, written
 //! again here because the canvas's builders live in the egui crate. Keep the two in step: sizes,
-//! the style colours, list markers and numbering, indents, and the dark-paper colour mapping.
+//! alignment, the highlight tags,
+//! the style colours, indents, and the dark-paper colour mapping. List markers and numbering are
+//! shared ([`notecraft_doc::page::markers`]), as are the fonts and their fallbacks
+//! ([`notecraft_fonts`]).
 
 use notecraft_doc::{Color, ListKind, ParaStyle, Paragraph, Run};
 
@@ -179,97 +182,37 @@ pub fn run_look(run: &Run, style: ParaStyle, ink: &Ink) -> RunLook {
     }
 }
 
-/// The list marker of a paragraph.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Marker {
-    /// Disc, circle or square by level.
-    Bullet(u8),
-    /// "1.", "a.", "i." …
-    Number(String),
-}
-
-/// Each paragraph's marker: bullets by indent, numbers counted per level (as the canvas).
-pub fn markers(paras: &[Paragraph]) -> Vec<Option<Marker>> {
-    let mut counters = [0u32; notecraft_doc::page::MAX_INDENT as usize + 1];
-    let mut out = Vec::with_capacity(paras.len());
-    for p in paras {
-        let level = usize::from(p.indent.min(notecraft_doc::page::MAX_INDENT));
-        for c in counters.iter_mut().skip(level + 1) {
-            *c = 0;
-        }
-        let slot = counters.get_mut(level);
-        match p.list {
-            Some(ListKind::Numbered) => {
-                let n = slot.map_or(1, |c| {
-                    *c = c.saturating_add(1);
-                    *c
-                });
-                out.push(Some(Marker::Number(number_label(n, p.indent))));
-            }
-            Some(ListKind::Bullet) => {
-                if let Some(c) = slot {
-                    *c = 0;
-                }
-                out.push(Some(Marker::Bullet(p.indent)));
-            }
-            None => {
-                if let Some(c) = slot {
-                    *c = 0;
-                }
-                out.push(None);
-            }
+/// How a run of paragraph `p` prints: [`run_look`], with a highlight tag's colour (Remember for
+/// later, Definition, Highlight) behind runs without a highlight of their own, as on the canvas.
+pub fn para_run_look(run: &Run, p: &Paragraph, ink: &Ink) -> RunLook {
+    let mut look = run_look(run, p.style, ink);
+    if look.highlight.is_none()
+        && let Some(h) = p.tag.and_then(notecraft_doc::Tag::highlight)
+    {
+        look.highlight = Some(h);
+        if ink.dark && run.color.is_none() {
+            look.color = TEXT;
         }
     }
-    out
+    look
 }
 
-/// "3." at level 0, "c." at level 1, "iii." at level 2, then again.
+/// List markers are a model rule, shared with the canvas.
+pub use notecraft_doc::page::{Marker, markers};
+
+/// "3." at level 0, "c." at level 1, "iii." at level 2, then again (the default numbering).
 pub fn number_label(n: u32, indent: u8) -> String {
-    match indent % 3 {
-        0 => format!("{n}."),
-        1 => format!("{}.", letters(n)),
-        _ => format!("{}.", roman(n)),
-    }
+    notecraft_doc::ListStyle::by_level(ListKind::Numbered, indent).label(n)
 }
 
-fn letters(mut n: u32) -> String {
-    let mut s = Vec::new();
-    while n > 0 && s.len() < 8 {
-        let d = ((n - 1) % 26) as u8;
-        s.push(char::from(b'a' + d));
-        n = (n - 1) / 26;
+/// Where a block laid out for `align` sits from the left of its text area of `wrap` points:
+/// epaint places centred and right-aligned rows around x = 0 (the canvas's `align_dx`).
+pub fn align_dx(align: notecraft_doc::Align, wrap: f32) -> f32 {
+    match align {
+        notecraft_doc::Align::Center => wrap.max(8.0) / 2.0,
+        notecraft_doc::Align::Right => wrap.max(8.0),
+        notecraft_doc::Align::Left | notecraft_doc::Align::Justify => 0.0,
     }
-    s.iter().rev().collect()
-}
-
-fn roman(n: u32) -> String {
-    if n == 0 || n >= 4000 {
-        return n.to_string();
-    }
-    const TABLE: [(u32, &str); 13] = [
-        (1000, "m"),
-        (900, "cm"),
-        (500, "d"),
-        (400, "cd"),
-        (100, "c"),
-        (90, "xc"),
-        (50, "l"),
-        (40, "xl"),
-        (10, "x"),
-        (9, "ix"),
-        (5, "v"),
-        (4, "iv"),
-        (1, "i"),
-    ];
-    let mut out = String::new();
-    let mut n = n;
-    for (v, s) in TABLE {
-        while n >= v {
-            out.push_str(s);
-            n -= v;
-        }
-    }
-    out
 }
 
 /// The created date and time under the title, in the reader's time zone (`offset_minutes`).

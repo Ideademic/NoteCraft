@@ -23,6 +23,8 @@ pub enum OpenPurpose {
     Printout,
     /// Insert › File Attachment.
     Attachment,
+    /// The font box's Add Fonts (web): TTF, OTF, TTC, WOFF, WOFF2.
+    Font,
     /// File › Import a `.onepkg` or `.one`.
     Import,
 }
@@ -58,6 +60,7 @@ impl PathRequest {
             PathRequest::Open(OpenPurpose::Import) => fixed("OneNote packages and sections", &["onepkg", "one"]),
             PathRequest::Open(OpenPurpose::Picture) => fixed("Pictures", &["png", "jpg", "jpeg", "gif", "bmp", "webp"]),
             PathRequest::Open(OpenPurpose::Printout) => fixed("PDF documents and pictures", &["pdf", "png", "jpg", "jpeg"]),
+            PathRequest::Open(OpenPurpose::Font) => fixed("Fonts", &["ttf", "otf", "ttc", "woff", "woff2"]),
             PathRequest::Open(OpenPurpose::Attachment) | PathRequest::Folder(_) => None,
             PathRequest::Save { name, .. } => {
                 let ext = name.rsplit_once('.').map(|(_, e)| e).filter(|e| !e.is_empty() && e.len() <= 10)?;
@@ -112,6 +115,8 @@ pub struct Services {
     /// Web: told whether anything is unsaved after each frame (the leave-page guard, a hosting
     /// page).
     pub on_dirty: Option<Box<dyn Fn(bool)>>,
+    /// Web: keep a font file the user added (name, bytes) for the next visit.
+    pub keep_font: Option<Box<dyn Fn(&str, &[u8])>>,
     /// Whether the system prefers a dark theme, if it says.
     pub prefers_dark: Option<Box<dyn Fn() -> Option<bool>>>,
     /// Printing: the host's printers and spooler, or the browser's print dialog.

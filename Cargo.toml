@@ -24,6 +24,7 @@ notecraft-printout = { path = "crates/printout" }
 notecraft-pdf = { path = "crates/pdf" }
 notecraft-engine = { path = "crates/engine" }
 notecraft-ui-egui = { path = "crates/ui-egui" }
+notecraft-fonts = { path = "crates/fonts" }
 
 # foundation
 thiserror = "2"
@@ -60,11 +61,19 @@ craft-font-catalog = { git = "https://github.com/storytold/craft-libs", rev = "9
 # Desktop printing: CUPS `lp` and the Windows spooler, at craft-ui's rev (its printing panel).
 craft-print = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }
 
+# fonts (notecraft-fonts: craft-font-catalog and skrifa above serve it too)
+# WOFF / WOFF2 fonts added in the browser (MIT); its brotli decoder, used ahead of it so a
+# hostile file's glyph point counts are checked first (BSD-3-Clause OR MIT; already in the lock).
+wuff = "0.2.9"
+brotli-decompressor = "5"
+
 # ui (same versions and craft-libs revs as WordCraft)
 egui = "0.37"
 egui_extras = { version = "0.37", default-features = false }
 eframe = { version = "0.37", default-features = false }
 egui_kittest = "0.37"
+# egui's bundled faces, as real font files in tests.
+epaint_default_fonts = "0.37"
 # A clock that works on native and in the browser (`performance.now()`, `Date.now()`).
 web-time = "1.1"
 arboard = { version = "3.7", default-features = false, features = ["wayland-data-control"] }
