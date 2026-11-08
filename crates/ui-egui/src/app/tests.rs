@@ -8,7 +8,11 @@ use serde_json::Value;
 use super::*;
 
 fn harness(app: NoteApp) -> Harness<'static, NoteApp> {
-    Harness::builder().with_size(egui::vec2(1440.0, 900.0)).build_ui_state(
+    harness_sized(app, 1440.0, 900.0)
+}
+
+fn harness_sized(app: NoteApp, w: f32, h: f32) -> Harness<'static, NoteApp> {
+    Harness::builder().with_size(egui::vec2(w, h)).build_ui_state(
         |ui, app: &mut NoteApp| {
             let ctx = ui.ctx().clone();
             app.logic(&ctx);
@@ -247,4 +251,102 @@ fn a_dragged_page_list_keeps_its_width() {
     let x0 = page_list_edge(&h) + 2.0;
     drag_splitter(&mut h, x0, -100.0);
     assert!((page_list_edge(&h) - (x0 - 100.0)).abs() <= 2.0, "dragged to {}, now {}", x0 - 100.0, page_list_edge(&h));
+}
+
+fn canvas_width(h: &Harness<'static, NoteApp>) -> f32 {
+    h.state().canvas_rect.map_or(0.0, |r| r.width())
+}
+
+#[test]
+fn a_narrow_window_folds_the_panes_for_now() {
+    let mut h = harness_sized(app(), 800.0, 760.0);
+    h.run_steps(4);
+    assert!(canvas_width(&h) >= narrow::MIN_CANVAS_WIDTH, "page only {} wide", canvas_width(&h));
+    assert!(h.state().ui.narrow.notebooks_folded);
+    assert!(h.query_by_label("Collapse Notebook Pane").is_none(), "the notebook pane is folded");
+    // The user's choices are untouched…
+    assert!(h.state().ui.notebook_pane_open && h.state().ui.page_list_open);
+    assert!(h.state().prefs().notebook_pane_open);
+    // …and come back with the room.
+    h.set_size(egui::vec2(1440.0, 900.0));
+    h.run_steps(4);
+    assert!(!h.state().ui.narrow.notebooks_folded);
+    assert!((notebook_edge(&h) - (8.0 + NOTEBOOK_PANE_WIDTH)).abs() <= 2.0, "pane edge at {}", notebook_edge(&h));
+    assert!(h.query_by_label("Add Page").is_some());
+}
+
+#[test]
+fn a_very_narrow_window_narrows_then_folds_the_page_list() {
+    let mut h = harness_sized(app(), 620.0, 700.0);
+    h.run_steps(4);
+    assert!(h.state().ui.narrow.notebooks_folded && !h.state().ui.narrow.pages_folded);
+    assert!(canvas_width(&h) >= narrow::MIN_CANVAS_WIDTH, "page only {} wide", canvas_width(&h));
+    let list = h.get_by_label("Collapse Page Tabs").rect().center().x + 18.0 - page_list_edge(&h);
+    assert!(list < PAGE_LIST_WIDTH, "the page list narrowed to {list}");
+    h.set_size(egui::vec2(480.0, 700.0));
+    h.run_steps(4);
+    assert!(h.state().ui.narrow.pages_folded);
+    assert!(h.query_by_label("Expand Page Tabs").is_some());
+    assert!(h.state().ui.page_list_open, "the choice is kept");
+    h.set_size(egui::vec2(1440.0, 900.0));
+    h.run_steps(4);
+    assert!((page_list_edge(&h) - (1440.0 - 8.0 - PAGE_LIST_WIDTH)).abs() <= 2.0, "list edge at {}", page_list_edge(&h));
+}
+
+#[test]
+fn a_dragged_wide_pane_is_held_to_its_share_and_keeps_its_width() {
+    let mut h = harness(app());
+    h.run_steps(3);
+    let x0 = notebook_edge(&h) - 2.0;
+    drag_splitter(&mut h, x0, 240.0);
+    let wide = notebook_edge(&h);
+    assert!(wide > 440.0, "dragged to {wide}");
+    h.set_size(egui::vec2(1100.0, 800.0));
+    h.run_steps(4);
+    let capped = notebook_edge(&h) - 8.0;
+    assert!(capped <= (1100.0 - 16.0) * narrow::MAX_PANE_SHARE + 1.0, "pane {capped} wide in a 1100 window");
+    assert!(canvas_width(&h) >= narrow::MIN_CANVAS_WIDTH);
+    h.set_size(egui::vec2(1440.0, 900.0));
+    h.run_steps(4);
+    assert!((notebook_edge(&h) - wide).abs() <= 2.0, "back to {}, was {wide}", notebook_edge(&h));
+}
+
+#[test]
+fn a_folded_pane_opens_over_the_page_and_closes_on_a_click_outside() {
+    let mut h = harness_sized(app(), 800.0, 760.0);
+    h.run_steps(4);
+    let page = canvas_width(&h);
+    h.get_by_label("Expand Notebook Pane").click();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.narrow.overlay, Some(narrow::SidePane::Notebooks));
+    assert!(h.query_by_label("Collapse Notebook Pane").is_some());
+    assert!((canvas_width(&h) - page).abs() < 1.0, "the overlay floats over the page");
+    // Its fold button closes it without changing the choice.
+    h.get_by_label("Collapse Notebook Pane").click();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.narrow.overlay, None);
+    assert!(h.state().ui.notebook_pane_open);
+    // A click on the page closes it too.
+    h.get_by_label("Expand Notebook Pane").click();
+    h.run_steps(3);
+    assert!(h.state().ui.narrow.overlay.is_some());
+    let p = egui::pos2(520.0, 600.0);
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+        h.step();
+    }
+    h.run_steps(2);
+    assert_eq!(h.state().ui.narrow.overlay, None);
+    assert!(h.state().ui.notebook_pane_open);
+}
+
+#[test]
+fn dragging_a_pane_stops_short_of_squeezing_the_page() {
+    let mut h = harness_sized(app(), 900.0, 800.0);
+    h.run_steps(3);
+    let x0 = notebook_edge(&h) - 2.0;
+    drag_splitter(&mut h, x0, 400.0);
+    h.run_steps(3);
+    assert!(!h.state().ui.narrow.notebooks_folded, "the pane stays pinned");
+    assert!(canvas_width(&h) >= narrow::MIN_CANVAS_WIDTH, "page only {} wide", canvas_width(&h));
 }

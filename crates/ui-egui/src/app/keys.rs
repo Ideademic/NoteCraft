@@ -96,10 +96,10 @@ pub fn handle(app: &mut NoteApp, ctx: &egui::Context) {
         return;
     }
     if take(ctx, KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::OpenBracket)) {
-        app.ui.page_list_open = !app.ui.page_list_open;
+        super::narrow::toggle(app, super::narrow::SidePane::Pages);
     }
     if take(ctx, KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::CloseBracket)) {
-        app.ui.notebook_pane_open = !app.ui.notebook_pane_open;
+        super::narrow::toggle(app, super::narrow::SidePane::Notebooks);
     }
     if take(ctx, KeyboardShortcut::new(Modifiers::COMMAND, Key::Plus)) || take(ctx, KeyboardShortcut::new(Modifiers::COMMAND, Key::Equals)) {
         app.canvas.set_zoom(notecraft_geom::zoom::zoom_in(app.canvas.zoom));

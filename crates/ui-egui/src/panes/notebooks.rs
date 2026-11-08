@@ -85,7 +85,7 @@ pub fn notebook_pane(ui: &mut Ui, app: &mut NoteApp) {
     ui.painter().text(pos2(header.min.x + 12.0, header.center().y), Align2::LEFT_CENTER, tl!("Notebooks"), regular(13.0), t.text_dim);
     let pin = Rect::from_center_size(pos2(header.max.x - 18.0, header.center().y), vec2(24.0, 24.0));
     if super::icon_button(ui, app, pin, Icon::ChevronLeft, tl!("Collapse Notebook Pane")) {
-        app.ui.notebook_pane_open = false;
+        crate::app::narrow::fold(app, crate::app::narrow::SidePane::Notebooks);
     }
     let footer_h = 34.0;
     let list = Rect::from_min_max(pos2(full.min.x, header.max.y), pos2(full.max.x - 1.0, full.max.y - footer_h));
@@ -328,7 +328,7 @@ pub fn notebook_bar(ui: &mut Ui, app: &mut NoteApp) {
     ui.painter().line_segment([full.right_top(), full.right_bottom()], Stroke::new(1.0, t.border));
     let pin = Rect::from_center_size(pos2(full.center().x, full.min.y + 16.0), vec2(24.0, 24.0));
     if super::icon_button(ui, app, pin, Icon::ChevronRight, tl!("Expand Notebook Pane")) {
-        app.ui.notebook_pane_open = true;
+        crate::app::narrow::unfold(app, crate::app::narrow::SidePane::Notebooks);
     }
     let Some(nb) = app.session.current_notebook() else { return };
     let (name, color) = (nb.name.clone(), t.section_fill(nb.color));
@@ -366,7 +366,7 @@ pub fn notebook_bar(ui: &mut Ui, app: &mut NoteApp) {
         }
         ui.separator();
         if widgets::menu_item(ui, Some(Icon::Pin), tl!("Pin Notebook Pane to Side"), true) {
-            app.ui.notebook_pane_open = true;
+            crate::app::narrow::unfold(app, crate::app::narrow::SidePane::Notebooks);
         }
     });
 }

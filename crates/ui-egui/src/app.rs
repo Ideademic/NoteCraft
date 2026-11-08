@@ -5,6 +5,7 @@
 pub mod files;
 pub mod frame;
 pub mod keys;
+pub mod narrow;
 pub mod shots;
 
 use egui::Rect;
@@ -253,6 +254,8 @@ pub struct UiState {
     pub ribbon_peek: bool,
     pub notebook_pane_open: bool,
     pub page_list_open: bool,
+    /// Panes folded for room in a narrow window, for now ([`narrow`]).
+    pub narrow: narrow::NarrowPanes,
     /// View › Full Page View: the page alone (no ribbon, panes or tabs).
     pub full_page_view: bool,
     /// View › Hide Page Title. The canvas should skip the title block while this is on.
@@ -319,6 +322,7 @@ impl Default for UiState {
             ribbon_peek: false,
             notebook_pane_open: prefs.notebook_pane_open,
             page_list_open: prefs.page_list_open,
+            narrow: narrow::NarrowPanes::default(),
             full_page_view: false,
             hide_page_title: false,
             dark: false,

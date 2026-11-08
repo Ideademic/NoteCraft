@@ -64,7 +64,7 @@ pub fn page_list(ui: &mut Ui, app: &mut NoteApp) {
     }
     let fold = Rect::from_center_size(pos2(header.max.x - 18.0, header.center().y), vec2(24.0, 24.0));
     if super::icon_button(ui, app, fold, Icon::ChevronRight, tl!("Collapse Page Tabs")) {
-        app.ui.page_list_open = false;
+        crate::app::narrow::fold(app, crate::app::narrow::SidePane::Pages);
     }
     ui.painter()
         .line_segment([pos2(full.min.x, header.max.y), pos2(full.max.x, header.max.y)], Stroke::new(1.0, crate::theme::mix(bg, t.text, 0.12)));
@@ -227,7 +227,7 @@ pub fn page_bar(ui: &mut Ui, app: &mut NoteApp) {
     ui.painter().line_segment([full.left_top(), full.left_bottom()], Stroke::new(1.0, t.border));
     let open = Rect::from_center_size(pos2(full.center().x, full.min.y + 16.0), vec2(22.0, 24.0));
     if super::icon_button(ui, app, open, Icon::ChevronLeft, tl!("Expand Page Tabs")) {
-        app.ui.page_list_open = true;
+        crate::app::narrow::unfold(app, crate::app::narrow::SidePane::Pages);
     }
     let add = Rect::from_center_size(pos2(full.center().x, full.min.y + 44.0), vec2(22.0, 24.0));
     if app.can(ids::PAGE_NEW) && super::icon_button(ui, app, add, Icon::Plus, tl!("Add Page")) {
