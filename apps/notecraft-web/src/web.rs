@@ -229,6 +229,7 @@ fn services(ctx: &egui::Context, inbox: &Inbox, batches: &Batches, pastes: &Past
         })),
         inbox: Some(inbox.clone()),
         download: Some(Box::new(browser::download)),
+        print: Some(notecraft_ui_egui::Printing::Browser(Box::new(crate::print::print_pdf))),
         // Reading the clipboard is asynchronous in a browser: the text arrives a frame later
         // (`WebShell::raw_input_hook`). Ctrl+V needs none of this: eframe pastes it.
         clipboard_text: Some(Box::new(move || {

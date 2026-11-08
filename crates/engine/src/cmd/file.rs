@@ -48,12 +48,12 @@ fn deliver(params: &Value, file_name: String, mime: &str, bytes: Vec<u8>) -> Cmd
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn write_to(path: &str, bytes: &[u8]) -> Result<(), CmdError> {
+pub(crate) fn write_to(path: &str, bytes: &[u8]) -> Result<(), CmdError> {
     crate::io::safe_save::write(std::path::Path::new(path), bytes).map_err(|e| CmdError::Failed(format!("{path}: {e}")))
 }
 
 #[cfg(target_arch = "wasm32")]
-fn write_to(_: &str, _: &[u8]) -> Result<(), CmdError> {
+pub(crate) fn write_to(_: &str, _: &[u8]) -> Result<(), CmdError> {
     Err(CmdError::Disabled("the web app downloads exports".into()))
 }
 

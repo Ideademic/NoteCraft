@@ -47,6 +47,7 @@ pub fn desktop(ask_path: Box<dyn Fn(PathRequest)>) -> Services {
             let img = arboard::Clipboard::new().ok()?.get_image().ok()?;
             Some(ClipboardImage { width: img.width, height: img.height, rgba: img.bytes.into_owned() })
         })),
+        print: Some(crate::print::printing()),
         ..Services::default()
     }
 }

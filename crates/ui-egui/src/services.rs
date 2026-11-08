@@ -114,6 +114,17 @@ pub struct Services {
     pub on_dirty: Option<Box<dyn Fn(bool)>>,
     /// Whether the system prefers a dark theme, if it says.
     pub prefers_dark: Option<Box<dyn Fn() -> Option<bool>>>,
+    /// Printing: the host's printers and spooler, or the browser's print dialog.
+    pub print: Option<Printing>,
+}
+
+/// How the host prints File › Print's PDF.
+pub enum Printing {
+    /// Desktop: find printers and send jobs to the spooler (craft-print), off the UI thread.
+    Spooler { discover: craft_ui::printing::Discover, submit: craft_ui::printing::Submit },
+    /// Web: hand the PDF to the browser's print dialog (the printer, copies and range are chosen
+    /// there).
+    Browser(Box<dyn Fn(&[u8]) -> Result<(), String>>),
 }
 
 impl Services {

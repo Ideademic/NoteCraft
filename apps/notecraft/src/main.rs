@@ -10,6 +10,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod dialogs;
+mod print;
 mod services;
 
 use std::io::Write as _;
@@ -167,6 +168,7 @@ impl eframe::App for App {
             Err(e) => log::error!("saving on exit failed: {e}"),
         }
         self.store_settings();
+        print::finish_pending_jobs();
     }
 }
 

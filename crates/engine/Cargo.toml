@@ -15,6 +15,7 @@ notecraft-one = { workspace = true }
 notecraft-onepkg = { workspace = true }
 notecraft-formats = { workspace = true }
 notecraft-printout = { workspace = true }
+notecraft-pdf = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

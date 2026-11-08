@@ -25,6 +25,7 @@ pub enum ExportFormat {
     Markdown,
     Text,
     Onepkg,
+    Pdf,
 }
 
 impl ExportFormat {
@@ -34,6 +35,7 @@ impl ExportFormat {
             ExportFormat::Markdown => "md",
             ExportFormat::Text => "txt",
             ExportFormat::Onepkg => "onepkg",
+            ExportFormat::Pdf => "pdf",
         }
     }
 }
@@ -61,6 +63,11 @@ pub fn export(app: &mut NoteApp, scope: ExportScope, format: ExportFormat) {
     let name = export_name(app, scope, format);
     let (id, params) = match (scope, format) {
         (_, ExportFormat::Onepkg) => (ids::FILE_EXPORT_ONEPKG, json!({ "id": app.session.current.notebook })),
+        // One sheet per page, its content's size: the page as on screen (File › Print offers paper sizes).
+        (scope, ExportFormat::Pdf) => (
+            ids::FILE_EXPORT_PDF,
+            json!({ "scope": crate::backstage::print::scope_name(scope), "paper": "fit", "utcOffset": app.canvas.utc_offset_minutes }),
+        ),
         (ExportScope::Page, ExportFormat::Html) => (ids::FILE_EXPORT_HTML, json!({ "scope": "page" })),
         (_, ExportFormat::Html) => (ids::FILE_EXPORT_HTML, json!({ "scope": "section" })),
         (ExportScope::Page, ExportFormat::Markdown) => (ids::FILE_EXPORT_MARKDOWN, json!({ "scope": "page" })),
