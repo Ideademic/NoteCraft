@@ -41,6 +41,9 @@ jobs:
       CARGO_BUILD_JOBS: 4
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Before the VM starts: the VM gets a copy of the workspace, craft-fonts included.
+      - name: Check out craft-fonts
+        uses: ./.github/actions/checkout-craft-fonts
       - name: Start the FreeBSD VM
         uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1.5.9
         with:
@@ -126,6 +129,8 @@ jobs:
           [ ! -f "$HOME/.cargo/env" ] || . "$HOME/.cargo/env"
           git config --global --add safe.directory "*"
           rustc --version
+          # The faces crates/fonts/build.rs embeds; a missing one fails the build, as in a release.
+          export CRAFT_FONTS_DIR="$PWD/craft-fonts" CRAFT_FONTS_REQUIRED=1
           [ ! -f /var/tmp/craft-cross/env ] || . /var/tmp/craft-cross/env
           CARGO_PROFILE_DEV_DEBUG=0 cargo build --workspace --all-targets --locked
           if [ "${{ matrix.arch }}" = aarch64 ]; then
