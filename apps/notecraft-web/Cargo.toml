@@ -17,15 +17,14 @@ path = "src/main.rs"
 notecraft-doc = { workspace = true }
 notecraft-engine = { workspace = true }
 notecraft-one = { workspace = true }
+# A hosted notebook travels to the hosting page as one `.onepkg` (`host`).
+notecraft-onepkg = { workspace = true }
 notecraft-ui-egui = { workspace = true }
 # The host messages (storytold/craft-libs): one contract and one bridge for the web builds.
 craft-web-host = { workspace = true }
 egui = { workspace = true }
 log = { workspace = true }
 serde_json = { workspace = true }
-
-[dev-dependencies]
-notecraft-onepkg = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # `wgpu` pulls egui-wgpu's defaults: WebGPU plus the WebGL2 fallback.
@@ -36,6 +35,6 @@ js-sys = { workspace = true }
 # On top of the workspace's features: storage, the file picker, the clipboard, the leave guard.
 web-sys = { workspace = true, features = [
   "BeforeUnloadEvent", "Clipboard", "ClipboardEvent", "ClipboardItem", "CssStyleDeclaration", "DataTransfer", "DomException",
-  "DomStringList", "Event", "EventTarget", "File", "FileList", "HtmlInputElement", "IdbDatabase", "IdbFactory", "IdbObjectStore",
+  "DomStringList", "Event", "HtmlIFrameElement", "EventTarget", "File", "FileList", "HtmlInputElement", "IdbDatabase", "IdbFactory", "IdbObjectStore",
   "IdbOpenDbRequest", "IdbRequest", "IdbTransaction", "IdbTransactionMode", "MediaQueryList", "Navigator",
 ] }

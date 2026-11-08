@@ -49,6 +49,8 @@ fn hostile_params_never_panic() {
         json!({"kind": "axes3", "x": 1e30, "y": -1e30, "w": f64::MAX, "h": -1e300, "constrain": true, "width": -5, "color": "#00ff00"}),
         json!({"kind": "\u{0}ellipse", "x": 0, "y": 0, "w": 10, "h": 10, "constrain": "yes", "value": 1}),
         json!({"kind": 7, "x": "a", "w": null, "ids": [], "value": true}),
+        json!({"scope": "notebook", "paper": "A4", "landscape": "x", "pages": "1-, 3", "utcOffset": 1e30, "fonts": "bundled", "fitWidth": 3}),
+        json!({"scope": "section", "paper": 4, "pages": "-", "header": false, "pageNumbers": null, "fonts": 7}),
     ];
     for spec in registry().all() {
         // A notebook.open path that doesn't exist is fine to try; skip nothing.

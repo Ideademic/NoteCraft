@@ -30,6 +30,7 @@ fn main() {
         let shots = notecraft_ui_egui::app::shots::SHOTS
             .iter()
             .chain(notecraft_ui_egui::app::shots::RIBBON_SHOTS.iter())
+            .chain(notecraft_ui_egui::app::shots::PLATFORM_SHOTS.iter())
             .chain(notecraft_ui_egui::app::shots::HISTORY_SHOTS.iter())
             .filter(|s| filter.as_ref().is_none_or(|f| s.starts_with(f.as_str())));
         for &shot in shots {
@@ -56,6 +57,18 @@ fn main() {
                 use egui_kittest::kittest::Queryable;
                 harness.get_by_label(notecraft_ui_egui::ribbon::display::OPTIONS_LABEL).click();
                 harness.run_steps(4);
+            }
+            if shot == "options-language-menu" {
+                use egui_kittest::kittest::Queryable;
+                harness.get_by_label(notecraft_ui_egui::backstage::options::LANGUAGE_LABEL).click();
+                harness.run_steps(4);
+            }
+            if shot == "update-up-to-date" {
+                // The check runs on its own thread: give it a moment, then draw its answer.
+                for _ in 0..50 {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    harness.step();
+                }
             }
             let path = out.join(format!("{shot}-{name}.png"));
             match harness.render() {

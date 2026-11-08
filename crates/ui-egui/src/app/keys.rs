@@ -1,6 +1,6 @@
 //! Window-wide keyboard shortcuts: the engine's command shortcuts (`Mod+N` New Page, `Mod+T`
 //! New Section, `Mod+Z` Undo…) while no text box has the keyboard, plus the UI's own: Ctrl+E
-//! search, F11 Full Page View, Ctrl+F1 ribbon, Ctrl+Shift+[ / ] page list, KeyTips.
+//! search, Ctrl+P Print, F11 Full Page View, Ctrl+F1 ribbon, Ctrl+Shift+[ / ] page list, KeyTips.
 //!
 //! While the canvas edits text it owns the keyboard (egui's focus says so), so typing and its own
 //! shortcuts (Ctrl+B in a note) never reach these.
@@ -74,6 +74,10 @@ pub fn handle(app: &mut NoteApp, ctx: &egui::Context) {
     }
     if take(ctx, KeyboardShortcut::new(Modifiers::COMMAND, Key::F1)) {
         crate::ribbon::toggle_collapsed(app);
+    }
+    // Print, from anywhere (also while typing in a note).
+    if take(ctx, KeyboardShortcut::new(Modifiers::COMMAND, Key::P)) {
+        crate::backstage::open(app, crate::backstage::BackstagePage::Print);
     }
     if app.ui.backstage || typing {
         return;

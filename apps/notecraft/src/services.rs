@@ -1,9 +1,9 @@
-//! Desktop [`Services`]: native file dialogs (rfd), the clipboard (arboard), the file system,
-//! and where NoteCraft keeps its settings and notebooks.
+//! Desktop [`Services`]: native file dialogs (craft-dialogs, see [`crate::dialogs`]), the
+//! clipboard (arboard), the file system, and where NoteCraft keeps its settings and notebooks.
 
 use std::path::PathBuf;
 
-use notecraft_ui_egui::{ClipboardImage, OpenPurpose, Services};
+use notecraft_ui_egui::{ClipboardImage, PathRequest, Services};
 
 fn home() -> Option<PathBuf> {
     std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from)
@@ -35,34 +35,10 @@ pub fn settings_dir() -> Option<PathBuf> {
         .map(|c| c.join("notecraft"))
 }
 
-fn filters(purpose: OpenPurpose) -> (&'static str, &'static [&'static str]) {
-    match purpose {
-        OpenPurpose::Notebook | OpenPurpose::NotebookFolder => ("OneNote notebooks", &["onetoc2", "onepkg", "one"]),
-        OpenPurpose::Import => ("OneNote packages and sections", &["onepkg", "one"]),
-        OpenPurpose::Picture => ("Pictures", &["png", "jpg", "jpeg", "gif", "bmp", "webp"]),
-        OpenPurpose::Printout => ("PDF documents and pictures", &["pdf", "png", "jpg", "jpeg"]),
-        OpenPurpose::Attachment => ("All files", &["*"]),
-    }
-}
-
-pub fn desktop() -> Services {
+/// The desktop services; `ask_path` queues file dialogs (see [`crate::dialogs::Dialogs::hook`]).
+pub fn desktop(ask_path: Box<dyn Fn(PathRequest)>) -> Services {
     Services {
-        pick_open: Some(Box::new(|purpose| {
-            let (name, exts) = filters(purpose);
-            let dialog = rfd::FileDialog::new();
-            let dialog = if exts == ["*"] { dialog } else { dialog.add_filter(name, exts) };
-            dialog.pick_file()
-        })),
-        pick_save: Some(Box::new(|suggested| {
-            let ext = suggested.rsplit_once('.').map(|(_, e)| e.to_owned());
-            let dialog = rfd::FileDialog::new().set_file_name(suggested);
-            let dialog = match &ext {
-                Some(e) => dialog.add_filter(e.to_uppercase(), &[e.as_str()]),
-                None => dialog,
-            };
-            dialog.save_file()
-        })),
-        pick_folder: Some(Box::new(|| rfd::FileDialog::new().pick_folder())),
+        ask_path: Some(ask_path),
         read_file: Some(Box::new(|p| std::fs::read(p).map_err(|e| format!("{}: {e}", p.display())))),
         write_file: Some(Box::new(|p, b| std::fs::write(p, b).map_err(|e| format!("{}: {e}", p.display())))),
         clipboard_text: Some(Box::new(|| arboard::Clipboard::new().ok()?.get_text().ok().filter(|t| !t.is_empty()))),
@@ -71,6 +47,7 @@ pub fn desktop() -> Services {
             let img = arboard::Clipboard::new().ok()?.get_image().ok()?;
             Some(ClipboardImage { width: img.width, height: img.height, rgba: img.bytes.into_owned() })
         })),
+        print: Some(crate::print::printing()),
         ..Services::default()
     }
 }

@@ -8,7 +8,7 @@ use crate::backstage::BackstagePage;
 use crate::ribbon::RibbonTab;
 
 /// Every named state.
-pub const SHOTS: [&str; 12] = [
+pub const SHOTS: [&str; 13] = [
     "main",
     "tab-insert",
     "tab-draw",
@@ -17,6 +17,7 @@ pub const SHOTS: [&str; 12] = [
     "backstage-new",
     "backstage-open",
     "backstage-export",
+    "backstage-print",
     "backstage-options",
     "backstage-about",
     "panes-collapsed",
@@ -112,6 +113,27 @@ fn prepare_history(app: &mut NoteApp, shot: &str) -> bool {
     true
 }
 
+/// Options' language picker (open; the `ui_shot` example clicks it) and the Check for Updates
+/// window answered "up to date" without the network.
+pub const PLATFORM_SHOTS: [&str; 2] = ["options-language-menu", "update-up-to-date"];
+
+/// The states of [`PLATFORM_SHOTS`]; `false` for other names.
+fn prepare_platform(app: &mut NoteApp, shot: &str) -> bool {
+    match shot {
+        "options-language-menu" => crate::backstage::open(app, BackstagePage::Options),
+        "update-up-to-date" => {
+            crate::backstage::open(app, BackstagePage::About);
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                app.updates = crate::updates::Updates::default().with_source(std::sync::Arc::new(|| Ok(None)));
+            }
+            crate::updates::check(app);
+        }
+        _ => return false,
+    }
+    true
+}
+
 /// The ribbon states of [`RIBBON_SHOTS`]; `false` for other names.
 fn prepare_ribbon(app: &mut NoteApp, shot: &str) -> bool {
     use crate::ribbon::display::{RibbonDisplay, RibbonLayout};
@@ -139,7 +161,7 @@ fn prepare_ribbon(app: &mut NoteApp, shot: &str) -> bool {
 
 /// Puts `app` in the state named `shot` (unknown names leave it as it is).
 pub fn prepare(app: &mut NoteApp, shot: &str) {
-    if prepare_ribbon(app, shot) || prepare_history(app, shot) {
+    if prepare_ribbon(app, shot) || prepare_platform(app, shot) || prepare_history(app, shot) {
         return;
     }
     match shot {
@@ -159,6 +181,7 @@ pub fn prepare(app: &mut NoteApp, shot: &str) {
             crate::backstage::open(app, BackstagePage::Open);
         }
         "backstage-export" => crate::backstage::open(app, BackstagePage::Export),
+        "backstage-print" => crate::backstage::open(app, BackstagePage::Print),
         "backstage-options" => crate::backstage::open(app, BackstagePage::Options),
         "backstage-about" => crate::backstage::open(app, BackstagePage::About),
         "panes-collapsed" => {
