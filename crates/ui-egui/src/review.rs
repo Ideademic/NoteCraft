@@ -543,6 +543,21 @@ pub fn dialogs(ctx: &egui::Context, app: &mut NoteApp) {
 
 // --- the page's context menu ---------------------------------------------------------------
 
+/// Width of the page's context menu.
+const MENU_W: f32 = 250.0;
+
+/// A spelling suggestion in the menu: the word in bold, where the other items have their text.
+fn suggestion_item(ui: &mut Ui, word: &str) -> bool {
+    let t = crate::theme::Tokens::get(ui.ctx());
+    let (r, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width().max(160.0), 24.0), egui::Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, word));
+    if resp.hovered() {
+        ui.painter().rect_filled(r, egui::CornerRadius::same(crate::theme::RADIUS_SMALL), t.hover);
+    }
+    crate::theme::paint_strong(ui.painter(), egui::pos2(r.min.x + 30.0, r.center().y), egui::Align2::LEFT_CENTER, word, regular(12.5), t.text);
+    resp.clicked()
+}
+
 fn menu_id() -> egui::Id {
     egui::Id::unique("nc_canvas_context_menu")
 }
@@ -557,9 +572,10 @@ pub fn context_menu(ctx: &egui::Context, app: &mut NoteApp) {
         .kind(egui::PopupKind::Menu)
         .layout(Layout::top_down_justified(Align::Min))
         .style(egui::containers::menu::menu_style)
+        .width(MENU_W)
         .open_memory(open_now.then_some(egui::SetOpenCommand::Bool(true)));
     let shown = popup.show(|ui| {
-        ui.set_min_width(220.0);
+        ui.set_width(MENU_W);
         if let Some(target) = app.canvas.review.menu.clone() {
             menu(ui, app, &target);
         }
@@ -766,8 +782,7 @@ fn text_menu(ui: &mut Ui, app: &mut NoteApp, outline: Guid, at: TextPos, issue: 
             ui.label(egui::RichText::new(tl!("(no suggestions)")).italics().font(regular(12.5)));
         }
         for s in list {
-            let label = egui::RichText::new(&s).strong().font(regular(13.0));
-            if ui.add(egui::Button::new(label).frame(false)).clicked() {
+            if suggestion_item(ui, &s) {
                 let mut p = json!({"outline": outline, "para": issue.get("para"), "start": issue.get("start"), "end": issue.get("end"), "word": word, "text": s, "page": page});
                 if let Value::Object(m) = &mut p {
                     m.retain(|_, v| !v.is_null());

@@ -228,6 +228,89 @@ fn prepare_platform(app: &mut NoteApp, shot: &str) -> bool {
     true
 }
 
+/// Review and links: the Review tab (classic and simplified) over a page with misspellings,
+/// links, an attachment and kept content; the Spelling pane; the right-click menu on a misspelled
+/// word, on the paper and on the attachment (the `ui_shot` example right-clicks); Insert Link.
+pub const REVIEW_SHOTS: [&str; 7] =
+    ["tab-review", "simplified-review", "review-spelling-pane", "review-word-menu", "review-page-menu", "review-file-menu", "review-link-dialog"];
+
+/// Where the `ui_shot` example right-clicks in a [`REVIEW_SHOTS`] state: (note container,
+/// paragraph, character) for text, else a page point.
+pub fn review_click(app: &NoteApp, shot: &str) -> Option<ReviewClick> {
+    let page = app.session.current_page()?;
+    let first = page.elements.iter().find(|e| matches!(e.kind, notecraft_doc::ElementKind::Outline(_)))?.id;
+    match shot {
+        "review-word-menu" => Some(ReviewClick::Text(first, 0, 33)),
+        "review-page-menu" => Some(ReviewClick::Page(520.0, 470.0)),
+        "review-file-menu" => Some(ReviewClick::Page(330.0, 342.0)),
+        _ => None,
+    }
+}
+
+/// See [`review_click`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ReviewClick {
+    Text(notecraft_doc::Guid, usize, usize),
+    Page(f32, f32),
+}
+
+/// The states of [`REVIEW_SHOTS`]; `false` for other names.
+fn prepare_review(app: &mut NoteApp, shot: &str) -> bool {
+    use notecraft_engine::ids;
+    if !REVIEW_SHOTS.contains(&shot) {
+        return false;
+    }
+    let _ = app.run(ids::PAGE_NEW, json!({"title": "Trip planning"}));
+    let page = app.session.current.page;
+    let text = "Things to pack for the weekend: sunscren, a map and the camerra.\nAsk Sam about the [[Packing list]] and the train times.\nTickets are on the booking site; directions are in the attachment below.\nTomorrow we leave early.";
+    let o = app
+        .run(ids::OUTLINE_NEW, json!({"x": 36, "y": 108, "text": text}))
+        .ok()
+        .and_then(|o| o.value["id"].as_str().and_then(notecraft_doc::Guid::parse));
+    if let Some(o) = o {
+        // `[[Packing list]]` typed: the wiki link.
+        let _ = app.run(ids::LINK_WIKI, json!({"outline": o, "at": {"para": 1, "char": 34}}));
+        let _ = app.run(
+            ids::LINK_SET,
+            json!({"outline": o, "start": {"para": 2, "char": 19}, "end": {"para": 2, "char": 31}, "url": "https://example.com/tickets"}),
+        );
+        let _ = app.run(ids::PROOF_SET_LANGUAGE, json!({"outline": o, "start": {"para": 3, "char": 0}, "lang": "en-GB"}));
+    }
+    let _ = app.run(ids::INSERT_FILE, json!({"bytesBase64": "SGVsbG8=", "name": "Directions.pdf", "x": 300, "y": 330}));
+    if let Some(p) = app.session.current_page_mut() {
+        // Content NoteCraft keeps but can't show (an equation, say), with no geometry: its
+        // placeholder sits below the rest.
+        p.elements
+            .push(notecraft_doc::PageElement::new(notecraft_doc::ElementKind::Opaque { jcid: 0x0006_0099, data: std::sync::Arc::new(Vec::new()) }));
+    }
+    let _ = page;
+    match shot {
+        "tab-review" | "review-word-menu" | "review-page-menu" | "review-file-menu" => app.ui.ribbon_tab = RibbonTab::Review,
+        "simplified-review" => {
+            app.ui.ribbon_tab = RibbonTab::Review;
+            app.ui.ribbon_layout = crate::ribbon::display::RibbonLayout::Simplified;
+        }
+        "review-spelling-pane" => {
+            app.ui.ribbon_tab = RibbonTab::Review;
+            crate::panes::spelling::open(app);
+        }
+        "review-link-dialog" => {
+            app.ui.ribbon_tab = RibbonTab::Review;
+            if let Some(o) = o {
+                app.canvas.caret = Some(crate::canvas::TextCaret {
+                    anchor: notecraft_engine::TextPos::new(3, 0),
+                    head: notecraft_engine::TextPos::new(3, 8),
+                    ..crate::canvas::TextCaret::at(o, notecraft_engine::TextPos::new(3, 8))
+                });
+                app.canvas.editing = Some(o);
+                crate::review::open_link_dialog(app);
+            }
+        }
+        _ => {}
+    }
+    true
+}
+
 /// The ribbon states of [`RIBBON_SHOTS`]; `false` for other names.
 fn prepare_ribbon(app: &mut NoteApp, shot: &str) -> bool {
     use crate::ribbon::display::{RibbonDisplay, RibbonLayout};
@@ -255,7 +338,8 @@ fn prepare_ribbon(app: &mut NoteApp, shot: &str) -> bool {
 
 /// Puts `app` in the state named `shot` (unknown names leave it as it is).
 pub fn prepare(app: &mut NoteApp, shot: &str) {
-    if prepare_ribbon(app, shot) || prepare_platform(app, shot) || prepare_history(app, shot) || prepare_fonts(app, shot) {
+    if prepare_ribbon(app, shot) || prepare_platform(app, shot) || prepare_history(app, shot) || prepare_fonts(app, shot) || prepare_review(app, shot)
+    {
         return;
     }
     match shot {

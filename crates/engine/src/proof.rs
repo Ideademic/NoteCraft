@@ -319,6 +319,8 @@ mod tests {
         assert_eq!((m[0].start, m[0].end, m[0].word.as_str()), (6, 12, "qzxvbw"));
         assert!(check("The cat sat on the mat.", ProofLang::En).is_empty());
         assert!(check("qzxvbw", ProofLang::Other).is_empty(), "no proofing tools: no marks");
+        let two = check("Things to pack for the weekend: sunscren, a map and the camerra.", ProofLang::En);
+        assert_eq!(two.iter().map(|m| m.word.as_str()).collect::<Vec<_>>(), ["sunscren", "camerra"], "{two:?}");
     }
 
     #[test]

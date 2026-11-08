@@ -451,6 +451,12 @@ pub fn show(ui: &mut egui::Ui, state: &mut CanvasState, session: &mut Session, t
     pointer::cursor(ui, state, session, &v, &lay, &resp);
 }
 
+/// Where page point (x, y) was on screen last frame.
+pub fn page_to_screen(state: &CanvasState, x: f32, y: f32) -> Option<Pos2> {
+    let o = state.last_origin?;
+    Some(egui::pos2(o.x + x * state.scale(), o.y + y * state.scale()))
+}
+
 /// Where text position `pos` of note container `outline` is on screen (a zero-width caret rect),
 /// as last frame laid the page out. For the shell's popups and for tests.
 pub fn caret_screen_rect(
