@@ -211,10 +211,108 @@ fn decode_set(r: &mut Reader<'_>, ids: &[ExtendedGuid], depth: usize) -> Option<
     Some(set)
 }
 
+/// What kept content is, as far as NoteCraft can tell, for the placeholder the canvas draws.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpaqueKind {
+    Table,
+    AudioRecording,
+    VideoRecording,
+    /// Something else with a file in it.
+    File,
+    /// Anything else.
+    Other,
+}
+
+/// Kept content's kind, and where it sits and how big it is when its root object says (points).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OpaqueInfo {
+    pub kind: OpaqueKind,
+    /// Offset from the page's top-left corner.
+    pub pos: Option<(f32, f32)>,
+    pub size: Option<(f32, f32)>,
+}
+
+const AUDIO: &[&str] = &["wav", "wma", "mp3", "m4a", "aac", "ogg", "oga", "opus", "amr", "flac"];
+const VIDEO: &[&str] = &["mp4", "m4v", "wmv", "mov", "avi", "mkv", "webm", "3gp"];
+
+/// Reads what [`capture`] kept of an element (never fails: junk is [`OpaqueKind::Other`] with no
+/// geometry).
+pub fn describe(jcid: u32, data: &[u8]) -> OpaqueInfo {
+    let none = OpaqueInfo { kind: if jcid == crate::ids::jcid::TABLE_NODE { OpaqueKind::Table } else { OpaqueKind::Other }, pos: None, size: None };
+    let mut r = Reader::new(data);
+    if r.bytes(4).ok() != Some(&MAGIC[..]) || r.u8().ok() != Some(1) {
+        return none;
+    }
+    let Some(n) = r.u32().ok().map(|n| n as usize).filter(|n| (1..=MAX_OBJECTS).contains(n)) else { return none };
+    let ids = vec![ExtendedGuid::NIL; n];
+    let mut info = none;
+    let mut exts: Vec<String> = Vec::new();
+    for i in 0..n {
+        let Ok(_jcid) = r.u32() else { break };
+        let has_file = r.u8().ok();
+        if has_file.is_some_and(|f| f != 0) {
+            let Some(elen) = r.u32().ok().map(|x| x as usize) else { break };
+            let Some(ext) = r.bytes(elen).ok().map(from_utf16le) else { break };
+            let Some(dlen) = r.u32().ok().map(|x| x as usize) else { break };
+            if r.bytes(dlen).is_err() {
+                break;
+            }
+            exts.push(ext.trim_start_matches('.').to_ascii_lowercase());
+        } else if has_file.is_none() {
+            break;
+        }
+        let Some(props) = decode_set(&mut r, &ids, 0) else { break };
+        if i == 0 {
+            let f = |id: u32| props.f32(id).filter(|v| v.is_finite()).map(crate::util::hi_to_pt);
+            use crate::ids::prop;
+            info.pos = f(prop::OFFSET_FROM_PARENT_HORIZ)
+                .zip(f(prop::OFFSET_FROM_PARENT_VERT))
+                .filter(|(x, y)| (0.0..1e6).contains(x) && (0.0..1e6).contains(y));
+            info.size = f(prop::LAYOUT_MAX_WIDTH).zip(f(prop::LAYOUT_MAX_HEIGHT)).filter(|(w, h)| (1.0..1e5).contains(w) && (1.0..1e5).contains(h));
+        }
+    }
+    if info.kind == OpaqueKind::Other {
+        info.kind = if exts.iter().any(|e| AUDIO.contains(&e.as_str())) {
+            OpaqueKind::AudioRecording
+        } else if exts.iter().any(|e| VIDEO.contains(&e.as_str())) {
+            OpaqueKind::VideoRecording
+        } else if !exts.is_empty() {
+            OpaqueKind::File
+        } else {
+            OpaqueKind::Other
+        };
+    }
+    info
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use notecraft_doc::Guid;
+
+    #[test]
+    fn describes_kept_content() {
+        let g = |n| ExtendedGuid::new([4; 16], n);
+        let mut root = PropertySet::default();
+        root.push(crate::ids::prop::OFFSET_FROM_PARENT_HORIZ, PropertyValue::U32(2.0f32.to_bits()))
+            .push(crate::ids::prop::OFFSET_FROM_PARENT_VERT, PropertyValue::U32(4.0f32.to_bits()))
+            .push(crate::ids::prop::LAYOUT_MAX_WIDTH, PropertyValue::U32(3.0f32.to_bits()))
+            .push(crate::ids::prop::LAYOUT_MAX_HEIGHT, PropertyValue::U32(1.0f32.to_bits()))
+            .push(0x2000_1D9B, PropertyValue::Ids(vec![g(2)]));
+        let mut file = Object::new(g(2), 0x0008_0036, PropertySet::default());
+        file.file_data = Some(Arc::new(vec![1, 2, 3]));
+        file.file_ext = Some(".wma".into());
+        let space = ObjectSpace { id: g(100), roots: vec![], objects: vec![Object::new(g(1), 0x0006_0099, root), file], ..ObjectSpace::default() };
+        let data = capture(&space, &space.index(), g(1)).unwrap();
+        let info = describe(0x0006_0099, &data);
+        assert_eq!(info.kind, OpaqueKind::AudioRecording);
+        assert_eq!(info.pos, Some((72.0, 144.0)));
+        assert_eq!(info.size, Some((108.0, 36.0)));
+        assert_eq!(describe(crate::ids::jcid::TABLE_NODE, b"junk").kind, OpaqueKind::Table);
+        for cut in 0..data.len() {
+            let _ = describe(1, &data[..cut]);
+        }
+    }
     use notecraft_onestore::Object;
 
     #[test]

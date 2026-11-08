@@ -252,7 +252,7 @@ fn continuation(p: &Paragraph) -> Paragraph {
         Some(Tag::ToDo { .. }) => Some(Tag::ToDo { checked: false }),
         other => other,
     };
-    Paragraph { runs: Vec::new(), indent: p.indent, list: p.list, list_style: p.list_style, tag, style, align: p.align }
+    Paragraph { runs: Vec::new(), indent: p.indent, list: p.list, list_style: p.list_style, tag, style, align: p.align, lang: p.lang.clone() }
 }
 
 /// Deletes the text between `start` and `end` (merging the end paragraph into the start one);

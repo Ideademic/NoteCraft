@@ -210,6 +210,9 @@ pub mod prop {
     /// Note tag definition: the NoteCraft tag name ([`notecraft_doc::Tag::name`], UTF-16), so a
     /// tag reads back exactly even where its shape and label are shared or translated.
     pub const NC_TAG: u32 = 0x1FFC_000C;
+    /// Paragraph: the proofing language NoteCraft keeps (a BCP 47 tag, UTF-16), for tags without
+    /// an LCID (`zxx`) and so a language chosen on purpose reads back as chosen.
+    pub const NC_PARA_LANG: u32 = 0x1FFC_000D;
 
     // .onetoc2 (MS-ONE names these without numbering them; NoteCraft-chosen, see README).
     /// TOC: the entries (sections and section groups) in order.
