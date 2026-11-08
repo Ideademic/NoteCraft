@@ -28,8 +28,10 @@ USAGE:
         the low-level revision store objects (MS-ONESTORE) as JSON
   notecraft-cli convert <in> <out> [--section S] [--page P]
         convert by <out>'s extension: .onepkg, .json, .one (one section), .html (one file,
-        every page), .md, .txt, or a notebook folder (<out> ending in / or
+        every page), .md, .txt, .pdf, or a notebook folder (<out> ending in / or
         Open Notebook.onetoc2, or an existing folder)
+        PDF: [--scope page|section|notebook] [--paper fit|letter|a4|legal|a5] [--landscape]
+        [--no-header] [--bundled-fonts] (default: every page, each one sheet its size)
   notecraft-cli run [--notebook <in>] [--script FILE|-] [--cmd 'id={json}']… [--save OUT]…
         run engine commands headlessly (on <in>, else on a new \"My Notebook\"), print each
         result as a JSON line, then save the current notebook (by extension, as convert).
@@ -134,14 +136,33 @@ fn run(args: &[String]) -> Result<String, Fail> {
             Ok(summary::dump(&nb))
         }
         "convert" => {
-            let p = args::parse(cmd, rest, &[valued("--section"), valued("--page")])?;
+            let p = args::parse(
+                cmd,
+                rest,
+                &[
+                    valued("--section"),
+                    valued("--page"),
+                    valued("--scope"),
+                    valued("--paper"),
+                    flag("--landscape"),
+                    flag("--no-header"),
+                    flag("--bundled-fonts"),
+                ],
+            )?;
             let [input, output] = p.positionals.as_slice() else {
                 return Err(Fail::usage(format!("convert: needs <in> and <out>\n\n{USAGE}")));
             };
             // Check the output kind before reading a large input.
             convert::OutKind::of(output)?;
+            let pdf = convert::PdfArgs::parse(
+                p.value("--scope"),
+                p.value("--paper"),
+                p.has("--landscape"),
+                p.has("--no-header"),
+                p.has("--bundled-fonts"),
+            )?;
             let nb = summary::select(&convert::open_input(input)?, p.value("--section"), p.value("--page"))?;
-            let what = convert::write(&nb, output)?;
+            let what = convert::write_with(&nb, output, &pdf)?;
             Ok(format!("wrote {what}\n"))
         }
         "run" => {

@@ -21,6 +21,7 @@ notecraft-one = { path = "crates/one" }
 notecraft-onepkg = { path = "crates/onepkg" }
 notecraft-formats = { path = "crates/formats" }
 notecraft-printout = { path = "crates/printout" }
+notecraft-pdf = { path = "crates/pdf" }
 notecraft-engine = { path = "crates/engine" }
 notecraft-ui-egui = { path = "crates/ui-egui" }
 
@@ -45,6 +46,19 @@ cab = "0.6"
 # CRCs (RFC 3309 for .one, MsoCrc32 for .onetoc2) are hand-rolled in notecraft-onestore from the
 # public specs: no crate needed.
 craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f9049f9270955caffb5bee5997aebf7", version = "=0.1.0", default-features = false, features = ["raster", "write"] }
+# PDF export (notecraft-pdf): text is laid out with epaint's CPU fonts (the canvas's line
+# breaks) without egui; skrifa (MIT OR Apache-2.0, epaint's version) maps characters to glyphs
+# for the PDF text; installed fonts come from craft-font-catalog at craft-ui's rev.
+epaint = { version = "0.37", default-features = false }
+skrifa = { version = "0.44", default-features = false, features = ["std"] }
+# The shaper epaint lays text out with (MIT), at its version: the PDF writes the same glyphs
+# (ligatures, kerning, marks) the canvas draws.
+harfrust = "0.12"
+# Geometry types of craft-pdf's interpreter (tests that read exported PDFs back).
+kurbo = "0.13"
+craft-font-catalog = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }
+# Desktop printing: CUPS `lp` and the Windows spooler, at craft-ui's rev (its printing panel).
+craft-print = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }
 
 # ui (same versions and craft-libs revs as WordCraft)
 egui = "0.37"

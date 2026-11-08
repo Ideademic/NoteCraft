@@ -99,7 +99,7 @@ fn help_version_and_usage_errors() {
     assert_eq!(code(&["convert", "x.one", "y.docx"]), 2, "the output kind is checked first");
     assert_eq!(code(&["run", "--cmd", "page.new={oops"]), 2);
     assert_eq!(code(&["run", "--cmd", "no.such.command"]), 2);
-    assert_eq!(code(&["run", "--save", "out.pdf"]), 2);
+    assert_eq!(code(&["run", "--save", "out.docx"]), 2);
 }
 
 #[test]
@@ -192,6 +192,29 @@ fn text_exports_and_selection() {
     assert!(full.contains("-- Birds [1 ink stroke]"), "{full}");
     let model: Value = serde_json::from_str(&ok(&["dump", &pkg, "--json"])).unwrap();
     assert_eq!(model["name"], "Field Notes");
+}
+
+#[test]
+fn pdf_exports() {
+    let s = Scratch::new("pdf");
+    let (pkg, _) = make_notebook(&s);
+    let all = s.path("all.pdf");
+    let one = s.path("one.pdf");
+    let a4 = s.path("a4.pdf");
+    assert!(ok(&["convert", &pkg, &all, "--bundled-fonts"]).contains("all.pdf"));
+    ok(&["convert", &pkg, &one, "--scope", "page", "--bundled-fonts"]);
+    ok(&["convert", &pkg, &a4, "--paper", "a4", "--landscape", "--no-header", "--bundled-fonts"]);
+    let pages = |p: &str| {
+        let b = std::fs::read(p).unwrap();
+        assert!(b.starts_with(b"%PDF-"), "{p}");
+        notecraft_pdf::thumbnails::sheet_count(&b)
+    };
+    assert!(pages(&all) >= 2, "every page of every section");
+    assert_eq!(pages(&one), 1, "--scope page: the first page");
+    assert!(pages(&a4) >= 2);
+    assert!(String::from_utf8_lossy(&std::fs::read(&all).unwrap()).contains("/Outlines"), "bookmarks");
+    assert_eq!(code(&["convert", &pkg, &s.path("x.pdf"), "--paper", "tabloid"]), 2);
+    assert_eq!(code(&["convert", &pkg, &s.path("x.pdf"), "--scope", "shelf"]), 2);
 }
 
 #[test]

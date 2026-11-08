@@ -10,6 +10,7 @@ pub mod nav;
 pub mod notebook;
 pub mod outline;
 pub mod page;
+pub mod pdf;
 pub mod search;
 pub mod section;
 pub mod shapes;
@@ -37,6 +38,7 @@ pub fn all() -> Vec<CommandSpec> {
     v.extend(view::specs());
     v.extend(edit::specs());
     v.extend(file::specs());
+    v.extend(pdf::specs());
     v.extend(nav::specs());
     v.extend(search::specs());
     v
