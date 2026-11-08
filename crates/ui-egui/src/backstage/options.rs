@@ -25,7 +25,7 @@ pub fn language(ui: &mut Ui, app: &mut NoteApp) {
     let shown = if auto { auto_label() } else { Lang::from_pref(&app.ui.prefs.language).name().to_owned() };
     let mut pick: Option<String> = None;
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(tl!("Interface language:")).font(crate::theme::regular(12.5)));
+        ui.label(egui::RichText::new(tl!("Interface language:")).font(crate::theme::regular(12.5)).color(app.tokens.text_dim));
         let r = craft_ui::ComboBox::from_id_salt("nc_language").width(260.0).selected_text(shown).show_ui(ui, |ui| {
             if ui.selectable_label(auto, auto_label()).clicked() {
                 pick = Some(AUTO.to_owned());

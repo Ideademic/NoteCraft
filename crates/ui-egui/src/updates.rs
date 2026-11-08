@@ -35,6 +35,8 @@ pub struct Updates {
     pub manual_window_open: bool,
 }
 
+// On the web every field is a plain default, but the desktop's aren't.
+#[cfg_attr(target_arch = "wasm32", allow(clippy::derivable_impls))]
 impl Default for Updates {
     fn default() -> Self {
         Updates {
@@ -63,9 +65,9 @@ impl Updates {
         self.startup_check
     }
 
-    /// Answers checks from `source` instead of GitHub (tests).
-    #[cfg(all(test, not(target_arch = "wasm32")))]
-    pub(crate) fn with_source(mut self, source: craft_update::updater::CheckSource) -> Self {
+    /// Answers checks from `source` instead of GitHub (tests and screenshots).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn with_source(mut self, source: craft_update::updater::CheckSource) -> Self {
         self.updater = craft_update::updater::Updater::new(&UPDATE_APP, env!("CARGO_PKG_VERSION")).with_source(source);
         self
     }
