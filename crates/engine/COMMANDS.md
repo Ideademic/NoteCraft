@@ -156,10 +156,12 @@ inserts.
 | `format.font` |  | yes | `{"outline": guid, "start"?: {"para","char"}, "end"?: {"para","char"}, "page"?: guid, "font": string \| null (default font)}` | Font family; `null` = default font. |
 | `format.clear` | `Mod+Shift+N` | yes | `{"outline": guid, "start"?: {"para","char"}, "end"?: {"para","char"}, "page"?: guid}` | Clear All Formatting: plain runs (links kept), paragraphs back to Normal (lists and tags kept). |
 | `format.style` |  | yes | `{"outline": guid, "start"?: {"para","char"}, "end"?: {"para","char"}, "page"?: guid, "style": "normal"\|"heading1".."heading6"\|"title"\|"quote"\|"code"}` | Paragraph style of every paragraph the range touches. |
-| `format.bullets` | `Mod+.` | yes | `{"outline": guid, "start"?: {"para","char"}, "end"?: {"para","char"}, "page"?: guid, "value"?: bool}` | Toggles bullets on the paragraphs (all bulleted → off; else on, replacing numbering). |
-| `format.numbering` | `Mod+/` | yes | `{"outline": guid, "start"?: {"para","char"}, "end"?: {"para","char"}, "page"?: guid, "value"?: bool}` | Toggles numbering likewise. |
+| `format.bullets` | `Mod+.` | yes | `{"outline": guid, "start"?: {"para","char"}, "end"?: {"para","char"}, "page"?: guid, "style"?: "disc"\|"circle"\|"square"\|"dash"\|"arrow" (default: by level), "value"?: bool}` | Toggles bullets on the paragraphs (all bulleted → off; else on, replacing numbering). With `style`, sets the bullet. |
+| `format.numbering` | `Mod+/` | yes | `{"outline": guid, "start"?: {"para","char"}, "end"?: {"para","char"}, "page"?: guid, "style"?: "decimal"\|"lowerAlpha"\|"upperAlpha"\|"lowerRoman"\|"upperRoman" (or "1.", "a.", "A.", "i.", "I."; default: by level), "value"?: bool}` | Toggles numbering likewise. With `style`, sets the number format. |
 | `format.indent` | `Alt+Shift+Right` | yes | `{"outline": guid, "start"?: {"para","char"}, "end"?: {"para","char"}, "page"?: guid}` | Indent +1 (max 8) for the paragraphs. |
 | `format.outdent` | `Alt+Shift+Left` | yes | `{"outline": guid, "start"?: {"para","char"}, "end"?: {"para","char"}, "page"?: guid}` | Indent −1. |
+| `format.align` |  | yes | `{"outline": guid, "start"?: {"para","char"}, "end"?: {"para","char"}, "page"?: guid, "align": "left"\|"center"\|"right"\|"justify"}` | Paragraph alignment of every paragraph the range touches. |
+| `format.tag` |  | yes | `{"outline": guid, "start"?: {"para","char"}, "end"?: {"para","char"}, "page"?: guid, "tag": "toDo"\|"important"\|"question"\|"rememberForLater"\|"definition"\|"highlight"\|"contact"\|"address"\|"phone"\|"idea"\|"critical" \| null (remove every tag), "value"?: bool (default: toggle)}` | Tags the paragraphs (one tag per paragraph: it replaces another); all already tagged so → removes. |
 | `format.tag.todo` | `Mod+1` | yes | `{"outline": guid, "start"?: {"para","char"}, "end"?: {"para","char"}, "page"?: guid, "value"?: bool}` | Toggles a To Do tag: adds an unchecked one to untagged paragraphs (checked ones stay checked); all already To Do → removes. |
 | `format.toggleTodo` |  | yes | `{"outline": guid, "start"?: {"para","char"}, "end"?: {"para","char"}, "page"?: guid, "checked"?: bool}` | Checks/unchecks the To Do boxes in the range (click on a box: pass `para`). Without `checked`: all become checked unless all already are. Paragraphs without a To Do are left alone. |
 
@@ -260,7 +262,10 @@ Insert › Table and the contextual Table tab. Tables hold rows of cells; a cell
 | `table.deleteRow` |  | yes | table target | Deletes the selected rows (all of them: the table). → `{cell, caret}` |
 | `table.deleteColumn` |  | yes | table target | Deletes the selected columns (all of them: the table). → `{cell, caret}` |
 | `table.deleteTable` |  | yes | table target | Deletes the table; an empty paragraph is left if nothing else is. → `{cell: null, caret}` |
-| `table.selectCell` / `selectRow` / `selectColumn` / `selectTable` |  | — | table target | The cells to select. → `{cells}` |
+| `table.selectCell` |  | — | table target | The cell to select. → `{cells}` |
+| `table.selectRow` |  | — | table target | The rows of the cell or cells (Select Rows). → `{cells}` |
+| `table.selectColumn` |  | — | table target | The columns of the cell or cells (Select Columns). → `{cells}` |
+| `table.selectTable` |  | — | table target | Every cell of the table. → `{cells}` |
 | `table.setColumnWidth` |  | yes | table target + `"col"?: number (default: the cell's), "width": points` | Sets (and locks) a column's width. Pass a `mergeKey` while dragging a border. |
 | `table.shading` |  | yes | table target + `"color": "#rrggbb" \| null` | Shades the cell, the selected cells, or (`block` alone) every cell. |
 | `table.borders` |  | yes | table target + `"value"?: bool (default: toggle)` | Shows or hides the borders (Hide Borders). → `{borders}` |

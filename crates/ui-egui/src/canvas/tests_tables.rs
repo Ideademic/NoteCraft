@@ -365,6 +365,14 @@ fn shot_page(session: &mut Session) {
     }
     o.blocks.push(Block::table(t));
     o.blocks.push(Paragraph::plain("Tables keep their columns, shading and borders.").into());
+    for (text, tag) in [
+        ("Book the meeting room", notecraft_doc::Tag::ToDo { checked: true }),
+        ("Send the agenda to Sam", notecraft_doc::Tag::ToDo { checked: false }),
+        ("Who signs off the plan?", notecraft_doc::Tag::Question),
+        ("Demo is on Friday", notecraft_doc::Tag::Important),
+    ] {
+        o.blocks.push(Paragraph { tag: Some(tag), ..Paragraph::plain(text) }.into());
+    }
     o.width = 400.0;
     let mut hidden = Table::from_text(&[vec!["Borders hidden".into(), "(dashed while editing)".into()], vec!["Name".into(), "Phone".into()]], 120.0);
     hidden.borders = false;

@@ -75,11 +75,14 @@ A crash loses notes. **This outranks feature work.**
 ## Licences
 Dependencies must be within the allowlist above, and NoteCraft narrows it: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, OFL-1.1, CC0-1.0 (plus Unicode-3.0, Zlib and BSL-1.0 only where WordCraft's lock already carries them transitively). For spelling data only (craft-proof's word lists, recorded in `ATTRIBUTION.md`), the public-domain Moby word list (`LicenseRef-Public-Domain`) and SCOWL's dictionaries under their own permissive licence are allowed too. **No MPL, GPL, LGPL or AGPL** (so no `onenote_parser`). Every dependency is declared once in the root `[workspace.dependencies]`; check its licence before adding it.
 
+Fonts: release builds embed craft-fonts' Carlito, Caladea and Liberation faces (OFL-1.1, listed in `NOTICE` and `ATTRIBUTION.md`) through `crates/fonts/build.rs`; egui's own faces (`epaint_default_fonts`: OFL-1.1 and Ubuntu-font-1.0) come with egui as in every Craft app. The update checker (craft-update, desktop only) brings rustls (Apache-2.0 OR ISC OR MIT) and `ring` (Apache-2.0 AND ISC); `webpki-root-certs` (CDLA-Permissive-2.0) is in `Cargo.lock` only for wasm builds of rustls-platform-verifier, which NoteCraft never compiles.
+
 ## Architecture
 | Layer | Crate (`notecraft-*`) | Job |
 |---|---|---|
 | L0 | `geom` | points, half-inches (MS-ONE layout, 36 pt), ink units (0.01 mm), zoom, `Point`/`Size`/`Rect` |
-| L1 | `doc` | the model: `Notebook` ▸ `SectionEntry` (`Section` / `SectionGroup`) ▸ `Page` ▸ `PageElement`s + page-level `InkStroke`s; `Guid`, `Color` |
+| L0 (standalone) | `fonts` | the installed fonts (craft-font-catalog), the metric-compatible faces embedded from craft-fonts (`CRAFT_FONTS_DIR`), substitutes for a missing font, fonts the user adds (TTF, OTF, WOFF and WOFF2 via `wuff`) |
+| L1 | `doc` | the model: `Notebook` ▸ `SectionEntry` (`Section` / `SectionGroup`) ▸ `Page` ▸ `PageElement`s (outlines of paragraphs and `Table`s, pictures, printouts, attachments) + page-level `InkStroke`s; page versions and the notebook's `RecycleBin`; `Guid`, `Color` |
 | L2 | `onestore` | MS-ONESTORE container read/write (header, file node lists, property sets, transaction log, CRCs) |
 | L2 | `one` | MS-ONE mapping store ↔ model; `.onetoc2`; notebook folders (`onestore` → `one` → `onepkg` may depend on each other in that order) |
 | L2 | `onepkg` | `.onepkg` (Cabinet) via `cab` |

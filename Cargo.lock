@@ -3093,7 +3093,7 @@ dependencies = [
 
 [[package]]
 name = "notecraft"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "arboard",
  "chrono",
@@ -3115,7 +3115,7 @@ dependencies = [
 
 [[package]]
 name = "notecraft-cli"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "notecraft-doc",
  "notecraft-engine",
@@ -3129,7 +3129,7 @@ dependencies = [
 
 [[package]]
 name = "notecraft-doc"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3143,7 +3143,7 @@ dependencies = [
 
 [[package]]
 name = "notecraft-engine"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3166,7 +3166,7 @@ dependencies = [
 
 [[package]]
 name = "notecraft-fonts"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "brotli-decompressor 5.0.3",
  "craft-font-catalog",
@@ -3179,7 +3179,7 @@ dependencies = [
 
 [[package]]
 name = "notecraft-formats"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3192,14 +3192,14 @@ dependencies = [
 
 [[package]]
 name = "notecraft-geom"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "notecraft-one"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "log",
@@ -3211,7 +3211,7 @@ dependencies = [
 
 [[package]]
 name = "notecraft-onepkg"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "cab",
  "log",
@@ -3222,7 +3222,7 @@ dependencies = [
 
 [[package]]
 name = "notecraft-onestore"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "log",
  "notecraft-doc",
@@ -3231,7 +3231,7 @@ dependencies = [
 
 [[package]]
 name = "notecraft-pdf"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "craft-pdf",
@@ -3250,7 +3250,7 @@ dependencies = [
 
 [[package]]
 name = "notecraft-printout"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "craft-pdf",
  "image",
@@ -3263,7 +3263,7 @@ dependencies = [
 
 [[package]]
 name = "notecraft-ui-egui"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3291,7 +3291,7 @@ dependencies = [
 
 [[package]]
 name = "notecraft-web"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "craft-web-host",
  "eframe",
@@ -6884,7 +6884,7 @@ checksum = "9440ea3e5aeabb0ac63af70daf835274065238cdd0cec83418f417eae38bacee"
 
 [[package]]
 name = "xtask"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "serde_json",
 ]
