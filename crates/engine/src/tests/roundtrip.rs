@@ -48,7 +48,7 @@ fn built() -> Session {
 
 /// Positions pass through half-inch floats and ink units: round to 1/10 pt. Where the file came
 /// from (`source`) and modification times aren't content.
-fn normalize(mut s: Section) -> Section {
+pub(super) fn normalize(mut s: Section) -> Section {
     let r = |v: &mut f32| *v = (*v * 10.0).round() / 10.0;
     s.source = Default::default();
     // Versions are pages too: normalised the same way (as a one-page section).

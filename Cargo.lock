@@ -3149,6 +3149,7 @@ dependencies = [
  "chrono",
  "craft-pdf",
  "craft-proof",
+ "kurbo",
  "log",
  "notecraft-doc",
  "notecraft-formats",

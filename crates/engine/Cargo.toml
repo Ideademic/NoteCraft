@@ -28,3 +28,7 @@ craft-proof = { workspace = true }
 craft-pdf = { workspace = true }
 # The spelling queue's time budget in the browser.
 web-time = { workspace = true }
+
+[dev-dependencies]
+# Geometry types of craft-pdf's interpreter (the 0.2.0 test reads an exported PDF's text back).
+kurbo = { workspace = true }

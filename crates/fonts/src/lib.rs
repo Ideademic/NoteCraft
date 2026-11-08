@@ -638,6 +638,43 @@ mod tests {
         assert!(sub.is_some_and(|s| s.substituted && s.family == "Ubuntu"), "Ubuntu is in the sans fallbacks");
     }
 
+    /// Font files the user adds are hostile: truncated and bit-flipped TrueType, WOFF and WOFF2
+    /// files are refused or added, never a panic, and what is added still resolves.
+    #[test]
+    fn hostile_font_files_never_panic() {
+        let lib = empty_library(&[]);
+        let ttf = test_font().to_vec();
+        let woff = crate::web_font::tests::woff1(&ttf);
+        // A WOFF2 header (signature, flavour, length, table count) in front of junk.
+        let mut woff2 = b"wOF2\0\x01\0\0".to_vec();
+        woff2.extend_from_slice(&[0, 0, 0x10, 0, 0, 3, 0, 0]);
+        woff2.extend((0..4096u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8));
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for base in [&ttf, &woff, &woff2] {
+            for len in (0..base.len()).step_by((base.len() / 200).max(1)) {
+                let _ = crate::web_font::decode_font_file(&base[..len]);
+                let _ = face_parses(&base[..len], 0);
+            }
+            for _ in 0..200 {
+                let mut b = base.clone();
+                for _ in 0..1 + next() % 8 {
+                    let i = (next() as usize) % b.len();
+                    b[i] ^= 1 << (next() % 8);
+                }
+                let _ = lib.add_font_file(&b);
+            }
+        }
+        for family in lib.families().iter() {
+            let _ = lib.resolve(family, true, true);
+        }
+    }
+
     #[test]
     fn the_installed_fonts_are_read_without_waiting() {
         // The process's own library: `families` and `resolve` answer at once, scanned or not.
