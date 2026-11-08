@@ -342,7 +342,7 @@ fn simplified_draw_tools_set_the_canvas_tool() {
 #[test]
 fn a_narrow_window_moves_commands_into_more() {
     for width in [400.0, 260.0, 120.0] {
-        for tab in [RibbonTab::Home, RibbonTab::Insert, RibbonTab::Draw, RibbonTab::View] {
+        for tab in [RibbonTab::Home, RibbonTab::Insert, RibbonTab::Draw, RibbonTab::History, RibbonTab::View] {
             let mut a = simplified_app();
             a.ui.ribbon_tab = tab;
             let mut h = harness_sized(a, width, 700.0);
@@ -357,6 +357,7 @@ fn a_narrow_window_moves_commands_into_more() {
                 RibbonTab::Home | RibbonTab::File => "To Do Tag",
                 RibbonTab::Insert => "Date & Time",
                 RibbonTab::Draw => "Delete",
+                RibbonTab::History => "Notebook Recycle Bin",
                 RibbonTab::View => "Dark Mode",
             };
             let _ = h.get_by_label(probe);

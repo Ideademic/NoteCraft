@@ -86,8 +86,8 @@ pub fn section(store: &Store, name: &str) -> Result<Section> {
     })
 }
 
-struct Reader {
-    unsupported: bool,
+pub(crate) struct Reader {
+    pub(crate) unsupported: bool,
 }
 
 /// A printout being put together from its file and page pictures.
@@ -144,7 +144,7 @@ impl PageParts {
 }
 
 impl Reader {
-    fn page(&mut self, space: &ObjectSpace) -> Option<Page> {
+    pub(crate) fn page(&mut self, space: &ObjectSpace) -> Option<Page> {
         let v = View::new(space);
         let manifest = v.root(role::CONTENT)?;
         let node = v.children(&manifest.props, prop::CONTENT_CHILD_NODES).into_iter().find(|o| o.jcid == jcid::PAGE_NODE)?;
@@ -175,7 +175,8 @@ impl Reader {
             rule: string(np, prop::NC_RULE_LINES).and_then(|s| RuleLines::parse(&s)).unwrap_or_default(),
         };
         let (elements, ink) = parts.finish();
-        Some(Page { id, title, created, modified, level, background, elements, ink })
+        let versions = crate::versions::read(self, space, manifest);
+        Some(Page { id, title, created, modified, level, background, elements, ink, versions })
     }
 
     fn title_text(&mut self, v: &View<'_>, title: &Object) -> String {

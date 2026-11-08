@@ -50,6 +50,18 @@ pub enum Extra {
     Idea,
     /// The Critical tag: an exclamation mark in a red disc.
     Critical,
+    /// A waste bin with a circular arrow: the notebook recycle bin.
+    RecycleBin,
+    /// Two pages stacked with a clock badge: page versions.
+    PageVersions,
+    /// A page with a blue dot: unread.
+    Unread,
+    /// A page with a green check: mark as read.
+    MarkRead,
+    /// A page with a pencil and a clock: recent edits.
+    RecentEdits,
+    /// A clock with a back arrow round it: the History group.
+    History,
 }
 
 impl Extra {
@@ -84,6 +96,12 @@ impl Extra {
         Extra::Phone,
         Extra::Idea,
         Extra::Critical,
+        Extra::RecycleBin,
+        Extra::PageVersions,
+        Extra::Unread,
+        Extra::MarkRead,
+        Extra::RecentEdits,
+        Extra::History,
     ];
 }
 
@@ -95,7 +113,7 @@ pub fn paint_mode(painter: &egui::Painter, rect: egui::Rect, icon: Extra, ink: C
 }
 
 fn draw(p: &Pen<'_>, icon: Extra) {
-    let _ = draw_files(p, icon) || draw_tags_view(p, icon) || draw_more_tags(p, icon);
+    let _ = draw_files(p, icon) || draw_tags_view(p, icon) || draw_more_tags(p, icon) || draw_history(p, icon);
 }
 
 /// The tags beyond To Do, Important and Question (original NoteCraft drawings).
@@ -325,6 +343,62 @@ fn draw_tags_view(p: &Pen<'_>, icon: Extra) -> bool {
             p.rline(&[(11.5, 6.5), (11.5, 2.5), (2.5, 2.5), (2.5, 11.5), (6.5, 11.5)], 1.0, K);
             p.rline(&[(16.5, 11.5), (16.5, 7.5), (7.5, 7.5), (7.5, 16.5), (11.5, 16.5)], 1.0, B);
             p.rect((12.5, 12.5, 21.5, 21.5), 1.0, B, B);
+        }
+        _ => return false,
+    }
+    true
+}
+
+/// The History tab's icons (original NoteCraft drawings).
+fn draw_history(p: &Pen<'_>, icon: Extra) -> bool {
+    match icon {
+        Extra::RecycleBin => {
+            // Lid and handle, a tapered bin with ribs, a green circular arrow on its front.
+            p.seg((3.5, 5.5), (20.5, 5.5), K);
+            p.rline(&[(9.0, 5.5), (9.5, 3.0), (14.5, 3.0), (15.0, 5.5)], 0.6, K);
+            p.rshape(&[(5.0, 5.5), (19.0, 5.5), (17.5, 21.0), (6.5, 21.0)], 1.0, t(B), K);
+            let mut arc = arc_pts((12.0, 13.5), 3.6, 3.6, 200.0, 470.0);
+            if let Some(&(x, y)) = arc.last() {
+                arc.push((x + 1.6, y - 0.6));
+            }
+            p.line_w(&arc, G, 1.0);
+            p.poly(&[(7.6, 11.4), (10.4, 11.0), (8.6, 13.4)], G, N);
+        }
+        Extra::PageVersions => {
+            // An older page behind, the current one in front, a clock badge.
+            p.rline(&[(7.0, 4.5), (7.0, 2.0), (17.0, 2.0), (17.0, 4.5)], 0.6, K.a(0.6));
+            p.rline(&[(4.5, 7.0), (4.5, 4.5), (19.5, 4.5), (19.5, 7.0)], 0.6, K.a(0.8));
+            p.rline(&[(12.0, 22.0), (3.0, 22.0), (3.0, 7.0), (21.0, 7.0), (21.0, 13.0)], 1.0, K);
+            p.seg_w((6.0, 11.0), (17.0, 11.0), K.a(0.5), 0.85);
+            p.seg_w((6.0, 14.5), (11.0, 14.5), K.a(0.5), 0.85);
+            p.clock_badge((17.5, 18.0), 5.0, B);
+        }
+        Extra::Unread => {
+            p.page(4.0, 2.0, 18.5, 22.0, N, K);
+            for y in [9.0, 12.5, 16.0] {
+                p.seg_w((7.0, y), (13.0, y), K.a(0.5), 0.85);
+            }
+            p.circle((18.0, 17.5), 4.2, B, N);
+        }
+        Extra::MarkRead => {
+            p.page(4.0, 2.0, 18.5, 22.0, N, K);
+            for y in [9.0, 12.5] {
+                p.seg_w((7.0, y), (13.0, y), K.a(0.5), 0.85);
+            }
+            p.badge((18.0, 18.0), 5.0, G, Glyph::Check);
+        }
+        Extra::RecentEdits => {
+            p.page(3.0, 2.0, 17.5, 22.0, N, K);
+            p.seg_w((6.0, 8.5), (12.5, 8.5), K.a(0.5), 0.85);
+            p.seg_w((6.0, 12.0), (10.0, 12.0), K.a(0.5), 0.85);
+            p.clock_badge((17.0, 17.0), 5.5, Y);
+        }
+        Extra::History => {
+            let mut arc = arc_pts((12.0, 12.0), 8.5, 8.5, 160.0, 470.0);
+            arc.reverse();
+            p.line_w(&arc, K, 1.0);
+            p.poly(&[(1.8, 11.2), (6.4, 11.2), (4.1, 14.4)], K, N);
+            p.line_w(&[(12.0, 7.0), (12.0, 12.0), (15.5, 14.0)], B, 1.0);
         }
         _ => return false,
     }

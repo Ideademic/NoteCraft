@@ -12,12 +12,14 @@
 mod b64;
 pub mod color;
 pub mod guid;
+pub mod history;
 pub mod ink;
 pub mod notebook;
 pub mod page;
 
 pub use color::Color;
 pub use guid::Guid;
+pub use history::{DeletedPage, DeletedSection, PageVersion, RecycleBin};
 pub use ink::{InkPoint, InkStroke, InkTool};
 pub use notebook::{EntryPath, Notebook, SearchHit, Section, SectionEntry, SectionGroup, SourceInfo};
 pub use notecraft_geom as geom;

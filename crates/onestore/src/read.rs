@@ -11,7 +11,7 @@ use crate::filenode::{FileNode, ListReader, id};
 use crate::guid::consts;
 use crate::header::{Fcr, Header};
 use crate::txlog::TransactionLog;
-use crate::{CompactId, Error, ExtendedGuid, Object, ObjectSpace, Result, Store, propset};
+use crate::{CompactId, ContextRevision, Error, ExtendedGuid, Object, ObjectSpace, Result, Store, propset};
 
 /// Most file nodes read from one file.
 const MAX_NODES: usize = 4_000_000;
@@ -21,6 +21,8 @@ const MAX_OBJECTS: usize = 1_000_000;
 const MAX_REVISION_CHAIN: usize = 10_000;
 /// Most object spaces in one file.
 const MAX_SPACES: usize = 100_000;
+/// Most non-default revision contexts read from one object space (a page's version history).
+const MAX_CONTEXTS: usize = 256;
 
 /// JCID flag bits (§2.6.14).
 pub const JCID_IS_BINARY: u32 = 1 << 16;
@@ -171,13 +173,37 @@ impl<'a> Ctx<'a> {
             .map(|(_, rid)| *rid)
             .or_else(|| manifests.last().map(|m| m.rid))
             .ok_or_else(|| Error::Corrupt("object space without revisions".into()))?;
-        let chain = revision_chain(&manifests, target)?;
+        let rev = self.revision(&manifests, target)?;
+        // Other contexts with role 1: the newest label of each wins.
+        let mut seen: Vec<ExtendedGuid> = Vec::new();
+        let mut contexts = Vec::new();
+        for ((ctx, role), rid) in labels.iter().rev() {
+            if ctx.is_nil() || *role != 1 || seen.contains(ctx) {
+                continue;
+            }
+            seen.push(*ctx);
+            if contexts.len() >= MAX_CONTEXTS {
+                self.warnings.push("too many revision contexts; the rest were skipped".into());
+                break;
+            }
+            match self.revision(&manifests, *rid) {
+                Ok(r) => contexts.push(ContextRevision { context: *ctx, roots: r.roots, objects: r.objects }),
+                Err(e) => log::debug!("revision context skipped: {e}"),
+            }
+        }
+        contexts.reverse();
+        Ok(ObjectSpace { id: gosid, roots: rev.roots, objects: rev.objects, contexts })
+    }
+
+    /// The objects and roots of revision `target` and its dependencies.
+    fn revision(&mut self, manifests: &[Manifest<'_, 'a>], target: ExtendedGuid) -> Result<Revision> {
+        let chain = revision_chain(manifests, target)?;
         let mut rev = Revision::default();
         let mut table = GidTable::new();
         for m in chain {
             table = self.apply_manifest(m, &table, &mut rev)?;
         }
-        Ok(ObjectSpace { id: gosid, roots: rev.roots, objects: rev.objects })
+        Ok(rev)
     }
 
     /// Applies one revision manifest on top of `rev`; returns its global id table (used by the

@@ -99,7 +99,7 @@ struct PageWriter {
 
 /// Writes one page as its object space; also returns the page metadata (copied into the
 /// section's page series).
-fn page_space(page: &Page) -> Result<(ObjectSpace, PropertySet)> {
+pub(crate) fn page_space(page: &Page) -> Result<(ObjectSpace, PropertySet)> {
     let id = ExtendedGuid::from_guid(if page.id.is_nil() { Guid::new() } else { page.id }, 1);
     let mut w = PageWriter {
         b: SpaceBuilder::new(id),
@@ -161,7 +161,9 @@ fn page_space(page: &Page) -> Result<(ObjectSpace, PropertySet)> {
     w.b.root(role::CONTENT, manifest_id);
     w.b.root(role::METADATA, meta_id);
     w.b.root(role::VERSION_METADATA, rev_id);
-    Ok((w.b.finish(), meta))
+    let mut space = w.b.finish();
+    crate::versions::attach(&mut space, manifest_id, page)?;
+    Ok((space, meta))
 }
 
 fn indents() -> PropertyValue {

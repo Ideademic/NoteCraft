@@ -51,6 +51,16 @@ fn built() -> Session {
 fn normalize(mut s: Section) -> Section {
     let r = |v: &mut f32| *v = (*v * 10.0).round() / 10.0;
     s.source = Default::default();
+    // Versions are pages too: normalised the same way (as a one-page section).
+    for page in &mut s.pages {
+        for v in &mut page.versions {
+            let mut one = Section::new("v", notecraft_doc::Color::WHITE);
+            one.pages.push((*v.page).clone());
+            if let Some(p) = normalize(one).pages.pop() {
+                v.page = std::sync::Arc::new(p);
+            }
+        }
+    }
     for page in &mut s.pages {
         page.modified = page.created;
         for e in &mut page.elements {

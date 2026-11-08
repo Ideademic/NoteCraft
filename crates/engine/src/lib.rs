@@ -23,6 +23,7 @@ pub mod ids;
 pub mod io;
 mod session;
 pub mod text;
+pub mod unread;
 
 use std::collections::HashMap;
 use std::sync::LazyLock;

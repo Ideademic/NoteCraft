@@ -277,3 +277,31 @@ fn samples() {
         }
     }
 }
+
+#[test]
+fn the_recycle_bin_and_page_versions_stay_out_of_the_pdf() {
+    let mut nb = notecraft_doc::Notebook::new("Book");
+    let mut sec = Section::new("Live", Color::NOTECRAFT);
+    let mut page = Page::new("Keepme");
+    let mut old = Page::new("Oldversion");
+    old.elements.push(PageElement::new(ElementKind::Outline(Outline::with_text(Point::new(36.0, 108.0), "Stalecontent"))));
+    page.versions.push(notecraft_doc::PageVersion::of(&old));
+    sec.pages.push(page);
+    nb.sections.push(notecraft_doc::SectionEntry::Section(sec));
+    let mut gone = Section::new("Gonesection", Color::WHITE);
+    gone.pages.push(Page::new("Binnedsectionpage"));
+    nb.recycle_bin.sections.push(notecraft_doc::DeletedSection { section: gone, deleted: notecraft_doc::now(), group_path: vec![], index: 0 });
+    nb.recycle_bin.pages.push(notecraft_doc::DeletedPage {
+        page: Page::new("Binnedpage"),
+        deleted: notecraft_doc::now(),
+        section: notecraft_doc::Guid::NIL,
+        section_name: String::new(),
+        index: 0,
+    });
+    let pdf = export(&Doc::notebook(&nb), &Options::default(), &BundledFonts).unwrap();
+    let text = extract_text(&pdf).concat();
+    assert!(text.contains("Keepme"), "{text}");
+    for hidden in ["Oldversion", "Stalecontent", "Gonesection", "Binnedsectionpage", "Binnedpage"] {
+        assert!(!text.contains(hidden), "{hidden} leaked into {text}");
+    }
+}

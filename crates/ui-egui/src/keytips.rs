@@ -50,6 +50,7 @@ pub fn tab_letter(tab: RibbonTab) -> &'static str {
         RibbonTab::Home => "H",
         RibbonTab::Insert => "N",
         RibbonTab::Draw => "D",
+        RibbonTab::History => "S",
         RibbonTab::View => "W",
     }
 }
