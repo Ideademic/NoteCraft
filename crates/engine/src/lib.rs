@@ -23,6 +23,7 @@ pub mod ids;
 pub mod io;
 pub mod proof;
 mod session;
+pub mod templates;
 pub mod text;
 pub mod unread;
 

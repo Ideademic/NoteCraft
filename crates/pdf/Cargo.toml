@@ -11,6 +11,8 @@ workspace = true
 [dependencies]
 notecraft-geom = { workspace = true }
 notecraft-doc = { workspace = true }
+# Pictures as they are drawn (rotated, flipped, cropped).
+notecraft-formats = { workspace = true }
 craft-pdf = { workspace = true }
 # CPU text layout only (no egui): the same line breaking the canvas uses. `default_fonts` gives
 # the bundled faces egui draws with, the fallback when a font isn't installed.

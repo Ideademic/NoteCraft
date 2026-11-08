@@ -111,6 +111,8 @@ pub struct Prefs {
     pub language: String,
     /// Desktop: look for a newer release when the app starts (File › Options).
     pub check_for_updates: bool,
+    /// The page zoom (1.0 = 100 %), kept for the next start.
+    pub zoom: f32,
     /// Review › Spelling: red wavy lines under misspelled words as you type (File › Options).
     pub check_spelling: bool,
     /// Words added to the dictionary (Add to Dictionary), lower case.
@@ -136,6 +138,7 @@ impl Default for Prefs {
             recent_fonts: Vec::new(),
             language: crate::i18n::AUTO.to_owned(),
             check_for_updates: true,
+            zoom: 1.0,
             check_spelling: true,
             user_words: Vec::new(),
             proofing_language: String::new(),
@@ -159,6 +162,7 @@ impl Prefs {
         p.recent_fonts.truncate(MAX_RECENT_FONTS);
         p.qat.retain(|id| QAT_CHOICES.contains(&id.as_str()));
         p.window = p.window.and_then(WindowGeometry::sanitized);
+        p.zoom = if p.zoom.is_finite() { notecraft_geom::zoom::clamp(p.zoom) } else { 1.0 };
         p.user_words.retain(|w| !w.trim().is_empty() && w.chars().count() <= 64);
         p.user_words.truncate(100_000);
         p.proofing_language = notecraft_doc::page::clean_lang(&p.proofing_language).unwrap_or_default();
@@ -284,6 +288,20 @@ pub struct UiState {
     pub bin_opened_at: Location,
     /// History ▸ Recent Edits is open, for this period (`history.recentEdits`'s `since`).
     pub recent_edits: Option<String>,
+    /// Find on the page (Ctrl+F) is open.
+    pub find: Option<crate::dialogs::find::FindBar>,
+    /// Home › Find Tags: the Tags Summary pane is open.
+    pub tags_pane: Option<crate::panes::tags::TagsPane>,
+    /// Insert › Page Templates: the Templates pane is open.
+    pub templates_pane: Option<crate::panes::templates::TemplatesPane>,
+    /// The Alt Text dialog is open for this picture, with the text so far.
+    pub alt_text: Option<(notecraft_doc::Guid, String)>,
+    /// Where the search box looks (`search`'s scope: `section`, `sectionGroup`, `notebook`,
+    /// `all`).
+    pub search_scope: String,
+    /// Bumped when the user's page templates change (the host stores them, see
+    /// [`NoteApp::templates_json`]).
+    pub templates_revision: u64,
     /// Review: the Spelling pane, the link and word count dialogs ([`crate::review`]).
     pub review: crate::review::ReviewUi,
     pub prefs: Prefs,
@@ -321,6 +339,12 @@ impl Default for UiState {
             bin_view: None,
             bin_opened_at: Location::default(),
             recent_edits: None,
+            find: None,
+            tags_pane: None,
+            templates_pane: None,
+            alt_text: None,
+            search_scope: "all".to_owned(),
+            templates_revision: 0,
             review: crate::review::ReviewUi::default(),
             prefs,
         }
@@ -385,9 +409,25 @@ impl NoteApp {
         self.ui.ribbon_layout = prefs.ribbon_layout;
         self.ui.ribbon_display = prefs.ribbon_display;
         self.ui.ribbon_peek = false;
+        self.canvas.set_zoom(prefs.zoom);
         crate::review::load_prefs(&mut self.session, &prefs);
         self.ui.prefs = prefs;
         self.applied_dark = None;
+    }
+
+    /// Takes the user's page templates (Insert › Page Templates › Save current page as a
+    /// template), as [`NoteApp::templates_json`] gave them: the host keeps them beside its
+    /// settings (`templates.json`, or browser storage). Junk is ignored.
+    pub fn load_templates(&mut self, json: &str) {
+        let list: Vec<notecraft_engine::templates::Template> = serde_json::from_str(json).unwrap_or_default();
+        self.session.templates =
+            list.into_iter().filter(|t| !t.is_builtin() && !t.id.trim().is_empty()).take(notecraft_engine::templates::MAX_USER_TEMPLATES).collect();
+    }
+
+    /// The user's page templates, for the host to store when [`UiState::templates_revision`]
+    /// changes.
+    pub fn templates_json(&self) -> String {
+        serde_json::to_string(&self.session.templates).unwrap_or_default()
     }
 
     /// The settings to keep, with the panes, ribbon and open notebooks as they are now.
@@ -406,6 +446,7 @@ impl NoteApp {
         p.page_list_open = self.ui.page_list_open;
         p.ribbon_layout = self.ui.ribbon_layout;
         p.ribbon_display = self.ui.ribbon_display;
+        p.zoom = self.canvas.zoom;
         p
     }
 
@@ -613,6 +654,8 @@ impl NoteApp {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_editing;
 #[cfg(test)]
 mod tests_history;
 #[cfg(test)]

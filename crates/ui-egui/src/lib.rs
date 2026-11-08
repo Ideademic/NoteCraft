@@ -20,6 +20,7 @@ pub mod app;
 pub mod backstage;
 pub mod canvas;
 pub mod chrome;
+pub mod dialogs;
 pub mod fonts;
 pub mod i18n;
 pub mod icons;

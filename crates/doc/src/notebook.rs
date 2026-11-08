@@ -97,6 +97,9 @@ pub struct Section {
     pub pages: Vec<Page>,
     #[serde(default)]
     pub source: SourceInfo,
+    /// The page template new pages in this section start from (a template id), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_template: Option<String>,
 }
 
 impl Section {
@@ -108,6 +111,7 @@ impl Section {
             color,
             pages: Vec::new(),
             source: SourceInfo { authored_by_notecraft: true, ..SourceInfo::default() },
+            default_template: None,
         }
     }
 

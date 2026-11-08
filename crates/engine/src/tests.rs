@@ -56,6 +56,18 @@ fn hostile_params_never_panic() {
         json!({"align": "justify", "tag": null, "style": "upperRoman", "value": false}),
         json!({"scope": "notebook", "paper": "A4", "landscape": "x", "pages": "1-, 3", "utcOffset": 1e30, "fonts": "bundled", "fitWidth": 3}),
         json!({"scope": "section", "paper": 4, "pages": "-", "header": false, "pageNumbers": null, "fonts": 7}),
+        json!({"element": Guid::new().to_string(), "degrees": 45, "axis": "diagonal", "rect": {"x": f64::NAN, "y": 1, "w": -5}, "crop": [1, 2], "reset": "yes"}),
+        json!({"element": "x", "degrees": i64::MIN, "crop": [f64::MAX, -1e300, null, "a"], "text": 5, "ink": true, "strokes": [7]}),
+        json!({"elements": [Guid::new().to_string()], "strokes": [], "ink": true, "degrees": 90, "axis": "horizontal", "y": 1e30, "dy": -1e30}),
+        json!({"query": "a".repeat(5000), "with": "\u{0}".repeat(10), "matchCase": "yes", "wholeWord": 1, "at": {"outline": 5, "para": -1}}),
+        json!({"scope": "sectionGroup", "uncheckedOnly": "x", "limit": u64::MAX, "query": "\u{FFFF}"}),
+        json!({"format": {"run": {"bold": "x", "color": 5, "size": 1e300}, "para": {"style": 9, "list": "x"}}, "outline": Guid::new().to_string(), "at": [0, 0]}),
+        json!({"clip": {"paragraphs": [{"runs": [{"text": "x"}], "indent": 255}], "elements": [{"id": "x", "kind": 3}], "ink": "x"}, "html": "<b><i>", "text": "a\r\nb"}),
+        json!({"clip": {"elements": [{"id": Guid::new().to_string(), "kind": {"type": "outline", "pos": {"x": 1e30, "y": -1e30}, "width": -1, "paragraphs": []}}], "ink": [{"id": Guid::new().to_string(), "points": [], "color": {"r": 0, "g": 0, "b": 0, "a": 0}, "width": 1e30, "tool": "pen"}]}, "x": f64::NAN}),
+        json!({"html": "<ul>".repeat(500) + "&#xFFFFFFF;<a href='javascript:x'>", "plain": true, "outline": Guid::new().to_string()}),
+        json!({"html": "<p>pasted</p>", "text": "pasted", "x": 1e30, "y": -1e30, "query": "a", "with": "b"}),
+        json!({"template": "nc:meeting", "title": "\u{0}".repeat(2000), "name": "x".repeat(9000), "id": "user:nope", "section": "nope"}),
+        json!({"template": 5, "value": "toggle", "blank": "no", "name": ""}),
     ];
     for spec in registry().all() {
         // A notebook.open path that doesn't exist is fine to try; skip nothing.

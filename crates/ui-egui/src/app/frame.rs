@@ -93,6 +93,24 @@ pub fn show(app: &mut NoteApp, ui: &mut Ui) {
                 .show(ui, |ui| panes::notebook_bar(ui, app));
         }
         panes::history::fix_bin_view(app);
+        if app.ui.templates_pane.is_some() {
+            Panel::right("nc_templates_pane")
+                .default_size(panes::templates::PANE_W)
+                .size_range(220.0..=480.0)
+                .resizable(true)
+                .show_separator_line(false)
+                .frame(Frame::NONE.fill(t.panel))
+                .show(ui, |ui| panes::templates::pane(ui, app));
+        }
+        if app.ui.tags_pane.is_some() {
+            Panel::right("nc_tags_pane")
+                .default_size(panes::tags::PANE_W)
+                .size_range(220.0..=480.0)
+                .resizable(true)
+                .show_separator_line(false)
+                .frame(Frame::NONE.fill(t.panel))
+                .show(ui, |ui| panes::tags::pane(ui, app));
+        }
         if app.ui.recent_edits.is_some() {
             Panel::right("nc_recent_edits")
                 .default_size(panes::history::RECENT_W)
@@ -146,11 +164,15 @@ pub fn show(app: &mut NoteApp, ui: &mut Ui) {
                 panes::section_tabs(ui, app);
             }
             panes::history::banner(ui, app);
+            crate::dialogs::find::bar(ui, app);
         }
         app.canvas_rect = Some(ui.available_rect_before_wrap());
         let mut tokens = app.tokens.clone();
         tokens.canvas = if app.ui.bin_view.is_some() { t.canvas } else { band };
-        app.canvas.hide_title = app.ui.hide_page_title;
+        // View › Hide Page Title is kept with each page.
+        let hide = app.session.current_page().is_some_and(|p| p.hide_title);
+        app.ui.hide_page_title = hide;
+        app.canvas.hide_title = hide;
         if !panes::history::preview(ui, app, &tokens) {
             canvas::show(ui, &mut app.canvas, &mut app.session, &tokens, &app.services);
         }
@@ -165,6 +187,7 @@ fn finish(app: &mut NoteApp, ui: &mut Ui) {
     crate::review::dialogs(&ctx, app);
     prompt(&ctx, app);
     crate::ribbon::table::dialog(&ctx, app);
+    crate::dialogs::alt_text::show(&ctx, app);
     crate::updates::show(app, &ctx);
     app.ui.keytips.paint(&ctx, &app.tokens);
     app.ui.keytips.end_frame();

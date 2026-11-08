@@ -47,6 +47,13 @@ pub fn desktop(ask_path: Box<dyn Fn(PathRequest)>) -> Services {
             let img = arboard::Clipboard::new().ok()?.get_image().ok()?;
             Some(ClipboardImage { width: img.width, height: img.height, rgba: img.bytes.into_owned() })
         })),
+        // Rich copy and paste: HTML with its text for other apps, pictures as pictures.
+        clipboard_html: Some(Box::new(|| arboard::Clipboard::new().ok()?.get().html().ok().filter(|h| !h.trim().is_empty()))),
+        set_clipboard_rich: Some(Box::new(|html, text| arboard::Clipboard::new().and_then(|mut c| c.set_html(html, Some(text))).is_ok())),
+        set_clipboard_image: Some(Box::new(|img| {
+            let data = arboard::ImageData { width: img.width, height: img.height, bytes: std::borrow::Cow::Borrowed(img.rgba.as_slice()) };
+            arboard::Clipboard::new().and_then(|mut c| c.set_image(data)).is_ok()
+        })),
         print: Some(crate::print::printing()),
         open_external: Some(Box::new(|target| open::that_detached(target).map_err(|e| format!("{target}: {e}")))),
         open_file: Some(Box::new(open_attachment)),

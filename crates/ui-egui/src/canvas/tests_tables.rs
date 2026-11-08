@@ -512,3 +512,55 @@ fn spelling_menus_and_links_work_in_cells() {
     app_click(&mut h, p, PointerButton::Primary, Modifiers::COMMAND);
     assert_eq!(h.state().session.current.page, Some(target), "Ctrl+click in a cell follows the link");
 }
+
+#[test]
+fn copy_paste_find_and_tags_in_cells() {
+    let mut session = Session::new_default();
+    session.run(ids::PAGE_NEW, &json!({"title": "Editing in tables"})).unwrap();
+    let mut t = Table::new(2, 2, 160.0);
+    *t.cell_mut(0, 0).unwrap() = Cell::with_text("red apples");
+    t.cell_mut(0, 0).unwrap().paragraphs[0].runs = vec![Run { text: "red".into(), bold: true, ..Run::default() }, Run::plain(" apples")];
+    let o = Outline { pos: Point::new(80.0, 150.0), width: 340.0, blocks: vec![Block::table(t)] };
+    let el = notecraft_doc::PageElement::new(ElementKind::Outline(o));
+    let oid = el.id;
+    session.current_page_mut().unwrap().elements.push(el);
+    let mut h = app_harness(NoteApp::new(session, Services::default()));
+    h.run_steps(3);
+    // Select "red apples" in the first cell and copy it.
+    let p = cell_spot(&h, oid, CellRef::new(0, 0, 0), 0, 1);
+    app_click(&mut h, p, PointerButton::Primary, Modifiers::NONE);
+    if let Some(c) = h.state_mut().canvas.caret.as_mut() {
+        c.anchor = TextPos::new(0, 0);
+        c.head = TextPos::new(0, 10);
+    }
+    h.event(Event::Copy);
+    h.run_steps(2);
+    let copied = super::clipboard::internal(&h.ctx).map(|i| i.text.clone()).expect("copied");
+    assert_eq!(copied, "red apples");
+    // Paste it into the cell below: the bold comes along, in that cell.
+    let p = cell_spot(&h, oid, CellRef::new(0, 1, 0), 0, 0);
+    app_click(&mut h, p, PointerButton::Primary, Modifiers::NONE);
+    h.event(Event::Paste(copied));
+    h.run_steps(3);
+    let t = app_table(&h).unwrap();
+    assert_eq!(t.cell(1, 0).unwrap().text(), "red apples");
+    assert!(t.cell(1, 0).unwrap().paragraphs[0].runs[0].bold);
+    assert_eq!(h.state().canvas.caret.as_ref().and_then(|c| c.cell), Some(CellRef::new(0, 1, 0)));
+    // Find highlights matches in cells.
+    crate::dialogs::find::open(h.state_mut());
+    h.state_mut().ui.find.as_mut().unwrap().query = "apples".into();
+    h.run_steps(4);
+    let found = h.state().canvas.find.clone().unwrap().matches;
+    assert_eq!(found.len(), 2);
+    assert!(found.iter().all(|m| m.outline == Some(oid) && m.cell.is_some()));
+    crate::dialogs::find::close(h.state_mut());
+    // The Tags Summary goes into the cell.
+    h.state_mut().session.run(ids::FORMAT_TAG, &json!({"outline": oid, "cell": [0, 1, 1], "tag": "idea"})).unwrap();
+    let mut pane = crate::panes::tags::TagsPane { scope: "page".into(), ..Default::default() };
+    crate::panes::tags::refresh(h.state_mut(), &mut pane);
+    let it = pane.items.iter().find(|i| i.cell == Some(CellRef::new(0, 1, 1))).cloned().expect("the tagged cell is listed");
+    h.state_mut().canvas.caret = None;
+    crate::panes::tags::jump(h.state_mut(), &it);
+    h.run_steps(3);
+    assert_eq!(h.state().canvas.caret.as_ref().and_then(|c| c.cell), Some(CellRef::new(0, 1, 1)), "the caret goes into the cell");
+}

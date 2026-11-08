@@ -11,6 +11,7 @@
 
 pub mod display;
 pub mod draw;
+pub mod editing;
 pub mod font_box;
 pub mod history;
 pub mod home;

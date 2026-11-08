@@ -315,3 +315,56 @@ fn spelling_links_and_word_count_reach_cells() {
     s.run(ids::PROOF_SET_LANGUAGE, &json!({"outline": o.to_string(), "lang": "en-GB"})).unwrap();
     assert!(table(&s, o, 0).paragraphs().all(|p| p.lang.as_deref() == Some("en-GB")));
 }
+
+#[test]
+fn clipboard_painter_find_and_tags_reach_cells() {
+    let (mut s, o) = with_table(2, 2);
+    type_in(&mut s, o, (0, 0, 0), "cat and dog");
+    s.run(ids::FORMAT_BOLD, &with(cell(o, (0, 0, 0)), json!({"start": [0, 0], "end": [0, 3]}))).unwrap();
+    // Copy in one cell, paste in another: the formatting comes along.
+    let c = s.run(ids::EDIT_COPY, &with(cell(o, (0, 0, 0)), json!({"start": [0, 0], "end": [0, 7]}))).unwrap().value;
+    assert_eq!(c["text"], "cat and");
+    let out = s.run(ids::EDIT_PASTE, &with(cell(o, (0, 1, 1)), json!({"clip": c["clip"], "at": [0, 0]}))).unwrap().value;
+    assert_eq!((out["cell"].clone(), out["caret"].clone()), (CellRef::new(0, 1, 1).to_json(), TextPos::new(0, 7).to_json()));
+    let t = table(&s, o, 0);
+    assert_eq!(t.cell(1, 1).unwrap().text(), "cat and");
+    assert!(t.cell(1, 1).unwrap().paragraphs[0].runs[0].bold);
+    // Selected cells copy as a table; cut empties them.
+    let cells = json!({"outline": o.to_string(), "cells": {"block": 0, "rows": [0, 1], "cols": [1, 1]}});
+    let c2 = s.run(ids::EDIT_CUT, &cells).unwrap().value;
+    assert_eq!(c2["clip"]["blocks"][0]["table"]["rows"].as_array().unwrap().len(), 2);
+    assert!(table(&s, o, 0).cell(1, 1).unwrap().is_empty());
+    // A copy across the outline's own blocks takes the table whole, and pasting it on the page
+    // makes a new container with the table.
+    let all = s.run(ids::EDIT_COPY, &json!({"outline": o.to_string(), "para": 0})).unwrap().value;
+    assert!(all["clip"]["blocks"][0].get("table").is_some(), "{}", all["clip"]);
+    assert!(all["html"].as_str().unwrap().contains("<table"));
+    let out = s.run(ids::EDIT_PASTE, &json!({"clip": all["clip"], "x": 300, "y": 400})).unwrap().value;
+    let n = Guid::parse(out["outline"].as_str().unwrap()).unwrap();
+    assert!(outline(&s, n).has_tables());
+    // A table pasted into a cell comes in as text (tables don't nest).
+    s.run(ids::EDIT_PASTE, &with(cell(o, (0, 1, 0)), json!({"clip": all["clip"], "at": [0, 0]}))).unwrap();
+    assert!(table(&s, o, 0).cell(1, 0).unwrap().text().contains("cat and dog\t"));
+    // HTML with a table pasted into a container's text becomes a real table there.
+    let p = Guid::parse(s.run(ids::OUTLINE_NEW, &json!({"x": 40, "y": 600, "text": "before after"})).unwrap().value["id"].as_str().unwrap()).unwrap();
+    s.run(ids::EDIT_PASTE, &json!({"outline": p.to_string(), "at": [0, 7], "html": "<table><tr><td>a</td><td><b>b</b></td></tr></table>"})).unwrap();
+    let ol = outline(&s, p);
+    assert_eq!(ol.text(), "before \na\tb\nafter");
+    assert!(ol.table(1).unwrap().cell(0, 1).unwrap().paragraphs[0].runs[0].bold);
+    // Format Painter: picked in a cell, painted in another.
+    let fmt = s.run(ids::FORMAT_PAINTER_PICK, &with(cell(o, (0, 0, 0)), json!({"at": [0, 1]}))).unwrap().value;
+    assert_eq!(fmt["run"]["bold"], true);
+    s.run(ids::FORMAT_PAINTER_APPLY, &with(cell(o, (0, 0, 1)), json!({"start": [0, 0], "end": [0, 99], "format": fmt})))
+        .unwrap_or_else(|e| panic!("{e}"));
+    let t = table(&s, o, 0);
+    assert!(t.cell(0, 1).unwrap().paragraphs.iter().all(|p| p.runs.iter().all(|r| r.text.is_empty() || r.bold)));
+    // Find and replace see cells.
+    let m = s.run(ids::TEXT_FIND, &json!({"query": "dog"})).unwrap().value["matches"].as_array().cloned().unwrap();
+    let in_cell = m.iter().find(|x| x["outline"] == json!(o) && x["cell"] == CellRef::new(0, 0, 0).to_json()).cloned().expect("a match in the cell");
+    s.run(ids::TEXT_REPLACE, &json!({"query": "dog", "with": "fox", "at": in_cell})).unwrap();
+    assert_eq!(table(&s, o, 0).cell(0, 0).unwrap().text(), "cat and fox");
+    // The Tags Summary lists a tagged paragraph in a cell.
+    s.run(ids::FORMAT_TAG, &with(cell(o, (0, 0, 0)), json!({"tag": "important"}))).unwrap();
+    let items = s.run(ids::TAGS_SUMMARY, &json!({"scope": "page"})).unwrap().value["items"].as_array().cloned().unwrap();
+    assert!(items.iter().any(|i| i["cell"] == CellRef::new(0, 0, 0).to_json() && i["tag"] == "important"), "{items:?}");
+}

@@ -44,6 +44,128 @@ pub const HISTORY_SHOTS: [&str; 5] = ["tab-history", "simplified-history", "hist
 /// tags, and the font box open over it (classic and simplified; the `ui_shot` example opens it).
 pub const FONT_SHOTS: [&str; 3] = ["formats-page", "font-box", "simplified-font-box"];
 
+/// The editing features: find and replace on a page, the Tags Summary and Templates panes, a
+/// picture being cropped, Insert Space being dragged, the Draw tab's Arrange and Rotate, and the
+/// Format Painter armed (classic and simplified).
+pub const EDITING_SHOTS: [&str; 8] = [
+    "editing-find",
+    "editing-tags",
+    "editing-templates",
+    "editing-crop",
+    "editing-insert-space",
+    "editing-draw",
+    "editing-painter",
+    "editing-simplified-draw",
+];
+
+/// A page of notes with tags, a few repeated words and a picture, for the editing shots.
+fn editing_page(app: &mut NoteApp) -> (Option<notecraft_doc::Guid>, Option<notecraft_doc::Guid>) {
+    use notecraft_engine::ids;
+    let id = |v: Option<serde_json::Value>| v.and_then(|v| v.get("id").and_then(|x| x.as_str()).and_then(notecraft_doc::Guid::parse));
+    let _ = app.run(ids::PAGE_NEW, json!({ "title": "Garden plans", "blank": true }));
+    let outline = id(app.run(ids::OUTLINE_NEW, json!({ "x": 36, "y": 108 })).ok().map(|o| o.value));
+    let paras = json!([
+        {"runs": [{"text": "Spring garden"}], "style": "heading1"},
+        {"runs": [{"text": "Plant tomatoes along the south fence; tomatoes like the sun."}]},
+        {"runs": [{"text": "Order tomato seeds", "bold": true}], "tag": {"type": "toDo", "checked": false}},
+        {"runs": [{"text": "Fix the water butt"}], "tag": {"type": "toDo", "checked": true}},
+        {"runs": [{"text": "Try a herb spiral by the door"}], "tag": {"type": "idea"}},
+        {"runs": [{"text": "Which tomatoes grow best in pots?"}], "tag": {"type": "question"}},
+        {"runs": [{"text": "Compost: "}, {"text": "turn it every two weeks", "color": "#c0392b", "italic": true}]}
+    ]);
+    if let Some(o) = outline {
+        let _ = app.run(ids::OUTLINE_RESIZE, json!({ "id": o, "width": 400 }));
+        let _ = app.run(ids::TEXT_SET_PARAGRAPHS, json!({ "id": o, "paragraphs": paras }));
+    }
+    let mut rgba = Vec::with_capacity(240 * 160 * 4);
+    for y in 0..160u32 {
+        for x in 0..240u32 {
+            let sky = y < 90;
+            let (r, g, b) = if sky { (120 + (y / 2) as u8, 180 + (y / 3) as u8, 235) } else { (60 + (x / 8) as u8, 140 + ((x + y) % 40) as u8, 60) };
+            let sun = (x as i32 - 180).pow(2) + (y as i32 - 40).pow(2) < 400;
+            let (r, g, b) = if sun { (250, 210, 70) } else { (r, g, b) };
+            rgba.extend_from_slice(&[r, g, b, 255]);
+        }
+    }
+    let picture = crate::app::files::png_from_rgba(240, 160, &rgba).and_then(|png| {
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, png);
+        id(app.run(ids::EDIT_PASTE_PICTURE, json!({ "bytesBase64": b64, "x": 480, "y": 120 })).ok().map(|o| o.value))
+    });
+    if let Some(p) = picture {
+        let _ = app.run(ids::OUTLINE_RESIZE, json!({ "id": p, "width": 240 }));
+    }
+    (outline, picture)
+}
+
+/// The states of [`EDITING_SHOTS`]; `false` for other names.
+fn prepare_editing(app: &mut NoteApp, shot: &str) -> bool {
+    use crate::canvas::{TextCaret, Tool};
+    if !EDITING_SHOTS.contains(&shot) {
+        return false;
+    }
+    let (outline, picture) = editing_page(app);
+    // The canvas is on this page already (a new page would reset its selection and crop).
+    app.canvas.page = app.session.current.page;
+    match shot {
+        "editing-find" => {
+            let mut f = crate::dialogs::find::FindBar::new("tomato");
+            f.replace = "pepper".into();
+            f.show_replace = true;
+            f.current = 1;
+            f.focus = false;
+            app.ui.find = Some(f);
+        }
+        "editing-tags" => {
+            app.ui.ribbon_tab = RibbonTab::Home;
+            crate::panes::tags::toggle(app);
+            if let Some(mut p) = app.ui.tags_pane.clone() {
+                p.scope = "page".into();
+                crate::panes::tags::refresh(app, &mut p);
+                app.ui.tags_pane = Some(p);
+            }
+        }
+        "editing-templates" => {
+            app.ui.ribbon_tab = RibbonTab::Insert;
+            crate::panes::templates::toggle(app);
+        }
+        "editing-crop" => {
+            app.ui.ribbon_tab = RibbonTab::Draw;
+            if let Some(p) = picture {
+                let _ = app.run(notecraft_engine::ids::PICTURE_ROTATE, json!({ "element": p, "degrees": 90 }));
+                let _ = crate::canvas::crop::begin(&mut app.canvas, &mut app.session, p);
+                if let Some(c) = app.canvas.crop.as_mut() {
+                    c.rect = notecraft_doc::Rect::new(c.full.x + c.full.w * 0.1, c.full.y + c.full.h * 0.15, c.full.w * 0.75, c.full.h * 0.6);
+                }
+            }
+        }
+        "editing-insert-space" => {
+            app.ui.ribbon_tab = RibbonTab::Insert;
+            app.canvas.set_tool(Tool::InsertSpace);
+            app.canvas.gesture = crate::canvas::pointer::Gesture::Space { from: 200.0, to: 260.0 };
+        }
+        "editing-draw" | "editing-simplified-draw" => {
+            app.ui.ribbon_tab = RibbonTab::Draw;
+            app.canvas.set_tool(Tool::Select);
+            if let Some(p) = picture {
+                app.canvas.selection.elements = vec![p];
+            }
+            if shot == "editing-simplified-draw" {
+                app.ui.ribbon_layout = crate::ribbon::display::RibbonLayout::Simplified;
+            }
+        }
+        "editing-painter" => {
+            app.ui.ribbon_tab = RibbonTab::Home;
+            if let Some(o) = outline {
+                app.canvas.caret = Some(TextCaret::at(o, notecraft_engine::TextPos::new(2, 3)));
+                app.canvas.editing = Some(o);
+                let _ = crate::canvas::format_painter::pick(&mut app.canvas, &mut app.session, true);
+            }
+        }
+        _ => {}
+    }
+    true
+}
+
 /// The states of [`FONT_SHOTS`]; `false` for other names.
 fn prepare_fonts(app: &mut NoteApp, shot: &str) -> bool {
     use notecraft_doc::{Align, ListKind, ListStyle, ParaStyle, Paragraph, Run, Tag};
@@ -338,7 +460,12 @@ fn prepare_ribbon(app: &mut NoteApp, shot: &str) -> bool {
 
 /// Puts `app` in the state named `shot` (unknown names leave it as it is).
 pub fn prepare(app: &mut NoteApp, shot: &str) {
-    if prepare_ribbon(app, shot) || prepare_platform(app, shot) || prepare_history(app, shot) || prepare_fonts(app, shot) || prepare_review(app, shot)
+    if prepare_ribbon(app, shot)
+        || prepare_platform(app, shot)
+        || prepare_history(app, shot)
+        || prepare_fonts(app, shot)
+        || prepare_editing(app, shot)
+        || prepare_review(app, shot)
     {
         return;
     }

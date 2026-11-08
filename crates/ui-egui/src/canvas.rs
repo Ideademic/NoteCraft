@@ -12,9 +12,13 @@
 //! Units: page positions are points; on screen a point is [`PX_PER_PT`] logical pixels at 100 %
 //! zoom (96 dpi, like Office), so `scale = zoom * PX_PER_PT`.
 
+pub mod clipboard;
 pub mod context_menu;
+pub mod crop;
 pub mod drop;
 pub mod edit;
+pub mod find;
+pub mod format_painter;
 pub mod images;
 pub mod ink;
 pub mod layout;
@@ -23,6 +27,7 @@ pub mod page;
 pub mod pointer;
 pub mod proof;
 pub mod shape;
+pub mod space;
 pub mod style;
 pub mod table;
 pub mod text;
@@ -30,6 +35,8 @@ pub mod view;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_editing;
 #[cfg(test)]
 mod tests_tables;
 
@@ -63,6 +70,8 @@ pub enum Tool {
     Lasso,
     /// Draw › Shapes: drag to insert this shape.
     Shape(ShapeKind),
+    /// Insert › Insert Space: drag a line down (or up) to push what is below it ([`space`]).
+    InsertSpace,
 }
 
 impl Tool {
@@ -284,6 +293,21 @@ pub struct CanvasState {
     pub(crate) title_buf: Option<String>,
     /// The keyboard moved the caret: scroll it into view.
     pub(crate) reveal_caret: bool,
+    /// Home › Format Painter is armed with this formatting ([`format_painter`]).
+    pub painter: Option<format_painter::Armed>,
+    /// Find on the page (Ctrl+F): the matches to highlight and the current one ([`find`]).
+    pub find: Option<find::Highlights>,
+    /// A picture being cropped with handles ([`crop`]).
+    pub crop: Option<crop::CropEdit>,
+    /// Put the caret at the start of this paragraph of this container and scroll it into view
+    /// (Tags Summary, find): `(outline, para)`.
+    pub goto: Option<(Guid, usize)>,
+    /// The table cell `goto`'s paragraph is in.
+    pub goto_cell: Option<CellRef>,
+    /// Undo grouping of typing ([`edit::Burst`]).
+    pub(crate) burst: edit::Burst,
+    /// The next paste event pastes plain text (Ctrl+Shift+V, Paste › Keep Text Only).
+    pub paste_plain: bool,
     /// Last frame's canvas rect and view origin (tests and the shell's Fit Page Width).
     pub last_rect: Option<egui::Rect>,
     pub(crate) last_origin: Option<Pos2>,
@@ -312,6 +336,13 @@ impl Default for CanvasState {
             gesture: pointer::Gesture::None,
             title_buf: None,
             reveal_caret: false,
+            painter: None,
+            find: None,
+            crop: None,
+            goto: None,
+            goto_cell: None,
+            burst: edit::Burst::default(),
+            paste_plain: false,
             last_rect: None,
             last_origin: None,
             messages: Vec::new(),
@@ -335,6 +366,8 @@ impl CanvasState {
                 self.selection.clear();
             }
             self.gesture = pointer::Gesture::None;
+            self.crop = None;
+            self.painter = None;
         }
         self.tool = tool;
     }
@@ -475,6 +508,8 @@ pub fn show(ui: &mut egui::Ui, state: &mut CanvasState, session: &mut Session, t
     if session.revision != rev {
         lay = layout::page_layout(ui.ctx(), state, session, tokens, &v);
     }
+    edit::go_to_paragraph(ui, state, session, &v, &lay, sheet, id);
+    find::reveal_current(state, &v, &lay, sheet);
     if state.reveal_caret {
         edit::caret_visible(state, &v, &lay, sheet);
     }
@@ -483,11 +518,14 @@ pub fn show(ui: &mut egui::Ui, state: &mut CanvasState, session: &mut Session, t
         page::paint_title(&painter, ui.ctx(), state, pg, tokens, &v);
         images::paint(ui.ctx(), &painter, state, pg, tokens, &v);
         ink::paint_layer(&painter, state, pg, tokens, &v, true);
+        find::paint(&painter, state, tokens, &v, &lay);
         text::paint_outlines(&painter, state, pg, tokens, &v, &lay, &resp);
         proof::paint(ui.ctx(), &painter, state, session, &v, &lay, style::Ink::new(tokens, pg.background.color).dark);
         ink::paint_layer(&painter, state, pg, tokens, &v, false);
         shape::paint_preview(&painter, state, pg, tokens, &v);
         images::paint_selection(&painter, state, pg, tokens, &v);
+        crop::paint(&painter, state, tokens, &v);
+        space::paint(ui, &painter, state, tokens, &v, sheet, &resp);
     }
     ink::paint_overlay(&painter, state, session, tokens, &v, &resp);
     drop::paint_hover(ui, &painter, tokens, rect);
@@ -534,6 +572,8 @@ fn sync(state: &mut CanvasState, session: &mut Session) {
         state.gesture = pointer::Gesture::None;
         state.scroll = egui::Vec2::ZERO;
         state.pending_style = PendingStyle::default();
+        state.crop = None;
+        state.find = None;
     }
     if state.caret.is_some() && state.editing != state.caret.as_ref().map(|c| c.outline) {
         // The shell cleared `editing` (tool change) or pointed it elsewhere.

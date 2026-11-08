@@ -27,8 +27,8 @@ pub use notebook::{EntryPath, Notebook, SearchHit, Section, SectionEntry, Sectio
 pub use notecraft_geom as geom;
 pub use notecraft_geom::{Point, Rect, Size};
 pub use page::{
-    Align, ElementKind, ImageElement, ImageFormat, ListKind, ListStyle, Outline, Page, PageBackground, PageElement, ParaStyle, Paragraph, Printout,
-    RuleLines, Run, Tag,
+    Align, Crop, ElementKind, ImageElement, ImageFormat, ListKind, ListStyle, Outline, Page, PageBackground, PageElement, ParaStyle, Paragraph,
+    PictureTransform, Printout, RuleLines, Run, Tag,
 };
 pub use table::{Block, Cell, Row, Table};
 

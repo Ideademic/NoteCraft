@@ -125,6 +125,9 @@ pub struct Page {
     /// [`crate::history`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub versions: Vec<crate::PageVersion>,
+    /// View ▸ Hide Page Title: the title block isn't shown (kept per page).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hide_title: bool,
 }
 
 impl Page {
@@ -146,6 +149,7 @@ impl Page {
             elements: Vec::new(),
             ink: Vec::new(),
             versions: Vec::new(),
+            hide_title: false,
         }
     }
 
@@ -984,6 +988,129 @@ pub struct ImageElement {
     /// Alt text.
     #[serde(default)]
     pub alt: String,
+    /// Rotation, flips and crop, applied when the picture is drawn (the file is kept as it is).
+    #[serde(default, skip_serializing_if = "PictureTransform::is_identity")]
+    pub transform: PictureTransform,
+}
+
+impl ImageElement {
+    /// The displayed rect (page points) the whole, uncropped picture would have at its current
+    /// scale: `pos`/`size` are the visible (cropped, rotated) part.
+    pub fn full_rect(&self) -> Rect {
+        let [l, t, r, b] = self.transform.sanitized().display_crop();
+        let (cw, ch) = ((r - l).max(0.01), (b - t).max(0.01));
+        let size = self.size.sanitized();
+        let (fw, fh) = (size.w / cw, size.h / ch);
+        let pos = self.pos.sanitized();
+        Rect::new(pos.x - l * fw, pos.y - t * fh, fw, fh)
+    }
+}
+
+/// A crop: the part of the picture kept, as fractions of the source image (0 = left/top edge,
+/// 1 = right/bottom edge).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Crop {
+    pub left: f32,
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+}
+
+/// Smallest crop, as a fraction of the picture each way.
+pub const MIN_CROP: f32 = 0.01;
+
+impl Crop {
+    /// Finite, inside 0..=1, ordered and at least [`MIN_CROP`] each way; `None` when it keeps the
+    /// whole picture.
+    pub fn sanitized(self) -> Option<Crop> {
+        let f = |v: f32, d: f32| if v.is_finite() { v.clamp(0.0, 1.0) } else { d };
+        let (mut l, mut r) = (f(self.left, 0.0), f(self.right, 1.0));
+        let (mut t, mut b) = (f(self.top, 0.0), f(self.bottom, 1.0));
+        if r < l {
+            std::mem::swap(&mut l, &mut r);
+        }
+        if b < t {
+            std::mem::swap(&mut t, &mut b);
+        }
+        let widen = |a: f32, z: f32| -> (f32, f32) {
+            if z - a >= MIN_CROP {
+                (a, z)
+            } else {
+                let a = a.min(1.0 - MIN_CROP);
+                (a, a + MIN_CROP)
+            }
+        };
+        let (l, r) = widen(l, r);
+        let (t, b) = widen(t, b);
+        let c = Crop { left: l, top: t, right: r, bottom: b };
+        let whole = l <= 1e-4 && t <= 1e-4 && r >= 1.0 - 1e-4 && b >= 1.0 - 1e-4;
+        (!whole).then_some(c)
+    }
+}
+
+/// How a picture is drawn: rotation by quarter turns, flips and a crop. The file isn't changed.
+/// Flips apply to the source image before the rotation; the crop is in source fractions.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct PictureTransform {
+    /// Quarter turns clockwise, 0..=3.
+    pub rotation: u8,
+    pub flip_h: bool,
+    pub flip_v: bool,
+    pub crop: Option<Crop>,
+}
+
+impl PictureTransform {
+    pub fn is_identity(&self) -> bool {
+        self.rotation.is_multiple_of(4) && !self.flip_h && !self.flip_v && self.crop.and_then(Crop::sanitized).is_none()
+    }
+
+    /// Rotation in 0..=3 and a sane crop.
+    pub fn sanitized(self) -> PictureTransform {
+        PictureTransform { rotation: self.rotation % 4, crop: self.crop.and_then(Crop::sanitized), ..self }
+    }
+
+    /// A source fraction (u, v) as a fraction of the displayed, uncropped box: flipped, then
+    /// turned clockwise.
+    pub fn to_display(&self, u: f32, v: f32) -> (f32, f32) {
+        let mut p = (if self.flip_h { 1.0 - u } else { u }, if self.flip_v { 1.0 - v } else { v });
+        for _ in 0..self.rotation % 4 {
+            p = (1.0 - p.1, p.0);
+        }
+        p
+    }
+
+    /// The inverse of [`PictureTransform::to_display`].
+    pub fn to_source(&self, x: f32, y: f32) -> (f32, f32) {
+        let mut p = (x, y);
+        for _ in 0..self.rotation % 4 {
+            p = (p.1, 1.0 - p.0);
+        }
+        (if self.flip_h { 1.0 - p.0 } else { p.0 }, if self.flip_v { 1.0 - p.1 } else { p.1 })
+    }
+
+    /// The crop as `[left, top, right, bottom]` fractions of the displayed box; the whole box
+    /// when uncropped.
+    pub fn display_crop(&self) -> [f32; 4] {
+        let Some(c) = self.crop.and_then(Crop::sanitized) else { return [0.0, 0.0, 1.0, 1.0] };
+        let a = self.to_display(c.left, c.top);
+        let b = self.to_display(c.right, c.bottom);
+        [a.0.min(b.0), a.1.min(b.1), a.0.max(b.0), a.1.max(b.1)]
+    }
+
+    /// Converts a crop in display fractions back to source fractions.
+    pub fn crop_from_display(&self, [l, t, r, b]: [f32; 4]) -> Option<Crop> {
+        let a = self.to_source(l, t);
+        let z = self.to_source(r, b);
+        Crop { left: a.0.min(z.0), top: a.1.min(z.1), right: a.0.max(z.0), bottom: a.1.max(z.1) }.sanitized()
+    }
+
+    /// Source texture coordinates of the displayed (visible) rect's corners: top-left,
+    /// top-right, bottom-right, bottom-left.
+    pub fn uv_corners(&self) -> [(f32, f32); 4] {
+        let [l, t, r, b] = self.display_crop();
+        [self.to_source(l, t), self.to_source(r, t), self.to_source(r, b), self.to_source(l, b)]
+    }
 }
 
 /// A file printout.
@@ -1031,6 +1158,7 @@ mod tests {
             data: Arc::default(),
             format: ImageFormat::Png,
             alt: String::new(),
+            transform: Default::default(),
         };
         let pr =
             Printout { file_name: "a.pdf".into(), file_bytes: Arc::default(), pos: Point::new(40.0, 100.0), pages: vec![page(100.0), page(250.0)] };
@@ -1045,6 +1173,45 @@ mod tests {
         el.set_pos(Point::new(f32::NAN, f32::INFINITY));
         let ElementKind::Printout(p) = &el.kind else { panic!("a printout") };
         assert!(p.pages.iter().all(|pg| pg.pos.x.is_finite() && pg.pos.y.is_finite()));
+    }
+
+    #[test]
+    fn picture_transforms_map_both_ways() {
+        let id = PictureTransform::default();
+        assert!(id.is_identity());
+        assert_eq!(id.uv_corners(), [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]);
+        // A quarter turn clockwise: the source's top-left corner is shown top-right.
+        let cw = PictureTransform { rotation: 1, ..Default::default() };
+        assert_eq!(cw.to_display(0.0, 0.0), (1.0, 0.0));
+        assert_eq!(cw.uv_corners()[0], (0.0, 1.0), "the shown top-left is the source's bottom-left");
+        for rotation in 0..4 {
+            for (flip_h, flip_v) in [(false, false), (true, false), (false, true), (true, true)] {
+                let t = PictureTransform { rotation, flip_h, flip_v, crop: Some(Crop { left: 0.1, top: 0.2, right: 0.6, bottom: 0.9 }) };
+                let (x, y) = t.to_display(0.3, 0.7);
+                let (u, v) = t.to_source(x, y);
+                assert!((u - 0.3).abs() < 1e-6 && (v - 0.7).abs() < 1e-6, "{t:?}");
+                let back = t.crop_from_display(t.display_crop()).unwrap();
+                assert!((back.left - 0.1).abs() < 1e-6 && (back.bottom - 0.9).abs() < 1e-6, "{t:?}");
+            }
+        }
+        // Junk crops are tamed; a whole-picture crop is none.
+        let c = Crop { left: f32::NAN, top: 0.5, right: -3.0, bottom: 0.5 }.sanitized().unwrap();
+        assert!(c.left <= c.right && c.bottom - c.top >= MIN_CROP - 1e-6);
+        assert!(Crop { left: 0.0, top: 0.0, right: 1.0, bottom: 1.0 }.sanitized().is_none());
+        assert_eq!(PictureTransform { rotation: 9, ..Default::default() }.sanitized().rotation, 1);
+        // The full rect of a picture cropped to its right half extends to the left.
+        let img = ImageElement {
+            pos: Point::new(100.0, 10.0),
+            size: Size::new(50.0, 40.0),
+            data: Arc::default(),
+            format: ImageFormat::Png,
+            alt: String::new(),
+            transform: PictureTransform { crop: Some(Crop { left: 0.5, top: 0.0, right: 1.0, bottom: 1.0 }), ..Default::default() },
+        };
+        assert_eq!(img.full_rect(), Rect::new(50.0, 10.0, 100.0, 40.0));
+        let j = serde_json::to_string(&img).unwrap();
+        assert!(j.contains("\"transform\""));
+        assert_eq!(serde_json::from_str::<ImageElement>(&j).unwrap(), img);
     }
 
     #[test]
@@ -1094,6 +1261,7 @@ mod tests {
             data: Arc::new(vec![1, 2, 3]),
             format: ImageFormat::Png,
             alt: "a".into(),
+            transform: Default::default(),
         }));
         let opaque = PageElement::new(ElementKind::Opaque { jcid: 0x0006_0024, data: Arc::new(vec![9; 5]) });
         for e in [img, opaque] {

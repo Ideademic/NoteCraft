@@ -10,9 +10,10 @@
 //!   to a sensible size on the page.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod clip;
 mod html;
 mod markdown;
-mod picture;
+pub mod picture;
 mod svg;
 
 use notecraft_doc::Page;

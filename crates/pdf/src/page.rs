@@ -93,18 +93,35 @@ pub fn lay_out<'a>(fs: &mut FontSet, page: &'a Page, header: bool, utc_offset_mi
 /// Pictures embedded once per export, by their data.
 #[derive(Default)]
 pub struct Images {
-    map: HashMap<usize, Option<Image>>,
+    /// By the picture data and how it is drawn (rotation, flips, crop: see
+    /// [`notecraft_doc::PictureTransform`]).
+    map: HashMap<(usize, [u32; 6]), Option<Image>>,
 }
 
 impl Images {
     fn get(&mut self, img: &ImageElement) -> Option<Image> {
-        let key = Arc::as_ptr(&img.data) as usize;
+        let t = img.transform.sanitized();
+        let c = t.crop.map_or([0.0, 0.0, 1.0, 1.0], |c| [c.left, c.top, c.right, c.bottom]);
+        let shape = [
+            u32::from(t.rotation) | (u32::from(t.flip_h) << 2) | (u32::from(t.flip_v) << 3),
+            0,
+            c[0].to_bits(),
+            c[1].to_bits(),
+            c[2].to_bits(),
+            c[3].to_bits(),
+        ];
+        let key = (Arc::as_ptr(&img.data) as usize, shape);
         self.map.entry(key).or_insert_with(|| decode(img)).clone()
     }
 }
 
 fn decode(img: &ImageElement) -> Option<Image> {
-    let data: Arc<Vec<u8>> = img.data.clone();
+    // A rotated, flipped or cropped picture is embedded as it is drawn.
+    let data: Arc<Vec<u8>> = match notecraft_formats::picture::bake(img) {
+        Some(png) => Arc::new(png),
+        None if !img.transform.is_identity() => return None,
+        None => img.data.clone(),
+    };
     let direct = match ImageFormat::sniff(&data) {
         ImageFormat::Png => Image::from_png(data.clone().into(), true).ok(),
         ImageFormat::Jpeg => Image::from_jpeg(data.clone().into(), true).ok(),

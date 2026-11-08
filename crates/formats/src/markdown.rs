@@ -65,7 +65,10 @@ fn image_md(img: &ImageElement, alt: &str) -> String {
         return String::new();
     }
     let alt: String = alt.chars().filter(|c| !matches!(c, '[' | ']' | '\n' | '\r')).collect();
-    format!("![{alt}](data:{};base64,{})", img.format.mime(), STANDARD.encode(img.data.as_slice()))
+    match crate::picture::bake(img) {
+        Some(png) => format!("![{alt}](data:{};base64,{})", ImageFormat::Png.mime(), STANDARD.encode(png)),
+        None => format!("![{alt}](data:{};base64,{})", img.format.mime(), STANDARD.encode(img.data.as_slice())),
+    }
 }
 
 fn outline_md(o: &Outline) -> String {

@@ -92,7 +92,14 @@ pub fn import_image(bytes: &[u8]) -> Result<ImageElement> {
             (out.into_inner(), ImageFormat::Png)
         }
     };
-    Ok(ImageElement { pos: Point::ZERO, size: placed_size(info.width_px, info.height_px), data: Arc::new(data), format, alt: String::new() })
+    Ok(ImageElement {
+        pos: Point::ZERO,
+        size: placed_size(info.width_px, info.height_px),
+        data: Arc::new(data),
+        format,
+        alt: String::new(),
+        transform: Default::default(),
+    })
 }
 
 /// Encodes straight-alpha RGBA8 pixels as a PNG file.
@@ -104,9 +111,80 @@ pub fn encode_png(width: u32, height: u32, rgba: Vec<u8>) -> Result<Vec<u8>> {
     Ok(out.into_inner())
 }
 
+/// Most pixels [`bake`] decodes.
+pub const MAX_BAKE_PIXELS: u64 = 64_000_000;
+
+/// The picture as it is drawn: its file with the transform (crop, flips, rotation) applied, as
+/// a PNG. `None` when the picture is drawn as it is (identity) or can't be decoded.
+pub fn bake(img: &ImageElement) -> Option<Vec<u8>> {
+    let t = img.transform.sanitized();
+    if t.is_identity() {
+        return None;
+    }
+    let r = reader(&img.data).ok()?;
+    let (w, h) = r.into_dimensions().ok()?;
+    if w == 0 || h == 0 || u64::from(w) * u64::from(h) > MAX_BAKE_PIXELS {
+        return None;
+    }
+    let mut pic = reader(&img.data).ok()?.decode().ok()?;
+    if let Some(c) = t.crop {
+        let (fw, fh) = (pic.width() as f32, pic.height() as f32);
+        let x0 = (c.left * fw).floor().clamp(0.0, fw - 1.0) as u32;
+        let y0 = (c.top * fh).floor().clamp(0.0, fh - 1.0) as u32;
+        let x1 = (c.right * fw).ceil().clamp(x0 as f32 + 1.0, fw) as u32;
+        let y1 = (c.bottom * fh).ceil().clamp(y0 as f32 + 1.0, fh) as u32;
+        pic = pic.crop_imm(x0, y0, x1.saturating_sub(x0).max(1), y1.saturating_sub(y0).max(1));
+    }
+    if t.flip_h {
+        pic = pic.fliph();
+    }
+    if t.flip_v {
+        pic = pic.flipv();
+    }
+    pic = match t.rotation % 4 {
+        1 => pic.rotate90(),
+        2 => pic.rotate180(),
+        3 => pic.rotate270(),
+        _ => pic,
+    };
+    let mut out = Cursor::new(Vec::new());
+    pic.write_to(&mut out, image::ImageFormat::Png).ok()?;
+    Some(out.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bake_applies_crop_flip_and_rotation() {
+        // 4×2: left half red, right half blue.
+        let mut px = Vec::new();
+        for _y in 0..2 {
+            for x in 0..4 {
+                px.extend_from_slice(if x < 2 { &[255, 0, 0, 255] } else { &[0, 0, 255, 255] });
+            }
+        }
+        let png = encode_png(4, 2, px).unwrap();
+        let mut img = import_image(&png).unwrap();
+        assert!(bake(&img).is_none(), "identity: the file as it is");
+        img.transform.rotation = 1;
+        let out = image::load_from_memory(&bake(&img).unwrap()).unwrap().to_rgba8();
+        assert_eq!(out.dimensions(), (2, 4));
+        // Turned clockwise: the left (red) half is on top.
+        assert_eq!(out.get_pixel(0, 0).0, [255, 0, 0, 255]);
+        assert_eq!(out.get_pixel(0, 3).0, [0, 0, 255, 255]);
+        img.transform = notecraft_doc::PictureTransform {
+            flip_h: true,
+            crop: Some(notecraft_doc::Crop { left: 0.5, top: 0.0, right: 1.0, bottom: 1.0 }),
+            ..Default::default()
+        };
+        let out = image::load_from_memory(&bake(&img).unwrap()).unwrap().to_rgba8();
+        assert_eq!(out.dimensions(), (2, 2));
+        assert_eq!(out.get_pixel(0, 0).0, [0, 0, 255, 255]);
+        img.data = Arc::new(b"junk".to_vec());
+        assert!(bake(&img).is_none());
+    }
 
     fn png(w: u32, h: u32) -> Vec<u8> {
         encode_png(w, h, vec![200; (w * h * 4) as usize]).unwrap()

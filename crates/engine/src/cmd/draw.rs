@@ -173,7 +173,7 @@ fn erase_stroke(s: &mut Session, params: &Value) -> CmdResult {
 }
 
 /// `params[key]` as GUIDs (bounded).
-fn guid_list(params: &Value, key: &str) -> Result<Option<Vec<Guid>>, CmdError> {
+pub(crate) fn guid_list(params: &Value, key: &str) -> Result<Option<Vec<Guid>>, CmdError> {
     let Some(arr) = params.get(key) else { return Ok(None) };
     let arr = arr.as_array().ok_or_else(|| CmdError::Params(format!("`{key}` is a list of GUIDs")))?;
     let ids = arr

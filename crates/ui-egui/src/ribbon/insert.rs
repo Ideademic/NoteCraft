@@ -1,5 +1,5 @@
 //! Insert: Insert Space, Tables, Files (File Printout, File Attachment), Images (Pictures),
-//! Time Stamp (Date, Time, Date & Time).
+//! Time Stamp (Date, Time, Date & Time), Pages (Page Templates).
 
 use egui::Ui;
 use notecraft_engine::ids;
@@ -14,9 +14,12 @@ pub fn show(ui: &mut Ui, app: &mut NoteApp) {
     widgets::group(ui, app, tl!("Insert"), Icon::InsertSpace, |ui, app| {
         let b = Btn::new(Icon::InsertSpace, tl!("Insert\nSpace"))
             .tip(tl!("Insert Space"))
-            .enabled(false)
-            .help(tl!("Coming in a later version of NoteCraft."));
-        widgets::big(ui, app, b);
+            .checked(app.canvas.tool == crate::canvas::Tool::InsertSpace)
+            .enabled(app.session.current_page().is_some())
+            .help(tl!("Drag a line down the page to push what is below it further down (or up to take space away)."));
+        if widgets::big(ui, app, b) {
+            crate::ribbon::editing::insert_space(app);
+        }
     });
     widgets::group(ui, app, tl!("Tables"), Icon::Table, |ui, app| {
         let b = Btn::new(Icon::Table, tl!("Table"))
@@ -65,6 +68,16 @@ pub fn show(ui: &mut Ui, app: &mut NoteApp) {
                     c.anchor = pos;
                 }
             }
+        }
+    });
+    widgets::group(ui, app, tl!("Pages"), Icon::Templates, |ui, app| {
+        let b = Btn::new(Icon::Templates, tl!("Page\nTemplates"))
+            .tip(tl!("Page Templates"))
+            .checked(app.ui.templates_pane.is_some())
+            .enabled(app.session.current_section().is_some())
+            .help(tl!("Add a page made from a template, or save this page as one."));
+        if widgets::big(ui, app, b) {
+            crate::panes::templates::toggle(app);
         }
     });
 }

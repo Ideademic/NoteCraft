@@ -4,9 +4,14 @@
 //! canvas holds egui's keyboard focus (so the window's own shortcuts stay out of the way) and
 //! turns keys into commands: text → `text.insert` (with the pending style), Backspace/Delete →
 //! `text.delete`, Enter → `text.splitParagraph`, Tab/Shift+Tab → `format.indent`/`outdent`, the
-//! registry's `format.*` shortcuts (Ctrl+B, Ctrl+1…), Ctrl+Z/Y → `edit.undo`/`redo`. Typing
-//! passes the container's undo merge key, so a burst of typing is one undo step. Arrows,
-//! Home/End (Ctrl: whole container), Shift to select, Ctrl+A, and copy/cut/paste as plain text.
+//! registry's `format.*` shortcuts (Ctrl+B, Ctrl+1…), Ctrl+Z/Y → `edit.undo`/`redo`. Arrows,
+//! Home/End (Ctrl: whole container), Shift to select, Ctrl+A; copy, cut and paste (rich, see
+//! [`super::clipboard`]; Ctrl+Shift+V pastes plain text).
+//!
+//! **Undo steps while typing** ([`Burst`]): typing passes an undo merge key, so a burst of typing
+//! is one step. A new step starts after a pause of [`PAUSE_SECS`], after punctuation or Enter, at
+//! the start of a word once the step is [`PAUSE_SECS`] old, and when typing turns into deleting
+//! (or back): undo takes back about a word or a phrase at a time, not a whole container.
 //!
 //! A container left empty is deleted when the caret leaves it, as in OneNote.
 //!
@@ -24,6 +29,57 @@ use super::layout::{OutlineLayout, PageLayout};
 use super::view::{self, View};
 use super::{CanvasState, CurrentFormat, PendingStyle, TextCaret, run};
 use crate::services::Services;
+
+/// A pause in typing this long (seconds) starts a new undo step.
+pub const PAUSE_SECS: f64 = 1.0;
+
+/// How typing is grouped into undo steps: the merge key in use and when the step started.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Burst {
+    /// The caret's merge key the count belongs to.
+    base: String,
+    /// Steps since the caret came into the container (0 is the base key itself, which also
+    /// covers the container's creation).
+    count: u32,
+    /// When the current step started and when the last key was typed.
+    started: f64,
+    last: Option<f64>,
+    /// 1 typing, 2 deleting.
+    kind: u8,
+    /// The last thing typed ended a phrase (punctuation, Enter).
+    boundary: bool,
+    /// The last thing typed ended with a space.
+    after_space: bool,
+}
+
+/// The merge key for typing (`kind` 1) or deleting (2) `text` at time `now` (see [`Burst`]).
+fn burst_key(state: &mut CanvasState, base: &str, kind: u8, text: &str, now: f64) -> String {
+    let b = &mut state.burst;
+    if b.base != base {
+        *b = Burst { base: base.to_owned(), started: now, ..Burst::default() };
+    } else {
+        let starts_word = b.after_space && text.chars().next().is_some_and(char::is_alphanumeric);
+        // NaN times count as a pause.
+        let paused = b.last.is_none_or(|t| (now - t).partial_cmp(&PAUSE_SECS) != Some(std::cmp::Ordering::Less));
+        let old = (now - b.started).partial_cmp(&PAUSE_SECS) != Some(std::cmp::Ordering::Less);
+        let new_step = b.kind != kind || paused || (kind == 1 && b.boundary) || (kind == 1 && starts_word && old);
+        if new_step && b.last.is_some() {
+            b.count = b.count.saturating_add(1);
+            b.started = now;
+        }
+    }
+    b.last = Some(now);
+    b.kind = kind;
+    let last = text.chars().last();
+    b.boundary = kind == 1 && last.is_some_and(|c| matches!(c, '\n' | '.' | ',' | ';' | ':' | '!' | '?'));
+    b.after_space = kind == 1 && last.is_some_and(char::is_whitespace);
+    if b.count == 0 { base.to_owned() } else { format!("{base}#{}", b.count) }
+}
+
+/// The time typing is measured by.
+fn now(ui: &Ui) -> f64 {
+    ui.input(|i| i.time)
+}
 
 /// Ends editing: the caret leaves its container (deleted if left empty), unless it is in `keep`.
 pub fn leave(state: &mut CanvasState, session: &mut Session, keep: Option<Guid>) {
@@ -151,8 +207,8 @@ pub(crate) fn set_head(state: &mut CanvasState, pos: TextPos, extend: bool) {
     state.reveal_caret = true;
 }
 
-/// Types `t` at the caret (over the selection).
-pub fn insert(state: &mut CanvasState, session: &mut Session, t: &str) {
+/// Types `t` at the caret (over the selection) at time `now`.
+pub fn insert(state: &mut CanvasState, session: &mut Session, t: &str, now: f64) {
     let t: String = t.replace("\r\n", "\n").replace('\r', "\n").chars().filter(|c| *c == '\n' || *c == '\t' || !c.is_control()).collect();
     if t.is_empty() {
         return;
@@ -164,10 +220,11 @@ pub fn insert(state: &mut CanvasState, session: &mut Session, t: &str) {
         // Typing over selected cells types in the caret's cell.
         cc.cells = None;
     }
+    let key = burst_key(state, &c.merge_key, 1, &t, now);
     let mut params = range_params(state, &c);
     if let Value::Object(m) = &mut params {
         m.insert("text".into(), Value::String(t.clone()));
-        m.insert("mergeKey".into(), Value::String(c.merge_key.clone()));
+        m.insert("mergeKey".into(), Value::String(key));
         if !state.pending_style.is_empty() {
             m.insert("style".into(), state.pending_style.to_json());
         }
@@ -182,18 +239,19 @@ pub fn insert(state: &mut CanvasState, session: &mut Session, t: &str) {
 }
 
 /// Deletes the selection, or a character/word back (`backward`) or forward.
-fn delete(state: &mut CanvasState, session: &mut Session, backward: bool, word: bool) {
+fn delete(state: &mut CanvasState, session: &mut Session, backward: bool, word: bool, now: f64) {
     let Some(c) = state.caret.clone() else { return };
     if super::table::delete_cells(state, session) || super::table::delete_at_edge(state, session, backward) {
         return;
     }
+    let key = burst_key(state, &c.merge_key, 2, "", now);
     let mut params = if c.is_collapsed() {
         json!({"outline": c.outline, "at": c.head.to_json(), "backward": backward, "unit": if word { "word" } else { "char" }, "page": state.page})
     } else {
         range_params(state, &c)
     };
     if let Value::Object(m) = &mut params {
-        m.insert("mergeKey".into(), Value::String(c.merge_key.clone()));
+        m.insert("mergeKey".into(), Value::String(key));
         if let Some(cell) = c.cell {
             m.insert("cell".into(), cell.to_json());
         }
@@ -205,11 +263,12 @@ fn delete(state: &mut CanvasState, session: &mut Session, backward: bool, word: 
     }
 }
 
-pub(crate) fn split(state: &mut CanvasState, session: &mut Session) {
+pub(crate) fn split(state: &mut CanvasState, session: &mut Session, now: f64) {
     let Some(c) = ensure_outline(state, session) else { return };
+    let key = burst_key(state, &c.merge_key, 1, "\n", now);
     let mut params = range_params(state, &c);
     if let Value::Object(m) = &mut params {
-        m.insert("mergeKey".into(), Value::String(c.merge_key.clone()));
+        m.insert("mergeKey".into(), Value::String(key));
     }
     if let Some(out) = run(state, session, ids::TEXT_SPLIT_PARAGRAPH, params)
         && let Some(pos) = caret_from(&out)
@@ -542,7 +601,6 @@ fn shortcut_command(key: Key, m: Modifiers) -> Option<&'static str> {
 
 /// Keyboard and text input for the caret, and Delete/Esc for selected items.
 pub fn keyboard(ui: &mut Ui, state: &mut CanvasState, session: &mut Session, services: &Services, v: &View, lay: &PageLayout, id: egui::Id) {
-    let _ = services;
     let editing = state.caret.is_some() || state.pending.is_some();
     let focused_other = ui.memory(|m| m.focused().is_some_and(|f| f != id));
     if editing && !focused_other {
@@ -553,14 +611,47 @@ pub fn keyboard(ui: &mut Ui, state: &mut CanvasState, session: &mut Session, ser
     }
     let has_focus = ui.memory(|m| m.has_focus(id));
     if editing && has_focus {
-        type_keys(ui, state, session, lay, v, id);
+        type_keys(ui, state, session, services, lay, v, id);
         return;
     }
-    if ui.memory(|m| m.focused().is_some()) {
+    if ui.memory(|m| m.focused().is_some_and(|f| f != id)) {
         return;
     }
-    // Nothing has the keyboard: Delete removes what's selected on the page, Esc lets it go.
+    // Nothing else has the keyboard: copy, cut and paste what's selected on the page, Delete removes
+    // it, Esc lets it go (or ends cropping, or turns the Format Painter off), Enter keeps a crop.
+    let events = ui.input(|i| i.events.clone());
+    let ctx = ui.ctx().clone();
+    let has_page = session.current_page().is_some();
+    for ev in events {
+        match ev {
+            Event::Copy => {
+                super::clipboard::copy(&ctx, state, session, services, false);
+            }
+            Event::Cut => {
+                super::clipboard::copy(&ctx, state, session, services, true);
+            }
+            Event::Paste(t) if has_page => super::clipboard::paste(&ctx, state, session, services, Some(v), Some(&t), false),
+            Event::PasteImage(img) if has_page => super::clipboard::paste_image(&ctx, state, session, Some(v), &img),
+            Event::Key { key: Key::V, pressed: true, modifiers, .. } if has_page && mods_cmd(&modifiers) && modifiers.shift => {
+                super::clipboard::paste(&ctx, state, session, services, Some(v), None, true);
+            }
+            _ => {}
+        }
+    }
+    if state.crop.is_some() {
+        let (enter, esc) = ui.input(|i| (i.key_pressed(Key::Enter), i.key_pressed(Key::Escape)));
+        if enter {
+            super::crop::commit(state, session);
+        } else if esc {
+            super::crop::cancel(state);
+        }
+        return;
+    }
     let (del, esc) = ui.input(|i| (i.key_pressed(Key::Delete) || i.key_pressed(Key::Backspace), i.key_pressed(Key::Escape)));
+    if esc && state.painter.is_some() {
+        super::format_painter::cancel(state);
+        return;
+    }
     if del {
         if !session.ink_selection.is_empty() {
             run(state, session, ids::DRAW_DELETE_SELECTION, json!({}));
@@ -576,30 +667,35 @@ pub fn keyboard(ui: &mut Ui, state: &mut CanvasState, session: &mut Session, ser
     }
 }
 
-fn type_keys(ui: &mut Ui, state: &mut CanvasState, session: &mut Session, lay: &PageLayout, v: &View, id: egui::Id) {
+fn type_keys(ui: &mut Ui, state: &mut CanvasState, session: &mut Session, services: &Services, lay: &PageLayout, v: &View, id: egui::Id) {
     let events = ui.input(|i| i.events.clone());
+    let ctx = ui.ctx().clone();
+    let t_now = now(ui);
     for ev in events {
         match ev {
             Event::Text(t) => {
                 let cmd = ui.input(|i| i.modifiers.command && !i.modifiers.alt);
                 if !cmd {
-                    insert(state, session, &t);
+                    insert(state, session, &t, t_now);
                 }
             }
-            Event::Ime(egui::ImeEvent::Commit(t)) => insert(state, session, &t),
-            Event::Paste(t) => insert(state, session, &t),
+            Event::Ime(egui::ImeEvent::Commit(t)) => insert(state, session, &t, t_now),
+            Event::Paste(t) => super::clipboard::paste(&ctx, state, session, services, Some(v), Some(&t), false),
+            Event::PasteImage(img) => super::clipboard::paste_image(&ctx, state, session, Some(v), &img),
             Event::Copy => {
-                if let Some(t) = selected_text(state, session) {
-                    ui.ctx().copy_text(t);
+                if !super::clipboard::copy(&ctx, state, session, services, false)
+                    && let Some(t) = selected_text(state, session)
+                {
+                    ctx.copy_text(t);
                 }
             }
             Event::Cut => {
-                if let Some(t) = selected_text(state, session) {
-                    ui.ctx().copy_text(t);
-                    delete(state, session, true, false);
-                }
+                super::clipboard::copy(&ctx, state, session, services, true);
             }
-            Event::Key { key, pressed: true, modifiers, .. } => key_press(ui, state, session, lay, v, key, modifiers),
+            Event::Key { key: Key::V, pressed: true, modifiers, .. } if mods_cmd(&modifiers) && modifiers.shift => {
+                super::clipboard::paste(&ctx, state, session, services, Some(v), None, true);
+            }
+            Event::Key { key, pressed: true, modifiers, .. } => key_press(ui, state, session, lay, v, key, modifiers, t_now),
             _ => {}
         }
         if state.caret.is_none() && state.pending.is_none() {
@@ -622,7 +718,8 @@ fn type_keys(ui: &mut Ui, state: &mut CanvasState, session: &mut Session, lay: &
     }
 }
 
-fn key_press(ui: &Ui, state: &mut CanvasState, session: &mut Session, lay: &PageLayout, v: &View, key: Key, m: Modifiers) {
+#[allow(clippy::too_many_arguments)]
+fn key_press(ui: &Ui, state: &mut CanvasState, session: &mut Session, lay: &PageLayout, v: &View, key: Key, m: Modifiers, t_now: f64) {
     if super::table::key(state, session, lay, v, key, m) {
         return;
     }
@@ -676,6 +773,10 @@ fn key_press(ui: &Ui, state: &mut CanvasState, session: &mut Session, lay: &Page
             }
             return;
         }
+        Key::Escape if state.painter.is_some() => {
+            super::format_painter::cancel(state);
+            return;
+        }
         Key::Escape => {
             let id = state.caret.as_ref().map(|c| c.outline);
             leave(state, session, None);
@@ -688,7 +789,7 @@ fn key_press(ui: &Ui, state: &mut CanvasState, session: &mut Session, lay: &Page
             return;
         }
         Key::Enter => {
-            split(state, session);
+            split(state, session, t_now);
             return;
         }
         Key::Tab => {
@@ -699,11 +800,11 @@ fn key_press(ui: &Ui, state: &mut CanvasState, session: &mut Session, lay: &Page
             return;
         }
         Key::Backspace => {
-            delete(state, session, true, m.alt || cmd);
+            delete(state, session, true, m.alt || cmd, t_now);
             return;
         }
         Key::Delete => {
-            delete(state, session, false, m.alt || cmd);
+            delete(state, session, false, m.alt || cmd, t_now);
             return;
         }
         _ => {}
@@ -765,4 +866,35 @@ fn key_press(ui: &Ui, state: &mut CanvasState, session: &mut Session, lay: &Page
     if !extend {
         super::table::enter_table(state, session, matches!(key, Key::ArrowRight | Key::ArrowDown | Key::End));
     }
+}
+
+/// Puts the caret at the start of the paragraph [`CanvasState::goto`] names and scrolls it
+/// into view (Tags Summary, find). Waits while the page isn't laid out yet.
+pub fn go_to_paragraph(ui: &Ui, state: &mut CanvasState, session: &mut Session, v: &View, lay: &PageLayout, sheet: egui::Rect, id: egui::Id) {
+    let Some((outline, para)) = state.goto else { return };
+    let cell = state.goto_cell;
+    let frame = cell.map_or(Frame::Top, Frame::Cell);
+    let Some(o) = lay.outline(outline).and_then(|o| o.frame(frame)) else {
+        if session.current_page().and_then(|p| p.outline(outline)).and_then(|o| text::flow(o, frame)).is_none() {
+            state.goto = None;
+            state.goto_cell = None;
+        }
+        return;
+    };
+    state.goto = None;
+    state.goto_cell = None;
+    if state.caret.as_ref().is_none_or(|c| c.outline != outline) {
+        leave(state, session, Some(outline));
+    }
+    let para = para.min(o.paras.len().saturating_sub(1));
+    let pos = TextPos::new(para, 0);
+    session.break_undo_merge();
+    state.selection.clear();
+    state.pending = None;
+    state.caret = Some(TextCaret { cell, ..TextCaret::at(outline, pos) });
+    state.editing = Some(outline);
+    if let Some(r) = o.caret_rect(v, pos) {
+        view::reveal(state, sheet, r);
+    }
+    ui.memory_mut(|m| m.request_focus(id));
 }

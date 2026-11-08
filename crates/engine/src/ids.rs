@@ -122,6 +122,42 @@ pub const TABLE_SHADING: &str = "table.shading";
 pub const TABLE_BORDERS: &str = "table.borders";
 pub const TABLE_SORT: &str = "table.sort";
 pub const TABLE_CONVERT_TO_TEXT: &str = "table.convertToText";
+pub const PICTURE_ROTATE: &str = "picture.rotate";
+pub const PICTURE_FLIP: &str = "picture.flip";
+pub const PICTURE_CROP: &str = "picture.crop";
+pub const PICTURE_ALT_TEXT: &str = "picture.altText";
+pub const PICTURE_RESET: &str = "picture.reset";
+
+pub const ARRANGE_BRING_TO_FRONT: &str = "arrange.bringToFront";
+pub const ARRANGE_BRING_FORWARD: &str = "arrange.bringForward";
+pub const ARRANGE_SEND_BACKWARD: &str = "arrange.sendBackward";
+pub const ARRANGE_SEND_TO_BACK: &str = "arrange.sendToBack";
+
+pub const INK_ROTATE: &str = "ink.rotate";
+pub const INK_FLIP: &str = "ink.flip";
+
+pub const PAGE_INSERT_SPACE: &str = "page.insertSpace";
+
+pub const TEXT_FIND: &str = "text.find";
+pub const TEXT_REPLACE: &str = "text.replace";
+
+pub const TAGS_SUMMARY: &str = "tags.summary";
+
+pub const FORMAT_PAINTER_PICK: &str = "format.painterPick";
+pub const FORMAT_PAINTER_APPLY: &str = "format.painterApply";
+
+pub const EDIT_COPY: &str = "edit.copy";
+pub const EDIT_CUT: &str = "edit.cut";
+pub const EDIT_PASTE: &str = "edit.paste";
+pub const EDIT_PASTE_PICTURE: &str = "edit.pastePicture";
+
+pub const TEMPLATE_LIST: &str = "template.list";
+pub const TEMPLATE_SAVE_CURRENT: &str = "template.saveCurrent";
+pub const TEMPLATE_DELETE: &str = "template.delete";
+pub const PAGE_NEW_FROM_TEMPLATE: &str = "page.newFromTemplate";
+pub const SECTION_DEFAULT_TEMPLATE: &str = "section.defaultTemplate";
+
+pub const VIEW_HIDE_PAGE_TITLE: &str = "view.hidePageTitle";
 pub const PROOF_CHECK: &str = "proof.check";
 pub const PROOF_SUGGESTIONS: &str = "proof.suggestions";
 pub const PROOF_APPLY: &str = "proof.apply";
@@ -255,6 +291,33 @@ pub const ALL: &[&str] = &[
     TABLE_BORDERS,
     TABLE_SORT,
     TABLE_CONVERT_TO_TEXT,
+    PICTURE_ROTATE,
+    PICTURE_FLIP,
+    PICTURE_CROP,
+    PICTURE_ALT_TEXT,
+    PICTURE_RESET,
+    ARRANGE_BRING_TO_FRONT,
+    ARRANGE_BRING_FORWARD,
+    ARRANGE_SEND_BACKWARD,
+    ARRANGE_SEND_TO_BACK,
+    INK_ROTATE,
+    INK_FLIP,
+    PAGE_INSERT_SPACE,
+    TEXT_FIND,
+    TEXT_REPLACE,
+    TAGS_SUMMARY,
+    FORMAT_PAINTER_PICK,
+    FORMAT_PAINTER_APPLY,
+    EDIT_COPY,
+    EDIT_CUT,
+    EDIT_PASTE,
+    EDIT_PASTE_PICTURE,
+    TEMPLATE_LIST,
+    TEMPLATE_SAVE_CURRENT,
+    TEMPLATE_DELETE,
+    PAGE_NEW_FROM_TEMPLATE,
+    SECTION_DEFAULT_TEMPLATE,
+    VIEW_HIDE_PAGE_TITLE,
     PROOF_CHECK,
     PROOF_SUGGESTIONS,
     PROOF_APPLY,
