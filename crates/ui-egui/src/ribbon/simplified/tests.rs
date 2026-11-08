@@ -359,6 +359,7 @@ fn a_narrow_window_moves_commands_into_more() {
                 RibbonTab::Draw => "Delete",
                 RibbonTab::History => "Notebook Recycle Bin",
                 RibbonTab::View => "Dark Mode",
+                RibbonTab::Table => "Convert to Text",
             };
             let _ = h.get_by_label(probe);
         }

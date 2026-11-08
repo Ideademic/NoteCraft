@@ -21,6 +21,7 @@ pub mod page;
 pub mod pointer;
 pub mod shape;
 pub mod style;
+pub mod table;
 pub mod text;
 pub mod view;
 
@@ -30,6 +31,7 @@ mod tests;
 use egui::{Pos2, Sense};
 use notecraft_doc::{Color, Guid, InkTool, Point};
 pub use notecraft_engine::cmd::shapes::ShapeKind;
+use notecraft_engine::text::{CellRange, CellRef, Frame};
 use notecraft_engine::{CmdError, CmdOutput, Session, TextPos};
 use serde_json::{Value, json};
 
@@ -195,7 +197,8 @@ impl PendingStyle {
 }
 
 /// The caret in a note container: `head` is where it blinks, `anchor` the other end of the
-/// selection (equal when nothing is selected).
+/// selection (equal when nothing is selected). Both are in one flow: the container's own
+/// paragraphs, or the table cell `cell`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextCaret {
     pub outline: Guid,
@@ -205,11 +208,25 @@ pub struct TextCaret {
     pub merge_key: String,
     /// Remembered x (screen px from the outline's left) for Up/Down.
     pub goal_x: Option<f32>,
+    /// The table cell the caret is in (`None`: the container's own paragraphs).
+    pub cell: Option<CellRef>,
+    /// Whole cells selected (a drag across cells, Table ▸ Select); the caret stays in `cell`.
+    pub cells: Option<CellRange>,
 }
 
 impl TextCaret {
     pub fn at(outline: Guid, pos: TextPos) -> TextCaret {
-        TextCaret { outline, anchor: pos, head: pos, merge_key: outline.to_string(), goal_x: None }
+        TextCaret { outline, anchor: pos, head: pos, merge_key: outline.to_string(), goal_x: None, cell: None, cells: None }
+    }
+
+    /// A caret in table cell `cell`.
+    pub fn in_cell(outline: Guid, cell: CellRef, pos: TextPos) -> TextCaret {
+        TextCaret { cell: Some(cell), ..TextCaret::at(outline, pos) }
+    }
+
+    /// The flow the caret is in.
+    pub fn frame(&self) -> Frame {
+        self.cell.map_or(Frame::Top, Frame::Cell)
     }
 
     /// Start and end in document order.
@@ -331,10 +348,37 @@ pub fn selection_params(state: &CanvasState) -> Option<Value> {
     let c = state.caret.as_ref()?;
     let (a, b) = c.range();
     let mut v = json!({"outline": c.outline, "start": a.to_json(), "end": b.to_json()});
-    if let (Some(page), Value::Object(m)) = (state.page, &mut v) {
-        m.insert("page".into(), json!(page));
+    if let Value::Object(m) = &mut v {
+        if let Some(page) = state.page {
+            m.insert("page".into(), json!(page));
+        }
+        if let Some(cell) = c.cell {
+            m.insert("cell".into(), cell.to_json());
+        }
+        if let Some(cells) = c.cells {
+            m.insert("cells".into(), cells.to_json());
+        }
     }
     Some(v)
+}
+
+/// The table the caret is in, for the Table tab: the outline, the caret's cell and the selected
+/// cells. `None` outside a table.
+pub fn table_context(state: &CanvasState) -> Option<(Guid, CellRef, Option<CellRange>)> {
+    let c = state.caret.as_ref()?;
+    Some((c.outline, c.cell?, c.cells))
+}
+
+/// Runs a Table tab command (`table.*`) on the caret's table and moves the caret as it says.
+/// `None` when the caret isn't in a table.
+pub fn table_command(state: &mut CanvasState, session: &mut Session, id: &str, extra: Value) -> Option<Result<CmdOutput, CmdError>> {
+    table::command(state, session, id, extra)
+}
+
+/// Inserts a `rows` × `cols` table at the caret (or, without one, in a new note container below
+/// the page's content, or where the paper was clicked), and puts the caret in its first cell.
+pub fn insert_table(state: &mut CanvasState, session: &mut Session, rows: usize, cols: usize) -> Result<CmdOutput, CmdError> {
+    table::insert(state, session, rows, cols)
 }
 
 /// The pending style (Ctrl+B with nothing selected), for the ribbon to change.
@@ -452,16 +496,14 @@ fn sync(state: &mut CanvasState, session: &mut Session) {
         if let Some(id) = wanted
             && session.current_page().and_then(|p| p.outline(id)).is_some()
         {
-            let end = session.current_page().and_then(|p| p.outline(id)).map(notecraft_engine::text::end_of).unwrap_or_default();
-            state.caret = Some(TextCaret::at(id, end));
+            state.caret = session.current_page().and_then(|p| p.outline(id)).map(|o| table::caret_at_end(id, o));
             state.editing = Some(id);
         }
     } else if state.caret.is_none() && state.editing.is_some() {
         let id = state.editing;
         let exists = id.is_some_and(|id| session.current_page().and_then(|p| p.outline(id)).is_some());
         if exists && let Some(id) = id {
-            let end = session.current_page().and_then(|p| p.outline(id)).map(notecraft_engine::text::end_of).unwrap_or_default();
-            state.caret = Some(TextCaret::at(id, end));
+            state.caret = session.current_page().and_then(|p| p.outline(id)).map(|o| table::caret_at_end(id, o));
         } else {
             state.editing = None;
         }

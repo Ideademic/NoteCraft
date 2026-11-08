@@ -154,6 +154,7 @@ fn finish(app: &mut NoteApp, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     panes::remember_page(&ctx, app);
     prompt(&ctx, app);
+    crate::ribbon::table::dialog(&ctx, app);
     crate::updates::show(app, &ctx);
     app.ui.keytips.paint(&ctx, &app.tokens);
     app.ui.keytips.end_frame();

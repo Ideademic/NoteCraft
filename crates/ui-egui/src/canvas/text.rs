@@ -2,7 +2,8 @@
 //! the other tags' icons from [`crate::icons`]), the rich text (bold painted twice only for a face
 //! without a bold), and — while a container is hovered, edited or
 //! selected — its thin frame with the grip bar on top (drag to move) and the resize arrow at the
-//! grip's right end (drag to change the width). Then the caret.
+//! grip's right end (drag to change the width). Tables are drawn by [`super::table`]: shading,
+//! their cells' text like a container's, then the grid. Then the caret.
 
 use egui::epaint::{CornerRadius, PathShape};
 use egui::text::CCursor;
@@ -48,33 +49,34 @@ pub fn paint_outlines(painter: &Painter, state: &CanvasState, page: &Page, token
             continue;
         }
         let editing = state.caret.as_ref().filter(|c| c.outline == o.id);
-        if let Some(c) = editing
-            && !c.is_collapsed()
-        {
-            paint_selection(painter, o, v, c.range(), tokens.selection);
-        }
-        for (i, p) in o.paras.iter().enumerate() {
-            let Some(at) = o.galley_origin(v, i) else { continue };
-            if at.y > v.clip.bottom() + 4.0 || at.y + p.height < v.clip.top() - 4.0 {
-                continue;
-            }
-            paint_marker(painter, o, v, i, &ink);
-            paint_tag(painter, o, v, i, tokens);
-            painter.galley(at, p.galley.clone(), ink.text);
-            if let Some(b) = &p.bold {
-                painter.galley(at + vec2(p.bold_dx, 0.0), b.clone(), ink.text);
-                if p.size_px > 26.0 {
-                    painter.galley(at + vec2(p.bold_dx * 0.5, 0.0), b.clone(), ink.text);
-                }
-            }
-        }
         let selected = state.selection.elements.contains(&o.id);
         let dragging = pointer::dragged_element(state) == Some(o.id);
+        for t in &o.tables {
+            super::table::paint_shading(painter, o, t, v);
+        }
+        if let Some(c) = editing {
+            super::table::paint_selected_cells(painter, o, v, c, tokens.selection);
+            if !c.is_collapsed()
+                && c.cells.is_none()
+                && let Some(f) = o.frame(c.frame())
+            {
+                paint_selection(painter, f, v, c.range(), tokens.selection);
+            }
+        }
+        paint_flow(painter, o, v, &ink, tokens);
+        for t in &o.tables {
+            for cell in t.cells.iter().flatten() {
+                paint_flow(painter, cell, v, &ink, tokens);
+            }
+            let shown = editing.is_some() || hovered_id == Some(o.id) || selected;
+            super::table::paint_grid(painter, o, t, v, &ink, shown);
+        }
         if editing.is_some() || hovered_id == Some(o.id) || selected || dragging {
             paint_frame(painter, o, v, tokens, &ink, editing.is_some() || selected || dragging);
         }
         if let Some(c) = editing
-            && let Some(cr) = o.caret_rect(v, c.head)
+            && c.cells.is_none()
+            && let Some(cr) = o.frame_caret_rect(v, c.frame(), c.head)
         {
             paint_caret(painter, cr, &ink, v);
         }
@@ -83,6 +85,28 @@ pub fn paint_outlines(painter: &Painter, state: &CanvasState, page: &Page, token
         let at = v.to_screen(p.at);
         let h = painter.ctx().fonts_mut(|f| f.row_height(&FontId::proportional(super::style::px(11.0, v.scale))));
         paint_caret(painter, Rect::from_min_size(at, vec2(0.0, h)), &ink, v);
+    }
+}
+
+/// A flow's paragraphs (a container's own, or a cell's): markers, tags and text.
+fn paint_flow(painter: &Painter, o: &OutlineLayout, v: &View, ink: &Ink, tokens: &Tokens) {
+    for (i, p) in o.paras.iter().enumerate() {
+        if p.table {
+            continue;
+        }
+        let Some(at) = o.galley_origin(v, i) else { continue };
+        if at.y > v.clip.bottom() + 4.0 || at.y + p.height < v.clip.top() - 4.0 {
+            continue;
+        }
+        paint_marker(painter, o, v, i, ink);
+        paint_tag(painter, o, v, i, tokens);
+        painter.galley(at, p.galley.clone(), ink.text);
+        if let Some(b) = &p.bold {
+            painter.galley(at + vec2(p.bold_dx, 0.0), b.clone(), ink.text);
+            if p.size_px > 26.0 {
+                painter.galley(at + vec2(p.bold_dx * 0.5, 0.0), b.clone(), ink.text);
+            }
+        }
     }
 }
 
@@ -102,6 +126,10 @@ pub fn paint_selection(
 ) {
     for i in a.para..=b.para {
         let Some(p) = o.paras.get(i) else { break };
+        if p.table {
+            // Its cells are painted selected by [`super::table::paint_selected_cells`].
+            continue;
+        }
         let Some(origin) = o.galley_origin(v, i) else { break };
         let s = if i == a.para { a.char } else { 0 };
         let e = if i == b.para { b.char } else { p.chars };
