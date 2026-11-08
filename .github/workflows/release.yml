@@ -5,10 +5,13 @@ name: Release
 #
 # Adapted from the Craft apps' shared release pipeline (storytold/craft-common-actions,
 # .github/workflows/release.yml) and kept in this repository, with its composite actions copied
-# into .github/actions/. Differences: the macOS job runs on `macos-15`; there is no craft-fonts,
-# craft-i18n, contributor-credits or GHCR step; and every signing secret is optional: without
-# them the macOS build is ad-hoc signed and not notarized, Windows and Linux packages are
-# unsigned, and each job says so in a warning instead of failing.
+# into .github/actions/. Differences: the macOS job runs on `macos-15`; there is no craft-i18n,
+# contributor-credits or GHCR step; craft-fonts is pinned in .github/actions/checkout-craft-fonts
+# instead of by a workflow input, and the web build embeds it too (crates/fonts/build.rs keeps the
+# web set small); and every signing secret is optional: without them the macOS build is ad-hoc
+# signed and not notarized, Windows and Linux packages are unsigned, and each job says so in a
+# warning instead of failing. Every job that compiles the app builds with CRAFT_FONTS_DIR and
+# CRAFT_FONTS_REQUIRED=1, so a release cannot ship without its bundled fonts.
 #
 # Artifacts (<v> is the version, e.g. 0.1.0):
 #   notecraft-<v>-macos-universal.dmg, notecraft-cli-<v>-macos-universal.zip
@@ -121,6 +124,8 @@ jobs:
           app-name: notecraft
           version: ${{ needs.version.outputs.version }}
           date: ${{ needs.version.outputs.date }}
+      - name: Check out craft-fonts
+        uses: ./.github/actions/checkout-craft-fonts
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: stable
@@ -150,6 +155,8 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
+          CRAFT_FONTS_REQUIRED: "1"
         run: packaging/macos/package.sh --arch universal
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -188,6 +195,8 @@ jobs:
           app-name: notecraft
           version: ${{ needs.version.outputs.version }}
           date: ${{ needs.version.outputs.date }}
+      - name: Check out craft-fonts
+        uses: ./.github/actions/checkout-craft-fonts
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: stable
@@ -216,6 +225,8 @@ jobs:
           AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
           AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
           AZURE_CERT_PROFILE: ${{ secrets.AZURE_CERT_PROFILE }}
+          CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
+          CRAFT_FONTS_REQUIRED: "1"
         run: ./packaging/windows/package.ps1 -Arch ${{ matrix.arch }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -254,6 +265,8 @@ jobs:
         with:
           deb-arch: ${{ matrix.deb }}
           nfpm-version: ${{ env.NFPM_VERSION }}
+      - name: Check out craft-fonts
+        uses: ./.github/actions/checkout-craft-fonts
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: stable
@@ -264,6 +277,9 @@ jobs:
         if: inputs.version != ''
         run: cargo xtask version set "$VERSION"
       - name: Build and package (AppImage, deb, rpm, tar.gz)
+        env:
+          CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
+          CRAFT_FONTS_REQUIRED: "1"
         run: packaging/linux/package.sh
       - name: Import the Linux signing key
         id: linux_signing
@@ -386,6 +402,9 @@ jobs:
           app-name: notecraft
           version: ${{ needs.version.outputs.version }}
           date: ${{ needs.version.outputs.date }}
+      # Before the VM starts: the VM gets a copy of the workspace, craft-fonts included.
+      - name: Check out craft-fonts
+        uses: ./.github/actions/checkout-craft-fonts
       - name: Start the FreeBSD VM
         uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1.5.9
         with:
@@ -474,6 +493,7 @@ jobs:
           # Before the cross environment: xtask has to run on the guest.
           if [ -n "$INPUT_VERSION" ]; then cargo xtask version set "$VERSION"; fi
           [ ! -f /var/tmp/craft-cross/env ] || . /var/tmp/craft-cross/env
+          export CRAFT_FONTS_DIR="$PWD/craft-fonts" CRAFT_FONTS_REQUIRED=1
           bash packaging/freebsd/package.sh
           # The guest is x86_64 either way: the archive must carry the target's name.
           found=
@@ -519,6 +539,8 @@ jobs:
           app-name: notecraft
           version: ${{ needs.version.outputs.version }}
           date: ${{ needs.version.outputs.date }}
+      - name: Check out craft-fonts
+        uses: ./.github/actions/checkout-craft-fonts
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: stable
@@ -533,6 +555,9 @@ jobs:
         if: inputs.version != ''
         run: cargo xtask version set "$VERSION"
       - name: Build and zip
+        env:
+          CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
+          CRAFT_FONTS_REQUIRED: "1"
         run: packaging/web/package.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -564,6 +589,8 @@ jobs:
           app-name: notecraft
           version: ${{ needs.version.outputs.version }}
           date: ${{ needs.version.outputs.date }}
+      - name: Check out craft-fonts
+        uses: ./.github/actions/checkout-craft-fonts
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: stable
@@ -591,6 +618,8 @@ jobs:
           CROSS_COMPILE: riscv64-linux-gnu-
           EMULATOR: qemu-riscv64
           QEMU_LD_PREFIX: /usr/riscv64-linux-gnu
+          CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
+          CRAFT_FONTS_REQUIRED: "1"
         run: packaging/linux/package.sh --formats "deb rpm tar"
       - name: Import the Linux signing key
         id: linux_signing

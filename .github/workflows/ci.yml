@@ -112,9 +112,17 @@ jobs:
           save-if: ${{ github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch }}
           cache-on-failure: true
 
+      # The faces crates/fonts/build.rs embeds, so the gate builds and tests what a release ships.
+      - name: Check out craft-fonts
+        uses: ./.github/actions/checkout-craft-fonts
+
       # CI is set by Actions, so a missing wasm32 target fails `cargo xtask wasm` instead of
-      # skipping it.
+      # skipping it. CRAFT_FONTS_REQUIRED=1 fails the build, as in a release, if the craft-fonts
+      # checkout lacks a face build.rs embeds, instead of quietly building without it.
       - name: cargo xtask ci
+        env:
+          CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
+          CRAFT_FONTS_REQUIRED: "1"
         run: cargo xtask ci
 
       # A gate that changed Cargo.lock ran against a lockfile that is not the one in the repository.
