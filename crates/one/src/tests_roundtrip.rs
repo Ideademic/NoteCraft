@@ -58,7 +58,7 @@ fn rich_outline() -> Outline {
     for t in Tag::ALL.into_iter().skip(1) {
         paragraphs.push(Paragraph { tag: Some(t), align: Align::Center, ..Paragraph::plain(t.label()) });
     }
-    Outline { pos: CONTENT_ORIGIN, width: 432.0, paragraphs }
+    Outline { pos: CONTENT_ORIGIN, width: 432.0, blocks: paragraphs.into_iter().map(Into::into).collect() }
 }
 
 fn sample_section() -> Section {

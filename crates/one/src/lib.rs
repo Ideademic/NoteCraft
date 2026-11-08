@@ -32,6 +32,7 @@ mod notebook;
 mod opaque;
 mod read;
 mod recycle;
+mod table;
 mod toc;
 mod util;
 mod versions;

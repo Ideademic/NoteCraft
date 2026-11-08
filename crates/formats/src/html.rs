@@ -10,8 +10,8 @@ use std::fmt::Write as _;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use notecraft_doc::{
-    Align, ElementKind, ImageElement, ImageFormat, ListKind, ListStyle, Outline, Page, PageElement, ParaStyle, Paragraph, Printout, Rect, Run,
-    Section, Tag,
+    Align, Block, ElementKind, ImageElement, ImageFormat, ListKind, ListStyle, Outline, Page, PageElement, ParaStyle, Paragraph, Printout, Rect,
+    Run, Section, Table, Tag,
 };
 
 use crate::svg::{ink_bounds, ink_svg, num};
@@ -46,6 +46,9 @@ pre{font-family:Consolas,'Courier New',monospace}\
 .attachment{display:inline-block;padding:4pt 8pt;border:1px solid #c8c8cc}\
 nav.toc ol{list-style:none;padding-left:0}\
 nav.toc .sub1{padding-left:18pt}nav.toc .sub2{padding-left:36pt}\
+table.nc-table{border-collapse:collapse;table-layout:fixed;margin:2pt 0}\
+table.nc-table td{vertical-align:top;padding:2pt 4pt;overflow-wrap:anywhere}\
+table.nc-table.borders td{border:1px solid #a6a6a6}\
 section.page-section{margin-top:36pt;border-top:1px solid #e0e0e0;padding-top:12pt}";
 
 /// One page as a complete HTML document. (Never fails today; `Result` keeps room for limits.)
@@ -220,11 +223,57 @@ fn img_tag(img: &ImageElement, class: &str, positioned: bool) -> Option<String> 
     ))
 }
 
-/// An outline's paragraphs: consecutive list paragraphs of one kind and (chosen) marker style
-/// share a list.
+/// An outline's blocks: paragraphs (consecutive list paragraphs of one kind and chosen marker
+/// style share a list) and tables.
 fn outline_html(o: &Outline, out: &mut String) {
+    let mut run: Vec<&Paragraph> = Vec::new();
+    for b in &o.blocks {
+        match b {
+            Block::Paragraph(p) => run.push(p),
+            Block::Table { table } => {
+                paras_html(&run, out);
+                run.clear();
+                table_html(table, out);
+            }
+        }
+    }
+    paras_html(&run, out);
+}
+
+/// A table: fixed column widths, cell shading, borders unless hidden; each cell's paragraphs
+/// as in an outline.
+fn table_html(t: &Table, out: &mut String) {
+    let width: f32 = t.width();
+    let class = if t.borders { "nc-table borders" } else { "nc-table" };
+    let margin = if t.indent > 0 { format!("margin-left:{}pt;", u32::from(t.indent) * 18) } else { String::new() };
+    let _ = write!(out, "<table class=\"{class}\" style=\"{margin}width:{}pt\"><colgroup>", num(width));
+    for c in 0..t.col_count() {
+        let _ = write!(out, "<col style=\"width:{}pt\">", num(t.col_width(c)));
+    }
+    out.push_str("</colgroup><tbody>");
+    for row in &t.rows {
+        out.push_str("<tr>");
+        for cell in &row.cells {
+            match cell.shading {
+                Some(c) => {
+                    let _ = write!(out, "<td style=\"background-color:{}\">", c.to_hex());
+                }
+                None => out.push_str("<td>"),
+            }
+            let paras: Vec<&Paragraph> = cell.paragraphs.iter().collect();
+            paras_html(&paras, out);
+            out.push_str("</td>");
+        }
+        out.push_str("</tr>");
+    }
+    out.push_str("</tbody></table>\n");
+}
+
+/// Paragraphs in order: consecutive list paragraphs of one kind and (chosen) marker style
+/// share a list.
+fn paras_html(paras: &[&Paragraph], out: &mut String) {
     let mut open: Option<(ListKind, Option<ListStyle>)> = None;
-    for p in &o.paragraphs {
+    for &p in paras {
         let key = p.list.map(|k| (k, chosen_style(p)));
         if key != open {
             if let Some((k, _)) = open {
@@ -430,12 +479,12 @@ mod tests {
     fn sample() -> Page {
         let mut page = Page::new("Plans <&>");
         let mut o = Outline::with_text(Point::new(36.0, 108.0), "Heading\nfirst\nsecond\ndone\nplain");
-        o.paragraphs[0].style = ParaStyle::Heading1;
-        o.paragraphs[1].list = Some(ListKind::Bullet);
-        o.paragraphs[2].list = Some(ListKind::Bullet);
-        o.paragraphs[2].indent = 1;
-        o.paragraphs[3].tag = Some(Tag::ToDo { checked: true });
-        o.paragraphs[4].runs = vec![
+        o.para_mut(0).unwrap().style = ParaStyle::Heading1;
+        o.para_mut(1).unwrap().list = Some(ListKind::Bullet);
+        o.para_mut(2).unwrap().list = Some(ListKind::Bullet);
+        o.para_mut(2).unwrap().indent = 1;
+        o.para_mut(3).unwrap().tag = Some(Tag::ToDo { checked: true });
+        o.para_mut(4).unwrap().runs = vec![
             Run { text: "bold".into(), bold: true, ..Run::default() },
             Run::plain(" and "),
             Run { text: "link".into(), link: Some("https://example.com".into()), color: Some(Color::NOTECRAFT), ..Run::default() },
@@ -484,16 +533,16 @@ mod tests {
     fn alignment_list_styles_and_tags_export() {
         let mut page = Page::new("x");
         let mut o = Outline::with_text(Point::new(0.0, 0.0), "mid\nsq1\nsq2\nrom\nidea\ndef\nleft");
-        o.paragraphs[0].align = Align::Center;
+        o.para_mut(0).unwrap().align = Align::Center;
         for i in [1, 2] {
-            o.paragraphs[i].list = Some(ListKind::Bullet);
-            o.paragraphs[i].list_style = Some(ListStyle::Square);
+            o.para_mut(i).unwrap().list = Some(ListKind::Bullet);
+            o.para_mut(i).unwrap().list_style = Some(ListStyle::Square);
         }
-        o.paragraphs[2].align = Align::Justify;
-        o.paragraphs[3].list = Some(ListKind::Numbered);
-        o.paragraphs[3].list_style = Some(ListStyle::UpperRoman);
-        o.paragraphs[4].tag = Some(Tag::Idea);
-        o.paragraphs[5].tag = Some(Tag::Definition);
+        o.para_mut(2).unwrap().align = Align::Justify;
+        o.para_mut(3).unwrap().list = Some(ListKind::Numbered);
+        o.para_mut(3).unwrap().list_style = Some(ListStyle::UpperRoman);
+        o.para_mut(4).unwrap().tag = Some(Tag::Idea);
+        o.para_mut(5).unwrap().tag = Some(Tag::Definition);
         page.elements.push(PageElement::new(ElementKind::Outline(o)));
         let html = page_to_html(&page).unwrap();
         assert!(html.contains("<p style=\"text-align:center\">mid</p>"), "{html}");

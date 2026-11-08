@@ -218,7 +218,7 @@ fn wanted(pages: &[&Page]) -> (Vec<fonts::StyleKey>, HashSet<char>) {
         for el in &p.elements {
             match &el.kind {
                 ElementKind::Outline(o) => {
-                    for para in &o.paragraphs {
+                    for para in o.paragraphs() {
                         for r in &para.runs {
                             let look = style::run_look(r, para.style, &ink);
                             keys.push(text::key_of(&look));

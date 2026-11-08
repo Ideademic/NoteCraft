@@ -16,6 +16,7 @@ pub mod history;
 pub mod ink;
 pub mod notebook;
 pub mod page;
+pub mod table;
 
 pub use color::Color;
 pub use guid::Guid;
@@ -28,6 +29,7 @@ pub use page::{
     Align, ElementKind, ImageElement, ImageFormat, ListKind, ListStyle, Outline, Page, PageBackground, PageElement, ParaStyle, Paragraph, Printout,
     RuleLines, Run, Tag,
 };
+pub use table::{Block, Cell, Row, Table};
 
 use chrono::{DateTime, Utc};
 

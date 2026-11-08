@@ -272,7 +272,7 @@ mod tests {
         h.get_all_by_label("Hack").next().unwrap().click();
         h.run_steps(3);
         let o = h.state().session.current_page().unwrap().outline(outline).unwrap().clone();
-        assert_eq!(o.paragraphs[0].runs.first().and_then(|r| r.font.as_deref()), Some("Hack"), "{:?}", o.paragraphs[0].runs);
+        assert_eq!(o.para(0).unwrap().runs.first().and_then(|r| r.font.as_deref()), Some("Hack"), "{:?}", o.para(0).unwrap().runs);
         assert_eq!(h.state().ui.prefs.recent_fonts.first().map(String::as_str), Some("Hack"));
         let f = crate::canvas::current_format(&h.state().canvas, &h.state().session).unwrap();
         assert_eq!(f.font, Some(Some("Hack".to_owned())), "the box now shows Hack");

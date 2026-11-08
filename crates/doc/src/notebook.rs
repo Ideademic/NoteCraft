@@ -181,7 +181,7 @@ impl Notebook {
              Sketch something with the Pen on the Draw tab\n\
              Add a section with the + next to the section tabs",
         );
-        for (i, p) in outline.paragraphs.iter_mut().enumerate() {
+        for (i, p) in outline.paragraphs_mut().enumerate() {
             match i {
                 0 => p.style = crate::ParaStyle::Heading2,
                 5 => p.style = crate::ParaStyle::Heading3,
@@ -452,8 +452,8 @@ mod tests {
         let pen = p.ink.iter().find(|s| s.tool == InkTool::Pen).unwrap();
         assert!(xs(pen).1 - xs(pen).0 > 300.0);
         let ElementKind::Outline(o) = &p.elements[0].kind else { panic!("an outline") };
-        assert_eq!(o.paragraphs.iter().filter(|q| matches!(q.tag, Some(crate::Tag::ToDo { .. }))).count(), 4);
-        assert_eq!(o.paragraphs[0].style, crate::ParaStyle::Heading2);
+        assert_eq!(o.paragraphs().filter(|q| matches!(q.tag, Some(crate::Tag::ToDo { .. }))).count(), 4);
+        assert_eq!(o.para(0).unwrap().style, crate::ParaStyle::Heading2);
     }
 
     #[test]

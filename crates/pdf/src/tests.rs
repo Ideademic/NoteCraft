@@ -65,7 +65,7 @@ pub(crate) fn rich_page() -> Page {
     };
     let mut code = para("let answer = 42;");
     code.style = notecraft_doc::ParaStyle::Code;
-    o.paragraphs = vec![h1, b1, b2, n1, n2, todo, todo2, star, q, rich, code];
+    o.blocks = [h1, b1, b2, n1, n2, todo, todo2, star, q, rich, code].into_iter().map(Into::into).collect();
     page.elements.push(PageElement::new(ElementKind::Outline(o)));
     page.elements.push(PageElement::new(ElementKind::Image(ImageElement {
         pos: Point::new(460.0, 120.0),
@@ -214,11 +214,11 @@ fn sections_get_bookmarks_and_hostile_pages_dont_break_it() {
     junk.background.rule = RuleLines::GridSmall;
     let mut o = Outline::with_text(Point::new(f32::NAN, -1e30), &"x".repeat(5000));
     o.width = f32::INFINITY;
-    o.paragraphs.push(Paragraph {
+    o.blocks.push(notecraft_doc::Block::Paragraph(Paragraph {
         runs: vec![Run { text: "big".into(), size: Some(1e9), font: Some("\u{0}".repeat(500)), ..Run::default() }],
         indent: 255,
         ..Paragraph::default()
-    });
+    }));
     junk.elements.push(PageElement::new(ElementKind::Outline(o)));
     junk.elements.push(PageElement::new(ElementKind::Image(ImageElement {
         pos: Point::new(1e6, 1e6),
@@ -316,26 +316,26 @@ fn alignment_list_styles_and_tags_print() {
     right.align = Align::Right;
     let mut mid = para("Inthemiddle");
     mid.align = Align::Center;
-    o.paragraphs = vec![right, mid];
+    o.blocks = vec![right.into(), mid.into()];
     for t in ["Firstroman", "Secondroman"] {
         let mut p = para(t);
         p.list = Some(ListKind::Numbered);
         p.list_style = Some(ListStyle::UpperRoman);
-        o.paragraphs.push(p);
+        o.blocks.push(p.into());
     }
     let mut arrow = para("Arrowbullet");
     arrow.list = Some(ListKind::Bullet);
     arrow.list_style = Some(ListStyle::Arrow);
-    o.paragraphs.push(arrow);
+    o.blocks.push(arrow.into());
     for t in Tag::ALL {
         let mut p = para(&format!("Tagged{}", t.name()));
         p.tag = Some(t);
-        o.paragraphs.push(p);
+        o.blocks.push(p.into());
     }
     // Laid out as the canvas lays it out: the right-aligned row ends at the text area's right,
     // the centred one sits in the middle.
     let ink = style::Ink::new(None);
-    let chars: std::collections::HashSet<char> = o.paragraphs.iter().flat_map(|p| p.text().chars().collect::<Vec<_>>()).collect();
+    let chars: std::collections::HashSet<char> = o.paragraphs().flat_map(|p| p.text().chars().collect::<Vec<_>>()).collect();
     let mut fs = fonts::FontSet::new(&BundledFonts, &[fonts::StyleKey::new(fonts::DEFAULT_FONT, false, false)], &chars);
     let lay = text::layout_outline(&mut fs, &o, &ink);
     let edge = |i: usize, f: f32| {

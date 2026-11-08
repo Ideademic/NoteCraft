@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use notecraft_doc::page::{DEFAULT_OUTLINE_WIDTH, MAX_ELEMENTS_PER_PAGE, MAX_INDENT, MAX_PAGE_LEVEL, MAX_PARAGRAPHS};
 use notecraft_doc::{
-    Align, Color, ElementKind, Guid, ImageElement, ImageFormat, InkStroke, ListKind, ListStyle, Outline, Page, PageBackground, PageElement,
+    Align, Block, Color, ElementKind, Guid, ImageElement, ImageFormat, InkStroke, ListKind, ListStyle, Outline, Page, PageBackground, PageElement,
     ParaStyle, Paragraph, Point, Printout, RuleLines, Run, Section, Size, SourceInfo, Tag,
 };
 use notecraft_onestore::{ExtendedGuid, FileKind, Object, ObjectSpace, PropertySet, Store};
@@ -19,8 +19,6 @@ use crate::{Error, Result, ink, opaque};
 const MAX_PAGES: usize = 10_000;
 /// Deepest outline element nesting walked.
 const MAX_OE_DEPTH: usize = 64;
-/// Most cells flattened from one table.
-const MAX_TABLE_CELLS: usize = 10_000;
 
 /// An object space with an id index.
 pub(crate) struct View<'a> {
@@ -184,10 +182,10 @@ impl Reader {
             if outline.props.bool(prop::IS_TITLE_DATE) == Some(true) {
                 continue;
             }
-            let mut paras = Vec::new();
+            let mut blocks = Vec::new();
             let mut extra = PageParts::default();
-            self.outline_elements(v, &outline.props, (0, 0), Point::ZERO, &mut paras, &mut extra);
-            texts.extend(paras.iter().map(Paragraph::text).filter(|t| !t.is_empty()));
+            self.outline_elements(v, &outline.props, (0, 0), Point::ZERO, &mut blocks, &mut extra);
+            texts.extend(blocks.iter().map(Block::text).filter(|t| !t.is_empty()));
             if !texts.is_empty() {
                 break;
             }
@@ -205,13 +203,13 @@ impl Reader {
         match o.jcid {
             jcid::OUTLINE_NODE => {
                 let width = o.props.f32(prop::LAYOUT_MAX_WIDTH).map(hi_to_pt).filter(|w| *w > 1.0).unwrap_or(DEFAULT_OUTLINE_WIDTH);
-                let mut paragraphs = Vec::new();
+                let mut blocks = Vec::new();
                 let base = o.props.u32(prop::OUTLINE_ELEMENT_CHILD_LEVEL).unwrap_or(1).saturating_sub(1);
-                self.outline_elements(v, &o.props, (base, 0), pos, &mut paragraphs, parts);
-                if paragraphs.is_empty() {
-                    paragraphs.push(Paragraph::plain(""));
+                self.outline_elements(v, &o.props, (base, 0), pos, &mut blocks, parts);
+                if blocks.is_empty() {
+                    blocks.push(Paragraph::plain("").into());
                 }
-                parts.push(PageElement { id, kind: ElementKind::Outline(Outline { pos, width, paragraphs }) });
+                parts.push(PageElement { id, kind: ElementKind::Outline(Outline { pos, width, blocks }) });
             }
             jcid::IMAGE_NODE => self.image(v, o, id, pos, parts),
             jcid::EMBEDDED_FILE_NODE => self.embedded_file(v, o, id, pos, parts),
@@ -273,7 +271,7 @@ impl Reader {
         parent: &PropertySet,
         at: (u32, usize),
         pos: Point,
-        out: &mut Vec<Paragraph>,
+        out: &mut Vec<Block>,
         parts: &mut PageParts,
     ) {
         let (indent, depth) = at;
@@ -289,7 +287,7 @@ impl Reader {
             let level = child.props.u32(prop::OUTLINE_ELEMENT_CHILD_LEVEL).unwrap_or(1).max(1);
             match child.jcid {
                 jcid::OUTLINE_ELEMENT_NODE => {
-                    self.outline_element(v, child, indent, pos, out, parts);
+                    self.outline_element(v, child, (indent, depth), pos, out, parts);
                     self.outline_elements(v, &child.props, (indent.saturating_add(level), depth + 1), pos, out, parts);
                 }
                 jcid::OUTLINE_GROUP => self.outline_elements(v, &child.props, (indent.saturating_add(level), depth + 1), pos, out, parts),
@@ -298,8 +296,9 @@ impl Reader {
         }
     }
 
-    /// One outline element's content as paragraphs.
-    fn outline_element(&mut self, v: &View<'_>, oe: &Object, indent: u32, pos: Point, out: &mut Vec<Paragraph>, parts: &mut PageParts) {
+    /// One outline element's content as a block (a paragraph or a table).
+    fn outline_element(&mut self, v: &View<'_>, oe: &Object, at: (u32, usize), pos: Point, out: &mut Vec<Block>, parts: &mut PageParts) {
+        let (indent, depth) = at;
         let indent = indent.min(u32::from(MAX_INDENT)) as u8;
         let marker = v.children(&oe.props, prop::LIST_NODES).first().map(|l| list_marker(&l.props));
         let list = marker.map(|(k, _)| k);
@@ -308,7 +307,7 @@ impl Reader {
         let list_style = marker.and_then(|(k, st)| st.filter(|st| *st != ListStyle::by_level(k, indent)));
         let content = v.children(&oe.props, prop::CONTENT_CHILD_NODES);
         let Some(c) = content.first() else {
-            out.push(Paragraph { indent, list, list_style, ..Paragraph::plain("") });
+            out.push(Paragraph { indent, list, list_style, ..Paragraph::plain("") }.into());
             return;
         };
         let here = Point::new(pos.x, pos.y + out.len() as f32 * 18.0);
@@ -318,11 +317,12 @@ impl Reader {
                 para.indent = indent;
                 para.list = list;
                 para.list_style = list_style;
-                out.push(para);
+                out.push(para.into());
             }
             jcid::TABLE_NODE => {
-                self.unsupported = true;
-                self.table(v, c, indent, out);
+                let mut t = crate::table::read(self, v, c, depth);
+                t.indent = indent;
+                out.push(Block::table(t));
             }
             jcid::IMAGE_NODE => self.image(v, c, element_id(c.id), here, parts),
             jcid::EMBEDDED_FILE_NODE => self.embedded_file(v, c, element_id(c.id), here, parts),
@@ -330,23 +330,29 @@ impl Reader {
         }
     }
 
-    /// A table, flattened: one paragraph per row, cells separated by tabs (read-only).
-    fn table(&mut self, v: &View<'_>, table: &Object, indent: u8, out: &mut Vec<Paragraph>) {
-        let mut cells = 0usize;
-        for row in v.children(&table.props, prop::ELEMENT_CHILD_NODES) {
-            let mut texts = Vec::new();
-            for cell in v.children(&row.props, prop::ELEMENT_CHILD_NODES) {
-                cells += 1;
-                if cells > MAX_TABLE_CELLS || out.len() >= MAX_PARAGRAPHS {
-                    return;
-                }
-                let mut paras = Vec::new();
-                let mut extra = PageParts::default();
-                self.outline_elements(v, &cell.props, (0, MAX_OE_DEPTH / 2), Point::ZERO, &mut paras, &mut extra);
-                texts.push(paras.iter().map(Paragraph::text).collect::<Vec<_>>().join(" "));
-            }
-            out.push(Paragraph { indent, ..Paragraph::plain(&texts.join("\t")) });
+    /// A table cell's outline elements as paragraphs. Tables don't nest in NoteCraft: a table
+    /// inside the cell becomes a paragraph per row, cells separated by tabs (and the section is
+    /// marked as holding content NoteCraft can't keep). Pictures and files in cells are dropped
+    /// the same way.
+    pub(crate) fn cell_paragraphs(&mut self, v: &View<'_>, cell: &PropertySet, depth: usize) -> Vec<Paragraph> {
+        let mut blocks = Vec::new();
+        let mut extra = PageParts::default();
+        self.outline_elements(v, cell, (0, depth.saturating_add(1)), Point::ZERO, &mut blocks, &mut extra);
+        if !extra.elements.is_empty() || !extra.ink.is_empty() {
+            self.unsupported = true;
         }
+        let mut out = Vec::with_capacity(blocks.len());
+        for b in blocks {
+            match b {
+                Block::Paragraph(p) => out.push(p),
+                Block::Table { table } => {
+                    self.unsupported = true;
+                    let indent = table.indent;
+                    out.extend(table.texts().iter().map(|row| Paragraph { indent, ..Paragraph::plain(&row.join("\t")) }));
+                }
+            }
+        }
+        out
     }
 
     fn rich_text(&mut self, v: &View<'_>, rt: &Object) -> Paragraph {

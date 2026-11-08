@@ -2,7 +2,7 @@
 //! outline's paragraphs (typing).
 
 use notecraft_doc::page::{DEFAULT_OUTLINE_WIDTH, MAX_ELEMENTS_PER_PAGE, MAX_PARAGRAPHS};
-use notecraft_doc::{ElementKind, Outline, PageElement, Paragraph, Size};
+use notecraft_doc::{Block, ElementKind, Outline, PageElement, Size};
 use serde_json::{Value, json};
 
 use super::{has_page, target_page};
@@ -26,7 +26,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new(OUTLINE_DELETE, "Delete", delete).when(has_page).params(r##"{"id": guid, "page"?: guid}"##),
         CommandSpec::new(TEXT_SET_PARAGRAPHS, "Type", set_paragraphs)
             .when(has_page)
-            .params(r##"{"id": guid, "paragraphs": [Paragraph], "mergeKey"?: string, "page"?: guid}"##),
+            .params(r##"{"id": guid, "paragraphs": [Paragraph | {"table": Table}], "mergeKey"?: string, "page"?: guid}"##),
     ]
 }
 
@@ -40,7 +40,7 @@ fn new(s: &mut Session, params: &Value) -> CmdResult {
     }
     let mut outline = Outline::with_text(pos, text);
     outline.width = width;
-    outline.paragraphs.truncate(MAX_PARAGRAPHS);
+    outline.blocks.truncate(MAX_PARAGRAPHS);
     let el = PageElement::new(ElementKind::Outline(outline));
     let id = el.id;
     page.elements.push(el);
@@ -92,22 +92,25 @@ fn delete(s: &mut Session, params: &Value) -> CmdResult {
     Ok(CmdOutput::ok())
 }
 
-/// Replaces an outline's paragraphs (v0.1 typing: the canvas edits a copy and sends it whole).
-/// Pass the same `mergeKey` (the outline id) while typing to make it one undo step.
+/// Replaces an outline's blocks (v0.1 typing: the canvas edited a copy and sent it whole):
+/// paragraphs, and tables as `{"table": …}`. Pass the same `mergeKey` (the outline id) while
+/// typing to make it one undo step.
 fn set_paragraphs(s: &mut Session, params: &Value) -> CmdResult {
     let id = p::req_guid(params, "id")?;
     let raw = params.get("paragraphs").filter(|v| v.is_array()).ok_or_else(|| CmdError::Params("`paragraphs` (array) is required".into()))?;
     if raw.as_array().is_some_and(|a| a.len() > MAX_PARAGRAPHS) {
         return Err(CmdError::Params(format!("at most {MAX_PARAGRAPHS} paragraphs")));
     }
-    let paras: Vec<Paragraph> = serde_json::from_value(raw.clone()).map_err(|e| CmdError::Params(format!("`paragraphs`: {e}")))?;
-    let paras: Vec<Paragraph> = paras.into_iter().map(Paragraph::sanitized).collect();
+    let blocks: Vec<Block> = serde_json::from_value(raw.clone()).map_err(|e| CmdError::Params(format!("`paragraphs`: {e}")))?;
+    let mut probe = Outline { pos: notecraft_doc::Point::ZERO, width: DEFAULT_OUTLINE_WIDTH, blocks };
+    probe.sanitize();
+    let blocks = probe.blocks;
     let page = target_page(s, params)?;
     let outline = page.outline_mut(id).ok_or_else(|| CmdError::Params(format!("no outline {id}")))?;
-    if outline.paragraphs == paras {
+    if outline.blocks == blocks {
         return Ok(CmdOutput::unchanged());
     }
-    outline.paragraphs = paras;
+    outline.blocks = blocks;
     page.touch();
     Ok(CmdOutput::ok())
 }

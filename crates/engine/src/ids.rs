@@ -104,6 +104,25 @@ pub const HISTORY_TOGGLE_READ: &str = "history.toggleRead";
 pub const HISTORY_NEXT_UNREAD: &str = "history.nextUnread";
 pub const HISTORY_RECENT_EDITS: &str = "history.recentEdits";
 
+pub const INSERT_TABLE: &str = "insert.table";
+pub const TABLE_FROM_TEXT: &str = "table.fromText";
+pub const TABLE_INSERT_ROW_ABOVE: &str = "table.insertRowAbove";
+pub const TABLE_INSERT_ROW_BELOW: &str = "table.insertRowBelow";
+pub const TABLE_INSERT_COLUMN_LEFT: &str = "table.insertColumnLeft";
+pub const TABLE_INSERT_COLUMN_RIGHT: &str = "table.insertColumnRight";
+pub const TABLE_DELETE_ROW: &str = "table.deleteRow";
+pub const TABLE_DELETE_COLUMN: &str = "table.deleteColumn";
+pub const TABLE_DELETE: &str = "table.deleteTable";
+pub const TABLE_SELECT_CELL: &str = "table.selectCell";
+pub const TABLE_SELECT_ROW: &str = "table.selectRow";
+pub const TABLE_SELECT_COLUMN: &str = "table.selectColumn";
+pub const TABLE_SELECT_TABLE: &str = "table.selectTable";
+pub const TABLE_SET_COLUMN_WIDTH: &str = "table.setColumnWidth";
+pub const TABLE_SHADING: &str = "table.shading";
+pub const TABLE_BORDERS: &str = "table.borders";
+pub const TABLE_SORT: &str = "table.sort";
+pub const TABLE_CONVERT_TO_TEXT: &str = "table.convertToText";
+
 /// Every id above, for tests and tooling.
 pub const ALL: &[&str] = &[
     NOTEBOOK_NEW,
@@ -196,4 +215,22 @@ pub const ALL: &[&str] = &[
     HISTORY_TOGGLE_READ,
     HISTORY_NEXT_UNREAD,
     HISTORY_RECENT_EDITS,
+    INSERT_TABLE,
+    TABLE_FROM_TEXT,
+    TABLE_INSERT_ROW_ABOVE,
+    TABLE_INSERT_ROW_BELOW,
+    TABLE_INSERT_COLUMN_LEFT,
+    TABLE_INSERT_COLUMN_RIGHT,
+    TABLE_DELETE_ROW,
+    TABLE_DELETE_COLUMN,
+    TABLE_DELETE,
+    TABLE_SELECT_CELL,
+    TABLE_SELECT_ROW,
+    TABLE_SELECT_COLUMN,
+    TABLE_SELECT_TABLE,
+    TABLE_SET_COLUMN_WIDTH,
+    TABLE_SHADING,
+    TABLE_BORDERS,
+    TABLE_SORT,
+    TABLE_CONVERT_TO_TEXT,
 ];

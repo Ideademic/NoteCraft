@@ -15,6 +15,7 @@ pub mod pdf;
 pub mod search;
 pub mod section;
 pub mod shapes;
+pub mod table;
 pub mod text;
 pub mod view;
 
@@ -43,6 +44,7 @@ pub fn all() -> Vec<CommandSpec> {
     v.extend(nav::specs());
     v.extend(search::specs());
     v.extend(history::specs());
+    v.extend(table::specs());
     v
 }
 

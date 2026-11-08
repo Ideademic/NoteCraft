@@ -9,18 +9,24 @@
 //! ```
 //!
 //! `char` counts Unicode scalar values (egui's `CCursor`), `para` indexes the outline's
-//! paragraphs. Positions are clamped to the outline, `start` and `end` may be in either order,
-//! and `end` defaults to `start`. Also accepted: `"id"` for `"outline"`; `"at"` for a caret;
-//! `"para": n` (that whole paragraph); `"paras": [first, last]`; the older
+//! blocks (a table is one block). Positions are clamped to the outline, `start` and `end` may
+//! be in either order, and `end` defaults to `start`. Also accepted: `"id"` for `"outline"`;
+//! `"at"` for a caret; `"para": n` (that whole paragraph); `"paras": [first, last]`; the older
 //! `{"para": n, "start": c0, "end": c1}`. No range means the whole outline.
+//!
+//! **In a table cell**, add `"cell": {"block": b, "row": r, "col": c}` (or `[b, r, c]`): the
+//! positions are then in that cell's paragraphs (`para` indexes them). Formatting commands also
+//! take a rectangle of whole cells, `"cells": {"block": b, "rows": [r0, r1], "cols": [c0, c1]}`,
+//! and a range in the outline's own blocks covers every table it spans (all of them without a
+//! range).
 
 use notecraft_doc::page::MAX_PARAGRAPHS;
-use notecraft_doc::{Color, Guid, Outline, Run};
+use notecraft_doc::{Color, Guid, Outline, Paragraph, Run};
 use serde_json::{Value, json};
 
 use super::{has_page, target_page};
 use crate::ids::{TEXT_DELETE, TEXT_FORMAT_AT, TEXT_INSERT, TEXT_MERGE_PARAGRAPHS, TEXT_SPLIT_PARAGRAPH};
-use crate::text::{self, MAX_PARA_CHARS, TextPos};
+use crate::text::{self, CellRange, Flow, Frame, MAX_PARA_CHARS, TextPos};
 use crate::{CmdError, CmdOutput, CmdResult, CommandSpec, Session, p};
 
 /// Most characters inserted by one command.
@@ -34,20 +40,20 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new(TEXT_INSERT, "Insert Text", insert)
             .when(has_page)
-            .params(r##"{"outline": guid, "at"?: {"para","char"} (default: end), "start"?/"end"?: pos (typing over a selection), "text": string, "style"?: {"bold"?, "italic"?, "underline"?, "strike"?: bool, "highlight"?, "color"?: "#rrggbb"|null, "font"?: string|null, "size"?: number|null, "link"?: string|null}, "mergeKey"?: string, "page"?: guid}"##),
+            .params(r##"{"outline": guid, "cell"?: {"block","row","col"}, "at"?: {"para","char"} (default: end), "start"?/"end"?: pos (typing over a selection), "text": string, "style"?: {"bold"?, "italic"?, "underline"?, "strike"?: bool, "highlight"?, "color"?: "#rrggbb"|null, "font"?: string|null, "size"?: number|null, "link"?: string|null}, "mergeKey"?: string, "page"?: guid}"##),
         CommandSpec::new(TEXT_DELETE, "Delete Text", delete)
             .when(has_page)
-            .params(r##"{"outline": guid, "start": pos, "end": pos} | {"outline": guid, "at": pos, "backward"?: bool (default true), "unit"?: "char"|"word", "count"?: number}, "mergeKey"?: string, "page"?: guid"##),
+            .params(r##"{"outline": guid, "cell"?: cell, "start": pos, "end": pos} | {"outline": guid, "cell"?: cell, "at": pos, "backward"?: bool (default true), "unit"?: "char"|"word", "count"?: number}, "mergeKey"?: string, "page"?: guid"##),
         CommandSpec::new(TEXT_SPLIT_PARAGRAPH, "New Paragraph", split)
             .when(has_page)
-            .params(r##"{"outline": guid, "at"?: pos (default: end), "start"?/"end"?: pos (replaced first), "mergeKey"?: string, "page"?: guid}"##),
+            .params(r##"{"outline": guid, "cell"?: cell, "at"?: pos (default: end), "start"?/"end"?: pos (replaced first), "mergeKey"?: string, "page"?: guid}"##),
         CommandSpec::new(TEXT_MERGE_PARAGRAPHS, "Join Paragraphs", merge)
             .when(has_page)
-            .params(r##"{"outline": guid, "para": number (joined with the next one), "mergeKey"?: string, "page"?: guid}"##),
+            .params(r##"{"outline": guid, "cell"?: cell, "para": number (joined with the next one), "mergeKey"?: string, "page"?: guid}"##),
         CommandSpec::new(TEXT_FORMAT_AT, "Formatting at Selection", format_at)
             .pure()
             .when(has_page)
-            .params(r##"{"outline": guid, "start"?: pos, "end"?: pos, "page"?: guid}"##),
+            .params(r##"{"outline": guid, "cell"?: cell, "cells"?: cell range, "start"?: pos, "end"?: pos, "page"?: guid}"##),
     ]
 }
 
@@ -63,14 +69,14 @@ pub(crate) fn outline_id(params: &Value) -> Result<Guid, CmdError> {
 
 /// The range a command names (see the module docs), ordered and clamped to `o`. `None` when no
 /// range was given.
-pub(crate) fn range(params: &Value, o: &Outline) -> Option<(TextPos, TextPos)> {
+pub(crate) fn range<F: Flow + ?Sized>(params: &Value, o: &F) -> Option<(TextPos, TextPos)> {
     let (a, b) = raw_range(params)?;
     let (a, b) = (text::clamp_ref(o, a), text::clamp_ref(o, b));
     Some(if b < a { (b, a) } else { (a, b) })
 }
 
 /// The range, or the whole outline.
-pub(crate) fn range_or_all(params: &Value, o: &Outline) -> (TextPos, TextPos) {
+pub(crate) fn range_or_all<F: Flow + ?Sized>(params: &Value, o: &F) -> (TextPos, TextPos) {
     range(params, o).unwrap_or((TextPos::default(), text::end_of(o)))
 }
 
@@ -103,12 +109,62 @@ pub(crate) fn with_outline(s: &mut Session, params: &Value, f: impl FnOnce(&mut 
     let id = outline_id(params)?;
     let page = target_page(s, params)?;
     let outline = page.outline_mut(id).ok_or_else(|| CmdError::Params(format!("no outline {id}")))?;
-    if outline.paragraphs.is_empty() {
-        outline.paragraphs.push(notecraft_doc::Paragraph::plain(""));
+    if outline.blocks.is_empty() {
+        outline.blocks.push(Paragraph::plain("").into());
     }
     let out = f(outline)?;
     if out.changed {
         page.touch();
+    }
+    Ok(out)
+}
+
+/// The `cell` param (see the module docs).
+pub(crate) fn frame_param(params: &Value) -> Result<Frame, CmdError> {
+    Frame::from_json(params.get("cell")).ok_or_else(|| CmdError::Params("`cell` must be {\"block\", \"row\", \"col\"}".into()))
+}
+
+/// Runs `f` on the flow the command names: the outline's blocks, or the `cell`'s paragraphs.
+pub(crate) fn with_frame(s: &mut Session, params: &Value, f: impl FnOnce(&mut dyn Flow) -> CmdResult) -> CmdResult {
+    let frame = frame_param(params)?;
+    with_outline(s, params, |o| {
+        let fl = text::flow_mut(o, frame).ok_or_else(|| CmdError::Params("no such table cell".into()))?;
+        if fl.count() == 0 {
+            fl.insert_para(0, Paragraph::plain(""));
+        }
+        f(fl)
+    })
+}
+
+/// The text a formatting command covers: `(flow, start, end)` triples (see the module docs).
+/// A collapsed range is returned as it is.
+pub(crate) fn targets(params: &Value, o: &Outline) -> Result<Vec<(Frame, TextPos, TextPos)>, CmdError> {
+    if let Some(v) = params.get("cells").filter(|v| !v.is_null()) {
+        let r = CellRange::from_json(v).ok_or_else(|| CmdError::Params("`cells` must be {\"block\", \"rows\", \"cols\"}".into()))?;
+        let t = o.table(r.block).ok_or_else(|| CmdError::Params(format!("block {} is not a table", r.block)))?;
+        let r = r.clamped(t.row_count(), t.col_count());
+        return Ok(r
+            .cells()
+            .filter_map(|c| {
+                let fl = text::flow(o, Frame::Cell(c))?;
+                Some((Frame::Cell(c), TextPos::default(), text::end_of(fl)))
+            })
+            .collect());
+    }
+    let frame = frame_param(params)?;
+    let fl = text::flow(o, frame).ok_or_else(|| CmdError::Params("no such table cell".into()))?;
+    let given = range(params, fl);
+    let (a, b) = given.unwrap_or((TextPos::default(), text::end_of(fl)));
+    let mut out = vec![(frame, a, b)];
+    if frame == Frame::Top && (a != b || given.is_none()) {
+        for i in a.para..=b.para.min(o.blocks.len().saturating_sub(1)) {
+            let Some(t) = o.table(i) else { continue };
+            for (r, row) in t.rows.iter().enumerate() {
+                for (c, cell) in row.cells.iter().enumerate() {
+                    out.push((Frame::Cell(text::CellRef::new(i, r, c)), TextPos::default(), text::end_of(cell)));
+                }
+            }
+        }
     }
     Ok(out)
 }
@@ -166,8 +222,8 @@ fn insert(s: &mut Session, params: &Value) -> CmdResult {
         return Err(CmdError::Params(format!("at most {MAX_INSERT_CHARS} characters at once")));
     }
     let lines = txt.matches('\n').count();
-    with_outline(s, params, |o| {
-        if o.paragraphs.len().saturating_add(lines) > MAX_PARAGRAPHS {
+    with_frame(s, params, |o| {
+        if o.count().saturating_add(lines) > MAX_PARAGRAPHS {
             return Err(CmdError::Failed("this note container holds as many paragraphs as it can".into()));
         }
         let (start, end) = range(params, o).unwrap_or_else(|| {
@@ -175,10 +231,10 @@ fn insert(s: &mut Session, params: &Value) -> CmdResult {
             (e, e)
         });
         let at = text::delete(o, start, end);
-        if o.paragraphs.get(at.para).map_or(0, text::para_len).saturating_add(n) > MAX_PARA_CHARS {
+        if text::len_at(o, at.para).saturating_add(n) > MAX_PARA_CHARS {
             return Err(CmdError::Failed("this paragraph is as long as it can be".into()));
         }
-        let base = o.paragraphs.get(at.para).map(|pg| text::format_at(pg, at.char)).unwrap_or_default();
+        let base = o.para(at.para).map(|pg| text::format_at(pg, at.char)).unwrap_or_default();
         let fmt = match params.get("style") {
             Some(st) if !st.is_null() => apply_style(st, base)?,
             _ => base,
@@ -191,7 +247,7 @@ fn insert(s: &mut Session, params: &Value) -> CmdResult {
 }
 
 fn delete(s: &mut Session, params: &Value) -> CmdResult {
-    with_outline(s, params, |o| {
+    with_frame(s, params, |o| {
         if params.get("start").is_some() {
             let (a, b) = range(params, o).ok_or_else(|| CmdError::Params("`start` must be {\"para\", \"char\"}".into()))?;
             if a == b {
@@ -210,11 +266,11 @@ fn delete(s: &mut Session, params: &Value) -> CmdResult {
 
 /// Backspace / Delete from a caret: characters (or a word), joining paragraphs at their edges.
 /// Backspace at the start of a list paragraph removes the bullet first, then the indent.
-fn delete_step(o: &mut Outline, at: TextPos, backward: bool, count: usize, word: bool) -> CmdResult {
-    let len = o.paragraphs.get(at.para).map_or(0, text::para_len);
+fn delete_step(o: &mut dyn Flow, at: TextPos, backward: bool, count: usize, word: bool) -> CmdResult {
+    let len = text::len_at(o, at.para);
     if backward {
         if at.char == 0 {
-            let Some(pg) = o.paragraphs.get_mut(at.para) else { return Ok(CmdOutput::unchanged()) };
+            let Some(pg) = o.para_mut(at.para) else { return Ok(CmdOutput::unchanged()) };
             if pg.list.is_some() || pg.tag.is_some() {
                 pg.list = None;
                 pg.tag = None;
@@ -237,12 +293,12 @@ fn delete_step(o: &mut Outline, at: TextPos, backward: bool, count: usize, word:
     Ok(caret(text::delete(o, at, to)))
 }
 
-fn para_chars(o: &Outline, para: usize) -> Vec<char> {
-    o.paragraphs.get(para).map(|p| p.text().chars().collect()).unwrap_or_default()
+fn para_chars(o: &dyn Flow, para: usize) -> Vec<char> {
+    o.para(para).map(|p| p.text().chars().collect()).unwrap_or_default()
 }
 
 /// Where Ctrl+Backspace deletes back to: over spaces, then over the word.
-fn word_start(o: &Outline, at: TextPos) -> TextPos {
+fn word_start(o: &dyn Flow, at: TextPos) -> TextPos {
     let chars = para_chars(o, at.para);
     let mut i = at.char.min(chars.len());
     while i > 0 && chars.get(i - 1).is_some_and(|c| c.is_whitespace()) {
@@ -256,7 +312,7 @@ fn word_start(o: &Outline, at: TextPos) -> TextPos {
 }
 
 /// Where Ctrl+Delete deletes up to: over the word, then over spaces.
-fn word_end(o: &Outline, at: TextPos) -> TextPos {
+fn word_end(o: &dyn Flow, at: TextPos) -> TextPos {
     let chars = para_chars(o, at.para);
     let mut i = at.char.min(chars.len());
     let word = chars.get(i).is_some_and(|c| c.is_alphanumeric());
@@ -270,8 +326,8 @@ fn word_end(o: &Outline, at: TextPos) -> TextPos {
 }
 
 fn split(s: &mut Session, params: &Value) -> CmdResult {
-    with_outline(s, params, |o| {
-        if o.paragraphs.len() >= MAX_PARAGRAPHS {
+    with_frame(s, params, |o| {
+        if o.count() >= MAX_PARAGRAPHS {
             return Err(CmdError::Failed("this note container holds as many paragraphs as it can".into()));
         }
         let (a, b) = range(params, o).unwrap_or_else(|| {
@@ -285,7 +341,7 @@ fn split(s: &mut Session, params: &Value) -> CmdResult {
 
 fn merge(s: &mut Session, params: &Value) -> CmdResult {
     let para = p::index(params, "para").ok_or_else(|| CmdError::Params("`para` (number) is required".into()))?;
-    with_outline(s, params, |o| Ok(text::merge_paragraphs(o, para).map_or_else(CmdOutput::unchanged, caret)))
+    with_frame(s, params, |o| Ok(text::merge_paragraphs(o, para).map_or_else(CmdOutput::unchanged, caret)))
 }
 
 /// A value that is the same for every run, or `"mixed"`.
@@ -305,11 +361,22 @@ fn format_at(s: &mut Session, params: &Value) -> CmdResult {
     let id = outline_id(params)?;
     let page = target_page(s, params)?;
     let o = page.outline(id).ok_or_else(|| CmdError::Params(format!("no outline {id}")))?;
-    let (a, b) = range(params, o).unwrap_or((TextPos::default(), TextPos::default()));
-    let runs: Vec<Run> =
-        if a == b { o.paragraphs.get(a.para).map(|pg| text::format_at(pg, a.char)).into_iter().collect() } else { text::runs_in(o, a, b) };
-    let paras: Vec<&notecraft_doc::Paragraph> =
-        o.paragraphs.get(a.para..=b.para.min(o.paragraphs.len().saturating_sub(1))).map(|s| s.iter().collect()).unwrap_or_default();
+    let frame = frame_param(params)?;
+    let fl = text::flow(o, frame).ok_or_else(|| CmdError::Params("no such table cell".into()))?;
+    let (a, b) = range(params, fl).unwrap_or((TextPos::default(), TextPos::default()));
+    let (runs, paras): (Vec<Run>, Vec<&Paragraph>) = if a == b && params.get("cells").is_none_or(Value::is_null) {
+        (fl.para(a.para).map(|pg| text::format_at(pg, a.char)).into_iter().collect(), text::paras_in(fl, a.para, a.para))
+    } else {
+        let mut runs = Vec::new();
+        let mut paras = Vec::new();
+        for (f, a, b) in targets(params, o)? {
+            if let Some(fl) = text::flow(o, f) {
+                runs.extend(text::runs_in(fl, a, b));
+                paras.extend(text::paras_in(fl, a.para, b.para));
+            }
+        }
+        (runs, paras)
+    };
     let color = |c: Option<Color>| c.map_or(Value::Null, |c| Value::String(c.to_hex()));
     let v = json!({
         "bold": common(runs.iter().map(|r| r.bold), Value::Bool),

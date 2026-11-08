@@ -292,7 +292,7 @@ fn simplified_bold_on_empty_paper_bolds_what_is_typed_next() {
     let o = id.and_then(|id| h.state().session.current_page().and_then(|p| p.outline(id)).cloned());
     let Some(o) = o else { panic!("a note container with the typed text") };
     assert_eq!(o.text(), "x");
-    assert!(o.paragraphs.first().is_some_and(|p| p.runs.iter().all(|r| r.bold)), "{:?}", o.paragraphs);
+    assert!(o.paragraphs().next().is_some_and(|p| p.runs.iter().all(|r| r.bold)), "{:?}", o.blocks);
 }
 
 #[test]

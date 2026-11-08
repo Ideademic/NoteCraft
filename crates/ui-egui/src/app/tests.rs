@@ -129,7 +129,7 @@ fn ribbon_bold_on_empty_paper_bolds_what_is_typed_next() {
     let id = h.state().canvas.caret.as_ref().map(|c| c.outline).unwrap();
     let o = h.state().session.current_page().unwrap().outline(id).unwrap().clone();
     assert_eq!(o.text(), "x");
-    assert!(o.paragraphs[0].runs.iter().all(|r| r.bold), "{:?}", o.paragraphs[0].runs);
+    assert!(o.para(0).unwrap().runs.iter().all(|r| r.bold), "{:?}", o.para(0).unwrap().runs);
 }
 
 #[test]

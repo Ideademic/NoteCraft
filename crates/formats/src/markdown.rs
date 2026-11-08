@@ -8,7 +8,7 @@ use std::fmt::Write as _;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use notecraft_doc::{Align, ElementKind, ImageElement, ImageFormat, ListKind, Outline, Page, PageElement, ParaStyle, Paragraph, Run, Tag};
+use notecraft_doc::{Align, Block, ElementKind, ImageElement, ImageFormat, ListKind, Outline, Page, PageElement, ParaStyle, Paragraph, Run, Table, Tag};
 
 use crate::html::{reading_key, safe_href};
 use crate::svg::{ink_bounds, ink_svg};
@@ -71,7 +71,23 @@ fn outline_md(o: &Outline) -> String {
     let mut prev: Option<&Paragraph> = None;
     let mut number = 0u32;
     let mut in_code = false;
-    for p in &o.paragraphs {
+    for b in &o.blocks {
+        let p = match b {
+            Block::Paragraph(p) => p,
+            Block::Table { table } => {
+                if in_code {
+                    out.push_str("```\n");
+                    in_code = false;
+                }
+                if prev.is_some() {
+                    out.push('\n');
+                }
+                table_md(table, &mut out);
+                prev = None;
+                number = 0;
+                continue;
+            }
+        };
         let code = p.style == ParaStyle::Code && p.list.is_none();
         if code != in_code {
             out.push_str("```\n");
@@ -100,6 +116,29 @@ fn outline_md(o: &Outline) -> String {
         out.push_str("```\n");
     }
     out
+}
+
+/// A pipe table (GitHub Flavored Markdown). Its first row is the header row GFM requires; a
+/// cell's paragraphs are joined with `<br>`, and pipes are escaped. Widths, shading and hidden
+/// borders have no Markdown form.
+fn table_md(t: &Table, out: &mut String) {
+    let cols = t.col_count().max(1);
+    let cell_md = |r: usize, c: usize| -> String {
+        let Some(cell) = t.cell(r, c) else { return String::new() };
+        cell.paragraphs
+            .iter()
+            .map(|p| p.runs.iter().map(run_md).collect::<String>().replace(['\n', '\r'], " "))
+            .filter(|s| !s.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("<br>")
+    };
+    for r in 0..t.row_count() {
+        let cells: Vec<String> = (0..cols).map(|c| cell_md(r, c)).collect();
+        let _ = writeln!(out, "| {} |", cells.iter().map(|c| if c.is_empty() { " " } else { c.as_str() }).collect::<Vec<_>>().join(" | "));
+        if r == 0 {
+            let _ = writeln!(out, "|{}", "---|".repeat(cols));
+        }
+    }
 }
 
 /// One paragraph. Markdown has no alignment, marker styles or tags: a centred or right-aligned
@@ -202,16 +241,16 @@ mod tests {
     fn markdown_keeps_structure() {
         let mut page = Page::new("Trip");
         let mut o = Outline::with_text(Point::new(36.0, 108.0), "Packing\nsocks\nhat\nbook tickets\nfirst\nsecond\nquote\nx = 1\n*literal*");
-        o.paragraphs[0].style = ParaStyle::Heading1;
-        o.paragraphs[1].list = Some(ListKind::Bullet);
-        o.paragraphs[2].list = Some(ListKind::Bullet);
-        o.paragraphs[2].indent = 1;
-        o.paragraphs[3].tag = Some(Tag::ToDo { checked: false });
-        o.paragraphs[4].list = Some(ListKind::Numbered);
-        o.paragraphs[5].list = Some(ListKind::Numbered);
-        o.paragraphs[6].style = ParaStyle::Quote;
-        o.paragraphs[7].style = ParaStyle::Code;
-        o.paragraphs[1].runs =
+        o.para_mut(0).unwrap().style = ParaStyle::Heading1;
+        o.para_mut(1).unwrap().list = Some(ListKind::Bullet);
+        o.para_mut(2).unwrap().list = Some(ListKind::Bullet);
+        o.para_mut(2).unwrap().indent = 1;
+        o.para_mut(3).unwrap().tag = Some(Tag::ToDo { checked: false });
+        o.para_mut(4).unwrap().list = Some(ListKind::Numbered);
+        o.para_mut(5).unwrap().list = Some(ListKind::Numbered);
+        o.para_mut(6).unwrap().style = ParaStyle::Quote;
+        o.para_mut(7).unwrap().style = ParaStyle::Code;
+        o.para_mut(1).unwrap().runs =
             vec![Run { text: "socks ".into(), bold: true, ..Run::default() }, Run { text: "now".into(), strike: true, ..Run::default() }];
         page.elements.push(PageElement::new(ElementKind::Outline(o)));
         let md = page_to_markdown(&page).unwrap();
@@ -230,10 +269,10 @@ mod tests {
     fn alignment_and_tags() {
         let mut page = Page::new("T");
         let mut o = Outline::with_text(Point::new(0.0, 0.0), "mid\nright\nidea\nhl");
-        o.paragraphs[0].align = Align::Center;
-        o.paragraphs[1].align = Align::Right;
-        o.paragraphs[2].tag = Some(Tag::Idea);
-        o.paragraphs[3].tag = Some(Tag::Highlight);
+        o.para_mut(0).unwrap().align = Align::Center;
+        o.para_mut(1).unwrap().align = Align::Right;
+        o.para_mut(2).unwrap().tag = Some(Tag::Idea);
+        o.para_mut(3).unwrap().tag = Some(Tag::Highlight);
         page.elements.push(PageElement::new(ElementKind::Outline(o)));
         let md = page_to_markdown(&page).unwrap();
         assert!(md.contains("<div align=\"center\">\n\nmid\n\n</div>"), "{md}");

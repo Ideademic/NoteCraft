@@ -122,12 +122,12 @@ fn check_content(nb: &Notebook) {
         })
         .collect();
     let o = outlines.iter().find(|o| o.text().starts_with("Heading")).expect("the outline");
-    assert_eq!(o.paragraphs[0].style, notecraft_doc::ParaStyle::Heading1);
-    assert!(o.paragraphs[1].runs.iter().any(|r| r.bold && r.text == "bold"));
-    assert!(o.paragraphs[1].runs.iter().any(|r| r.italic && r.highlight.is_some()));
-    assert_eq!(o.paragraphs[2].list, Some(ListKind::Bullet));
-    assert_eq!(o.paragraphs[4].tag, Some(Tag::ToDo { checked: true }));
-    assert!(outlines.iter().any(|o| o.paragraphs.iter().all(|p| p.list == Some(ListKind::Numbered))));
+    assert_eq!(o.para(0).unwrap().style, notecraft_doc::ParaStyle::Heading1);
+    assert!(o.para(1).unwrap().runs.iter().any(|r| r.bold && r.text == "bold"));
+    assert!(o.para(1).unwrap().runs.iter().any(|r| r.italic && r.highlight.is_some()));
+    assert_eq!(o.para(2).unwrap().list, Some(ListKind::Bullet));
+    assert_eq!(o.para(4).unwrap().tag, Some(Tag::ToDo { checked: true }));
+    assert!(outlines.iter().any(|o| o.paragraphs().all(|p| p.list == Some(ListKind::Numbered))));
     let pen = p.ink.iter().find(|k| k.tool == InkTool::Pen).expect("pen ink");
     assert_eq!(pen.points.len(), 30);
     let (lo, hi) = pen.points.iter().fold((1.0f32, 0.0f32), |(a, b), q| (a.min(q.pressure), b.max(q.pressure)));
