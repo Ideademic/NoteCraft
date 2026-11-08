@@ -15,8 +15,8 @@ use std::path::{Path, PathBuf};
 const FAMILIES: &[&str] = &["Carlito", "Caladea", "Liberation Sans", "Liberation Serif", "Liberation Mono"];
 
 /// What a web build keeps: the default font (Calibri's substitute) upright and bold, Caladea (small:
-/// about 82 KB a face), and one upright face of the Arial, Times and Courier substitutes. About
-/// 2.4 MB of font files.
+/// about 82 KB a face), and one upright face of the Arial, Times and Courier substitutes:
+/// 2,767,524 bytes of font files (about 2.6 MiB).
 const WEB_FONTS: &[(&str, &str)] = &[
     ("Carlito", "Regular"),
     ("Carlito", "Bold"),

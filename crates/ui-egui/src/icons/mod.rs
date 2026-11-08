@@ -470,7 +470,8 @@ pub fn paint_bullet(painter: &Painter, c: Pos2, r: f32, style: notecraft_doc::Li
         ListStyle::Arrow => {
             // A solid arrowhead pointing at the text, in two convex halves.
             let s = r * 1.5;
-            let (top, tip, bottom, notch) = (pos2(c.x - s * 0.7, c.y - s), pos2(c.x + s * 0.9, c.y), pos2(c.x - s * 0.7, c.y + s), pos2(c.x - s * 0.2, c.y));
+            let (top, tip, bottom, notch) =
+                (pos2(c.x - s * 0.7, c.y - s), pos2(c.x + s * 0.9, c.y), pos2(c.x - s * 0.7, c.y + s), pos2(c.x - s * 0.2, c.y));
             painter.add(Shape::convex_polygon(vec![top, tip, notch], color, Stroke::NONE));
             painter.add(Shape::convex_polygon(vec![notch, tip, bottom], color, Stroke::NONE));
         }

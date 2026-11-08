@@ -235,4 +235,46 @@ mod tests {
         assert_eq!(matching(&all, "a"), all);
         assert!(matching(&all, "zzz").is_empty());
     }
+
+    #[test]
+    fn picking_a_font_in_the_box_sets_it_and_remembers_it() {
+        use egui_kittest::kittest::Queryable;
+        // A font the list is sure to have, whatever is installed: egui's Hack, added as the web's
+        // Add Fonts adds one.
+        assert!(fonts::add_font_file(epaint_default_fonts::HACK_REGULAR).is_ok());
+        let mut app = NoteApp::new(notecraft_engine::Session::new_default(), crate::Services::default());
+        let page = app.session.current_page().unwrap();
+        let outline = page.elements.iter().find(|e| matches!(e.kind, notecraft_doc::ElementKind::Outline(_))).unwrap().id;
+        app.canvas.page = Some(page.id);
+        app.canvas.editing = Some(outline);
+        app.canvas.caret = Some(crate::canvas::TextCaret {
+            anchor: notecraft_engine::TextPos::new(0, 0),
+            ..crate::canvas::TextCaret::at(outline, notecraft_engine::TextPos::new(0, 3))
+        });
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1440.0, 900.0)).build_ui_state(
+            |ui, app: &mut NoteApp| {
+                let ctx = ui.ctx().clone();
+                app.logic(&ctx);
+                app.ui(ui);
+            },
+            app,
+        );
+        h.run_steps(3);
+        // Text without a font of its own: the box shows the style's default.
+        let before = crate::canvas::current_format(&h.state().canvas, &h.state().session).unwrap();
+        assert_eq!(before.font, Some(None));
+        assert_eq!(before.style.map(default_font), Some("Calibri"));
+        let _ = h.get_by_label("Font");
+        h.get_by_label("Font").click();
+        h.run_steps(3);
+        h.event(egui::Event::Text("Hack".into()));
+        h.run_steps(3);
+        h.get_all_by_label("Hack").next().unwrap().click();
+        h.run_steps(3);
+        let o = h.state().session.current_page().unwrap().outline(outline).unwrap().clone();
+        assert_eq!(o.paragraphs[0].runs.first().and_then(|r| r.font.as_deref()), Some("Hack"), "{:?}", o.paragraphs[0].runs);
+        assert_eq!(h.state().ui.prefs.recent_fonts.first().map(String::as_str), Some("Hack"));
+        let f = crate::canvas::current_format(&h.state().canvas, &h.state().session).unwrap();
+        assert_eq!(f.font, Some(Some("Hack".to_owned())), "the box now shows Hack");
+    }
 }

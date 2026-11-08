@@ -40,3 +40,5 @@ craft-update = { workspace = true }
 [dev-dependencies]
 # Headless window tests and the `ui_shot` example (renders PNGs offscreen with wgpu).
 egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
+# egui's Hack as a real font file the font tests add as a user font.
+epaint_default_fonts = { workspace = true }

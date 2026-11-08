@@ -40,6 +40,100 @@ pub const RIBBON_SHOTS: [&str; 8] = [
 /// The History tab and its views.
 pub const HISTORY_SHOTS: [&str; 5] = ["tab-history", "simplified-history", "history-recycle-bin", "history-versions", "history-recent-edits"];
 
+/// Real fonts and paragraph formatting: a page in several fonts, alignments, list styles and
+/// tags, and the font box open over it (classic and simplified; the `ui_shot` example opens it).
+pub const FONT_SHOTS: [&str; 3] = ["formats-page", "font-box", "simplified-font-box"];
+
+/// The states of [`FONT_SHOTS`]; `false` for other names.
+fn prepare_fonts(app: &mut NoteApp, shot: &str) -> bool {
+    use notecraft_doc::{Align, ListKind, ListStyle, ParaStyle, Paragraph, Run, Tag};
+    use notecraft_engine::ids;
+    if !FONT_SHOTS.contains(&shot) {
+        return false;
+    }
+    let run = |text: &str, font: Option<&str>, bold: bool, italic: bool| Run {
+        text: text.to_owned(),
+        font: font.map(str::to_owned),
+        bold,
+        italic,
+        ..Run::default()
+    };
+    let p = |runs: Vec<Run>| Paragraph { runs, ..Paragraph::default() };
+    let mut paras = vec![
+        Paragraph { style: ParaStyle::Heading1, ..p(vec![run("Fonts, alignment and tags", None, false, false)]) },
+        p(vec![
+            run("Calibri ", None, false, false),
+            run("bold ", None, true, false),
+            run("italic ", None, false, true),
+            run("bold italic", None, true, true),
+        ]),
+        p(vec![run("Cambria for headings and long reading", Some("Cambria"), false, false)]),
+        p(vec![
+            run("Arial, ", Some("Arial"), false, false),
+            run("Times New Roman, ", Some("Times New Roman"), false, false),
+            run("Georgia", Some("Georgia"), true, false),
+        ]),
+        p(vec![run("let total = notes.len(); // Courier New", Some("Courier New"), false, false)]),
+        Paragraph { align: Align::Center, ..p(vec![run("A centred line", None, false, false)]) },
+        Paragraph { align: Align::Right, ..p(vec![run("Right-aligned, like a signature", None, false, true)]) },
+        Paragraph {
+            align: Align::Justify,
+            ..p(vec![run(
+                "Justified text fills the container from edge to edge on every line but the last, the way a printed column does.",
+                None,
+                false,
+                false,
+            )])
+        },
+    ];
+    for (st, text) in [(ListStyle::Arrow, "Arrow bullets"), (ListStyle::Square, "Square bullets"), (ListStyle::Dash, "Dash bullets")] {
+        paras.push(Paragraph { list: Some(ListKind::Bullet), list_style: Some(st), ..p(vec![run(text, None, false, false)]) });
+    }
+    for text in ["Upper-case roman", "and on"] {
+        paras.push(Paragraph { list: Some(ListKind::Numbered), list_style: Some(ListStyle::UpperRoman), ..p(vec![run(text, None, false, false)]) });
+    }
+    paras.push(Paragraph {
+        list: Some(ListKind::Numbered),
+        list_style: Some(ListStyle::LowerAlpha),
+        indent: 1,
+        ..p(vec![run("a nested letter", None, false, false)])
+    });
+    for (t, text) in [
+        (Tag::ToDo { checked: true }, "Book the room"),
+        (Tag::Important, "Deadline is Friday"),
+        (Tag::Question, "Who takes notes?"),
+        (Tag::Idea, "Try a shared notebook"),
+        (Tag::Critical, "Back up first"),
+        (Tag::Contact, "Ana Silva"),
+        (Tag::Phone, "+351 21 000 0000"),
+        (Tag::Address, "Rua Augusta 1, Lisboa"),
+        (Tag::RememberForLater, "Remember for later"),
+        (Tag::Definition, "Definition: a tag is a mark on a note"),
+    ] {
+        paras.push(Paragraph { tag: Some(t), ..p(vec![run(text, None, false, false)]) });
+    }
+    let page = app.run(ids::PAGE_NEW, json!({ "title": "Formats" })).ok().and_then(|o| o.value.get("id").and_then(|v| v.as_str()).map(str::to_owned));
+    let outline =
+        app.run(ids::OUTLINE_NEW, json!({ "x": 36, "y": 108 })).ok().and_then(|o| o.value.get("id").and_then(|v| v.as_str()).map(str::to_owned));
+    if let Some(id) = outline.as_deref() {
+        let _ = app.run(ids::OUTLINE_RESIZE, json!({ "id": id, "width": 440 }));
+        let _ = app.run(ids::TEXT_SET_PARAGRAPHS, json!({ "id": id, "paragraphs": serde_json::to_value(&paras).unwrap_or_default() }));
+        if let (Some(g), Some(pg)) = (notecraft_doc::Guid::parse(id), page.as_deref().and_then(notecraft_doc::Guid::parse)) {
+            app.canvas.page = Some(pg);
+            app.canvas.editing = Some(g);
+            // The caret in "Cambria for headings": the font box shows Cambria.
+            app.canvas.caret = Some(crate::canvas::TextCaret::at(g, notecraft_engine::TextPos::new(2, 4)));
+        }
+    }
+    for f in ["Cambria", "Courier New", "Georgia"] {
+        app.ui.prefs.remember_font(f);
+    }
+    if shot == "simplified-font-box" {
+        app.ui.ribbon_layout = crate::ribbon::display::RibbonLayout::Simplified;
+    }
+    true
+}
+
 /// The History states of [`HISTORY_SHOTS`]; `false` for other names.
 fn prepare_history(app: &mut NoteApp, shot: &str) -> bool {
     use notecraft_engine::ids;
@@ -161,7 +255,7 @@ fn prepare_ribbon(app: &mut NoteApp, shot: &str) -> bool {
 
 /// Puts `app` in the state named `shot` (unknown names leave it as it is).
 pub fn prepare(app: &mut NoteApp, shot: &str) {
-    if prepare_ribbon(app, shot) || prepare_platform(app, shot) || prepare_history(app, shot) {
+    if prepare_ribbon(app, shot) || prepare_platform(app, shot) || prepare_history(app, shot) || prepare_fonts(app, shot) {
         return;
     }
     match shot {

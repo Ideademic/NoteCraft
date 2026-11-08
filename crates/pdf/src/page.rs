@@ -380,7 +380,6 @@ fn ink_line() -> Color {
 /// The tag icons' blue accent.
 const BLUE: Color = Color::rgb(0x2F, 0x7B, 0xE0);
 
-
 fn ink_layer(s: &mut Surface, page: &Page, ink: &Ink, clip: Rect, highlighter: bool) {
     for st in &page.ink {
         if (st.tool == InkTool::Highlighter) != highlighter {

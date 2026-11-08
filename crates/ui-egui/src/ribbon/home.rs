@@ -142,13 +142,16 @@ fn basic_text(ui: &mut Ui, app: &mut NoteApp) {
             ui.add_enabled_ui(app.can(ids::FORMAT_SIZE), |ui| {
                 let size = shown_size(app, ui);
                 let mut pick = None;
-                let r = craft_ui::ComboBox::from_id_salt("nc_size_box").width(48.0).selected_text(size.map(size_text).unwrap_or_default()).show_ui(ui, |ui| {
-                    for s in SIZES {
-                        if ui.selectable_label(Some(s) == size, size_text(s)).clicked() {
-                            pick = Some(s);
+                let r = craft_ui::ComboBox::from_id_salt("nc_size_box").width(48.0).selected_text(size.map(size_text).unwrap_or_default()).show_ui(
+                    ui,
+                    |ui| {
+                        for s in SIZES {
+                            if ui.selectable_label(Some(s) == size, size_text(s)).clicked() {
+                                pick = Some(s);
+                            }
                         }
-                    }
-                });
+                    },
+                );
                 r.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tl!("Font Size")));
                 r.response.on_hover_text(tl!("Font Size"));
                 if let Some(s) = pick {
@@ -358,7 +361,6 @@ fn tags(ui: &mut Ui, app: &mut NoteApp) {
         }
     });
 }
-
 
 #[cfg(test)]
 mod tests {

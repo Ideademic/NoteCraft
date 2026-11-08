@@ -170,7 +170,6 @@ fn draw_more_tags(p: &Pen<'_>, icon: Extra) -> bool {
     true
 }
 
-
 /// A notebook: a cover in `cover` with a darker spine, a label and the page edges. In ink alone
 /// (flat or disabled) it is an outline, so it doesn't turn into a solid block.
 fn notebook(p: &Pen<'_>, (x0, y0, x1, y1): (f32, f32, f32, f32), cover: Color32) {

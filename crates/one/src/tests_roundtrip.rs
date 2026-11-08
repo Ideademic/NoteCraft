@@ -7,8 +7,7 @@ use chrono::{DateTime, Utc};
 use notecraft_doc::page::CONTENT_ORIGIN;
 use notecraft_doc::{
     Align, Color, ElementKind, Guid, ImageElement, ImageFormat, InkPoint, InkStroke, InkTool, ListKind, ListStyle, Notebook, Outline, Page,
-    PageBackground,
-    PageElement, ParaStyle, Paragraph, Point, Printout, RuleLines, Run, Section, SectionEntry, SectionGroup, Size, Tag,
+    PageBackground, PageElement, ParaStyle, Paragraph, Point, Printout, RuleLines, Run, Section, SectionEntry, SectionGroup, Size, Tag,
 };
 
 use super::*;

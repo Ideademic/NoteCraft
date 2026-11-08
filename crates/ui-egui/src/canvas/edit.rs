@@ -465,8 +465,9 @@ fn mods_cmd(m: &Modifiers) -> bool {
 fn tag_shortcut(key: Key, m: Modifiers) -> Option<Value> {
     use notecraft_engine::cmd::format::{TAG_KEYS, TAG_REMOVE_KEY};
     let matches = |k: &str| {
-        crate::app::keys::parse_shortcut(k)
-            .is_some_and(|sc| sc.logical_key == key && sc.modifiers.command == m.command && sc.modifiers.alt == m.alt && sc.modifiers.shift == m.shift)
+        crate::app::keys::parse_shortcut(k).is_some_and(|sc| {
+            sc.logical_key == key && sc.modifiers.command == m.command && sc.modifiers.alt == m.alt && sc.modifiers.shift == m.shift
+        })
     };
     if matches(TAG_REMOVE_KEY) {
         return Some(json!({ "tag": null }));
@@ -579,7 +580,6 @@ fn key_press(ui: &Ui, state: &mut CanvasState, session: &mut Session, lay: &Page
         return;
     }
     if let Some(cmd) = shortcut_command(key, m) {
-
         if cmd == ids::INSERT_DATE_TIME {
             if let Some(c) = ensure_outline(state, session)
                 && let Some(out) = run(

@@ -97,6 +97,8 @@ pub fn start() {
                         b.connect(&mut services, h.opened.clone(), ctx.clone());
                     }
                     let mut app = NoteApp::new(session, services);
+                    // Fonts added on earlier visits.
+                    crate::font_store::load_all(ctx.clone());
                     prefs::restore(&mut app, stored_prefs.as_deref());
                     if let Some(n) = notice {
                         app.set_status(n, true);
@@ -173,6 +175,7 @@ fn accept(purpose: OpenPurpose) -> &'static str {
         OpenPurpose::Picture => ".png,.jpg,.jpeg,.jfif,.gif,.bmp,.webp,image/*",
         OpenPurpose::Printout => ".pdf,.png,.jpg,.jpeg",
         OpenPurpose::Attachment => "",
+        OpenPurpose::Font => ".ttf,.otf,.ttc,.woff,.woff2",
     }
 }
 
@@ -221,7 +224,7 @@ fn services(ctx: &egui::Context, inbox: &Inbox, batches: &Batches, pastes: &Past
     Services {
         open_async: Some(Box::new(move |purpose| {
             let (ctx, inbox, batches) = (open_ctx.clone(), open_inbox.clone(), open_batches.clone());
-            let many = matches!(purpose, OpenPurpose::Notebook | OpenPurpose::NotebookFolder | OpenPurpose::Import);
+            let many = matches!(purpose, OpenPurpose::Notebook | OpenPurpose::NotebookFolder | OpenPurpose::Import | OpenPurpose::Font);
             let picked = browser::pick_files(accept(purpose), many, move |files| deliver(files, Some(purpose), inbox, batches, ctx));
             if let Err(e) = picked {
                 log::error!("file picker: {e}");
@@ -254,6 +257,7 @@ fn services(ctx: &egui::Context, inbox: &Inbox, batches: &Batches, pastes: &Past
         })),
         set_clipboard_text: Some(Box::new(browser::set_clipboard_text)),
         prefers_dark: Some(browser::prefers_dark()),
+        keep_font: Some(Box::new(crate::font_store::store)),
         ..Services::default()
     }
 }

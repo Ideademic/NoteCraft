@@ -305,3 +305,50 @@ fn the_recycle_bin_and_page_versions_stay_out_of_the_pdf() {
         assert!(!text.contains(hidden), "{hidden} leaked into {text}");
     }
 }
+
+#[test]
+fn alignment_list_styles_and_tags_print() {
+    use notecraft_doc::{Align, ListStyle};
+    let mut page = Page::new("Formats");
+    let mut o = Outline::with_text(notecraft_doc::page::CONTENT_ORIGIN, "");
+    o.width = 300.0;
+    let mut right = para("Rightside");
+    right.align = Align::Right;
+    let mut mid = para("Inthemiddle");
+    mid.align = Align::Center;
+    o.paragraphs = vec![right, mid];
+    for t in ["Firstroman", "Secondroman"] {
+        let mut p = para(t);
+        p.list = Some(ListKind::Numbered);
+        p.list_style = Some(ListStyle::UpperRoman);
+        o.paragraphs.push(p);
+    }
+    let mut arrow = para("Arrowbullet");
+    arrow.list = Some(ListKind::Bullet);
+    arrow.list_style = Some(ListStyle::Arrow);
+    o.paragraphs.push(arrow);
+    for t in Tag::ALL {
+        let mut p = para(&format!("Tagged{}", t.name()));
+        p.tag = Some(t);
+        o.paragraphs.push(p);
+    }
+    // Laid out as the canvas lays it out: the right-aligned row ends at the text area's right,
+    // the centred one sits in the middle.
+    let ink = style::Ink::new(None);
+    let chars: std::collections::HashSet<char> = o.paragraphs.iter().flat_map(|p| p.text().chars().collect::<Vec<_>>()).collect();
+    let mut fs = fonts::FontSet::new(&BundledFonts, &[fonts::StyleKey::new(fonts::DEFAULT_FONT, false, false)], &chars);
+    let lay = text::layout_outline(&mut fs, &o, &ink);
+    let edge = |i: usize, f: f32| {
+        let p = &lay.paras[i];
+        let row = p.block.galley.rows.first().unwrap();
+        p.x + p.align_dx + row.pos.x + row.rect().width() * f
+    };
+    assert!((edge(0, 1.0) - (o.pos.x + o.width)).abs() < 2.0, "right edge {}", edge(0, 1.0));
+    assert!((edge(1, 0.5) - (o.pos.x + o.width / 2.0)).abs() < 2.0, "centre {}", edge(1, 0.5));
+    page.elements.push(PageElement::new(ElementKind::Outline(o)));
+    let pdf = export(&Doc::page(&page), &Options::default(), &BundledFonts).unwrap();
+    let text = extract_text(&pdf).concat();
+    for want in ["Rightside", "Inthemiddle", "I.", "II.", "Firstroman", "Arrowbullet", "Taggedphone", "Taggedhighlight"] {
+        assert!(text.contains(want), "{want:?} in {text:?}");
+    }
+}

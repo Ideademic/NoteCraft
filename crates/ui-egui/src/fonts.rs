@@ -19,6 +19,7 @@ use egui::epaint::text::VariationCoords;
 use egui::{FallbackRequest, FontData, FontDefinitions, FontFamily, FontInsert, FontProvider};
 use notecraft_fonts::{Class, FontLibrary, Resolved};
 
+pub use notecraft_fonts::web_font::MAX_FONT_FILE_BYTES;
 pub use notecraft_fonts::{DEFAULT_FONT, DEFAULT_MONO_FONT};
 
 /// Prefix of the families the provider answers.
@@ -271,6 +272,61 @@ mod tests {
         assert!(p.fonts_for_family(&FontFamily::Name("other".into())).is_empty());
         let mono = p.fonts_for_family(&FontFamily::Name(family_name("Nope Mono", false, false, 0).into()));
         assert!(mono.iter().any(|f| f.name == "Hack"));
+    }
+
+    /// A context with the provider active.
+    fn context() -> egui::Context {
+        let ctx = egui::Context::default();
+        for _ in 0..3 {
+            ctx.run_pass(egui::RawInput::default(), sync).textures_delta.clear();
+        }
+        assert!(active(&ctx));
+        ctx
+    }
+
+    fn width(ctx: &egui::Context, family: FontFamily, text: &str) -> f32 {
+        let mut w = 0.0;
+        let mut out = ctx.run_pass(egui::RawInput::default(), |ctx| {
+            w = ctx.fonts_mut(|f| f.layout_no_wrap(text.to_owned(), egui::FontId::new(20.0, family.clone()), egui::Color32::BLACK).size().x);
+        });
+        out.textures_delta.clear();
+        w
+    }
+
+    #[test]
+    fn a_chosen_font_draws_with_its_own_face() {
+        // egui's Hack, added the way the web's Add Fonts adds a file.
+        assert!(add_font_file(epaint_default_fonts::HACK_REGULAR).is_ok_and(|f| f.iter().any(|n| n == "Hack")));
+        let ctx = context();
+        let text = "illegible WWW mmm";
+        let hack = width(&ctx, family_id("Hack", false, false), text);
+        let missing = width(&ctx, family_id("No Such Font Anywhere", false, false), text);
+        assert!(hack > 0.0 && missing > 0.0);
+        assert!((hack - missing).abs() > 1.0, "the chosen face is drawn, not the fallback: {hack} vs {missing}");
+        assert!((hack - width(&ctx, FontFamily::Monospace, text)).abs() < 0.5, "Hack is Hack");
+        let f = face("Hack", false, false, true);
+        assert_eq!(f.drawn_with.as_deref(), Some("Hack"));
+        assert!(!f.fake_bold && !f.fake_italic);
+    }
+
+    #[test]
+    fn real_bold_is_its_own_face() {
+        // A family with a real bold on this machine: the bundled Carlito, else a common installed
+        // one. Without any, there is nothing to compare (said, not hidden).
+        let lib = library();
+        lib.wait_until_ready();
+        let candidates = ["Carlito", "Liberation Sans", "Arial", "Helvetica Neue", "DejaVu Sans", "Noto Sans", "Verdana", "Georgia"];
+        let Some(fam) = candidates.into_iter().find(|f| lib.resolve(f, true, false).is_some_and(|r| !r.fake_bold && !r.substituted)) else {
+            eprintln!("real_bold_is_its_own_face: no family with a bold face here; nothing compared");
+            return;
+        };
+        let ctx = context();
+        let text = "Bold or regular WWW";
+        let regular = width(&ctx, family_id(fam, false, false), text);
+        let bold = width(&ctx, family_id(fam, true, false), text);
+        assert!((bold - regular).abs() > 0.5, "{fam}: bold {bold} vs regular {regular}");
+        assert!(!face(fam, true, false, true).fake_bold, "{fam} isn't emboldened by hand");
+        assert_ne!(lib.resolve(fam, true, false).map(|r| r.face.key), lib.resolve(fam, false, false).map(|r| r.face.key));
     }
 
     #[test]

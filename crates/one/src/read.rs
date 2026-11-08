@@ -6,8 +6,7 @@ use std::sync::Arc;
 use notecraft_doc::page::{DEFAULT_OUTLINE_WIDTH, MAX_ELEMENTS_PER_PAGE, MAX_INDENT, MAX_PAGE_LEVEL, MAX_PARAGRAPHS};
 use notecraft_doc::{
     Align, Color, ElementKind, Guid, ImageElement, ImageFormat, InkStroke, ListKind, ListStyle, Outline, Page, PageBackground, PageElement,
-    ParaStyle, Paragraph,
-    Point, Printout, RuleLines, Run, Section, Size, SourceInfo, Tag,
+    ParaStyle, Paragraph, Point, Printout, RuleLines, Run, Section, Size, SourceInfo, Tag,
 };
 use notecraft_onestore::{ExtendedGuid, FileKind, Object, ObjectSpace, PropertySet, Store};
 
@@ -501,7 +500,8 @@ pub(crate) fn para_style(id: &str) -> ParaStyle {
 /// the MSONFC number format ([MS-OSHARED] §2.2.1.3); otherwise a bullet, whose character gives
 /// its shape. The style is `None` for formats NoteCraft doesn't draw.
 fn list_marker(p: &PropertySet) -> (ListKind, Option<ListStyle>) {
-    let units: Vec<u16> = p.bytes(prop::NUMBER_LIST_FORMAT).map(|b| b.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect()).unwrap_or_default();
+    let units: Vec<u16> =
+        p.bytes(prop::NUMBER_LIST_FORMAT).map(|b| b.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect()).unwrap_or_default();
     let chars = units.get(1..).unwrap_or_default();
     if let Some(i) = chars.iter().position(|u| *u == 0xFFFD) {
         let style = match chars.get(i + 1) {
@@ -514,7 +514,10 @@ fn list_marker(p: &PropertySet) -> (ListKind, Option<ListStyle>) {
         };
         return (ListKind::Numbered, style);
     }
-    let style = char::decode_utf16(chars.iter().copied()).filter_map(std::result::Result::ok).find(|c| !c.is_whitespace()).and_then(ListStyle::from_bullet_char);
+    let style = char::decode_utf16(chars.iter().copied())
+        .filter_map(std::result::Result::ok)
+        .find(|c| !c.is_whitespace())
+        .and_then(ListStyle::from_bullet_char);
     (ListKind::Bullet, style)
 }
 

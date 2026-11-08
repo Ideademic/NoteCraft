@@ -40,7 +40,6 @@ pub const MAX_STYLES: usize = 64;
 /// Most fallback faces added for characters the fonts asked for don't have.
 const MAX_SCRIPT_FALLBACKS: usize = 4;
 
-
 /// Installed families tried for characters the requested fonts lack (other scripts, symbols).
 const SCRIPT_FALLBACKS: [&str; 14] = [
     "Noto Sans",

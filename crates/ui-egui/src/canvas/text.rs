@@ -184,10 +184,14 @@ fn paint_tag(painter: &Painter, o: &OutlineLayout, v: &View, i: usize, tokens: &
         other => {
             if let Some(icon) = crate::icons::tag_icon(other) {
                 let ink = if tokens.dark { Color32::from_rgb(0xE6, 0xE6, 0xEA) } else { Color32::from_rgb(0x44, 0x44, 0x4A) };
-                crate::icons::paint_styled(painter, Rect::from_center_size(c, vec2(side * 1.15, side * 1.15)), icon, crate::icons::Style::new(ink, tokens.accent));
+                crate::icons::paint_styled(
+                    painter,
+                    Rect::from_center_size(c, vec2(side * 1.15, side * 1.15)),
+                    icon,
+                    crate::icons::Style::new(ink, tokens.accent),
+                );
             }
         }
-
     }
 }
 

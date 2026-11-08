@@ -365,7 +365,8 @@ pub enum ListStyle {
 
 impl ListStyle {
     pub const BULLETS: [ListStyle; 5] = [ListStyle::Disc, ListStyle::Circle, ListStyle::Square, ListStyle::Dash, ListStyle::Arrow];
-    pub const NUMBERS: [ListStyle; 5] = [ListStyle::Decimal, ListStyle::LowerAlpha, ListStyle::UpperAlpha, ListStyle::LowerRoman, ListStyle::UpperRoman];
+    pub const NUMBERS: [ListStyle; 5] =
+        [ListStyle::Decimal, ListStyle::LowerAlpha, ListStyle::UpperAlpha, ListStyle::LowerRoman, ListStyle::UpperRoman];
 
     /// Whether this is a bullet or a numbering format.
     pub fn kind(self) -> ListKind {
@@ -595,9 +596,7 @@ impl Align {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Tag {
-    ToDo {
-        checked: bool,
-    },
+    ToDo { checked: bool },
     Important,
     Question,
     RememberForLater,

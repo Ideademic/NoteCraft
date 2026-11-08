@@ -31,7 +31,6 @@ pub fn number_sample(s: ListStyle) -> String {
     (1..=3).map(|n| s.label(n)).collect::<Vec<_>>().join("  ")
 }
 
-
 /// A menu row with a bullet drawn in code (`Some`) or a numbering sample, ticked when current.
 fn list_row(ui: &mut Ui, bullet: Option<ListStyle>, text: &str, current: bool, enabled: bool) -> bool {
     let t = Tokens::get(ui.ctx());

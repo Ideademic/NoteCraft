@@ -398,7 +398,8 @@ impl FontLibrary {
 
     /// Whether `family` is installed, added or bundled (by any of its names). Never waits.
     pub fn has_family(&self, family: &str) -> bool {
-        self.bundled.iter().any(|b| b.family.eq_ignore_ascii_case(family.trim())) || (self.catalog.is_ready() && self.catalog.family(family).is_some())
+        self.bundled.iter().any(|b| b.family.eq_ignore_ascii_case(family.trim()))
+            || (self.catalog.is_ready() && self.catalog.family(family).is_some())
     }
 
     /// The face to draw `family` with in the asked style: the family's own face (installed,
@@ -470,7 +471,9 @@ impl FontLibrary {
         }
         let mut coords = info.variations.clone();
         let mut is_bold = info.weight >= BOLD_WEIGHT;
-        if bold && !is_bold && info.variable
+        if bold
+            && !is_bold
+            && info.variable
             && let Some((lo, hi)) = weight_axis(raw, data.index)
             && hi >= BOLD_WEIGHT
         {
@@ -478,7 +481,9 @@ impl FontLibrary {
             coords.retain(|(t, _)| t != b"wght");
             coords.push((*b"wght", 700f32.clamp(lo, hi)));
             is_bold = true;
-        } else if !bold && is_bold && info.variable
+        } else if !bold
+            && is_bold
+            && info.variable
             && let Some((lo, hi)) = weight_axis(raw, data.index)
             && lo <= 400.0
         {
@@ -514,7 +519,12 @@ impl FontLibrary {
         })?;
         let bytes: FontBytes = Arc::new(best.bytes);
         Some(Resolved {
-            face: FaceData { key: format!("ncf:bundled/{}/{}{}", best.family, best.weight, if best.italic { "i" } else { "" }), bytes, index: 0, coords: Vec::new() },
+            face: FaceData {
+                key: format!("ncf:bundled/{}/{}{}", best.family, best.weight, if best.italic { "i" } else { "" }),
+                bytes,
+                index: 0,
+                coords: Vec::new(),
+            },
             family: best.family.to_owned(),
             fake_bold: bold && best.weight < BOLD_WEIGHT,
             fake_italic: italic && !best.italic,
@@ -523,7 +533,6 @@ impl FontLibrary {
             face_bold: best.weight >= BOLD_WEIGHT,
             face_italic: best.italic,
             embeddable: true,
-
         })
     }
 
@@ -532,7 +541,8 @@ impl FontLibrary {
     /// running.
     pub fn add_font_file(&self, bytes: &[u8]) -> Result<Vec<String>, FontError> {
         let sfnt = web_font::decode_font_file(bytes)?;
-        let faces = self.catalog.add_bytes(sfnt, Source::User, &craft_font_catalog::Limits::default()).map_err(|e| FontError::Unusable(e.to_string()))?;
+        let faces =
+            self.catalog.add_bytes(sfnt, Source::User, &craft_font_catalog::Limits::default()).map_err(|e| FontError::Unusable(e.to_string()))?;
         let mut families: Vec<String> = Vec::new();
         for f in faces {
             if !families.contains(&f.family) {

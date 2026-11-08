@@ -3257,6 +3257,7 @@ dependencies = [
  "egui",
  "egui_extras",
  "egui_kittest",
+ "epaint_default_fonts",
  "image",
  "log",
  "notecraft-doc",

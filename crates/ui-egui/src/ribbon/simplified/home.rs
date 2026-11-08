@@ -108,13 +108,14 @@ fn font(ui: &mut Ui, app: &mut NoteApp) {
     ui.add_space(2.0);
     ui.add_enabled_ui(app.can(ids::FORMAT_SIZE), |ui| {
         let mut pick = None;
-        let r = craft_ui::ComboBox::from_id_salt("nc_simple_size").width(44.0).selected_text(size.map(size_text).unwrap_or_default()).show_ui(ui, |ui| {
-            for s in SIZES {
-                if ui.selectable_label(Some(s) == size, size_text(s)).clicked() {
-                    pick = Some(s);
+        let r =
+            craft_ui::ComboBox::from_id_salt("nc_simple_size").width(44.0).selected_text(size.map(size_text).unwrap_or_default()).show_ui(ui, |ui| {
+                for s in SIZES {
+                    if ui.selectable_label(Some(s) == size, size_text(s)).clicked() {
+                        pick = Some(s);
+                    }
                 }
-            }
-        });
+            });
         r.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tl!("Font Size")));
         r.response.on_hover_text(tl!("Font Size"));
         if let Some(s) = pick {
@@ -246,5 +247,4 @@ fn tags(ui: &mut Ui, app: &mut NoteApp) {
     }
     let b = Btn::new(Icon::Important, tl!("Tags")).icon_only().help(tl!("Mark notes with a tag.")).for_command(app, ids::FORMAT_TAG);
     widgets::small_menu(ui, app, b, crate::ribbon::paragraph::tag_menu);
-
 }
