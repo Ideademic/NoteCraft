@@ -1,12 +1,13 @@
-//! Painting note containers: the selection, list markers (drawn in code), tags (To Do box, star,
-//! question mark, drawn in code), the rich text, and — while a container is hovered, edited or
+//! Painting note containers: the selection, list markers (drawn in code), tags (the To Do box, and
+//! the other tags' icons from [`crate::icons`]), the rich text (bold painted twice only for a face
+//! without a bold), and — while a container is hovered, edited or
 //! selected — its thin frame with the grip bar on top (drag to move) and the resize arrow at the
 //! grip's right end (drag to change the width). Then the caret.
 
 use egui::epaint::{CornerRadius, PathShape};
 use egui::text::CCursor;
-use egui::{Align2, Color32, FontId, Painter, Pos2, Rect, Shape, Stroke, StrokeKind, pos2, vec2};
-use notecraft_doc::{Page, Tag};
+use egui::{Align2, Color32, FontId, Painter, Rect, Shape, Stroke, StrokeKind, pos2, vec2};
+use notecraft_doc::{ListStyle, Page, Tag};
 
 use super::layout::{OutlineLayout, PageLayout};
 use super::style::{Ink, MARKER_W, Marker};
@@ -141,18 +142,29 @@ fn paint_marker(painter: &Painter, o: &OutlineLayout, v: &View, i: usize, ink: &
     let cy = top.y + (a + b) / 2.0;
     let color = marker_color(o, i, ink);
     match m {
-        Marker::Bullet(level) => {
+        Marker::Bullet(style) => {
             let r = (p.size_px * 0.15).clamp(1.5, 12.0);
             let c = pos2(top.x + p.marker_x + MARKER_W * v.scale * 0.4, cy);
-            match level % 3 {
-                0 => {
-                    painter.circle_filled(c, r, color);
-                }
-                1 => {
+            let w = (r * 0.4).max(1.0);
+            match style {
+                ListStyle::Circle => {
                     painter.circle_stroke(c, r - 0.5, Stroke::new((r * 0.35).max(1.0), color));
                 }
-                _ => {
+                ListStyle::Square => {
                     painter.rect_filled(Rect::from_center_size(c, vec2(r * 1.7, r * 1.7)), 0.0, color);
+                }
+                ListStyle::Dash => {
+                    painter.line_segment([pos2(c.x - r * 1.4, c.y), pos2(c.x + r * 1.4, c.y)], Stroke::new(w, color));
+                }
+                ListStyle::Arrow => {
+                    // A solid arrowhead pointing at the text.
+                    let s = r * 1.5;
+                    let pts = vec![pos2(c.x - s * 0.7, c.y - s), pos2(c.x + s * 0.9, c.y), pos2(c.x - s * 0.7, c.y + s), pos2(c.x - s * 0.2, c.y)];
+                    painter.add(Shape::convex_polygon(vec![pts[0], pts[1], pts[3]], color, Stroke::NONE));
+                    painter.add(Shape::convex_polygon(vec![pts[3], pts[1], pts[2]], color, Stroke::NONE));
+                }
+                _ => {
+                    painter.circle_filled(c, r, color);
                 }
             }
         }
@@ -165,10 +177,11 @@ fn paint_marker(painter: &Painter, o: &OutlineLayout, v: &View, i: usize, ink: &
     }
 }
 
-/// The To Do box (ticked in the accent colour), the Important star and the Question mark.
+/// The To Do box (ticked in the accent colour), and the other tags' icons. The highlight tags
+/// have no icon: their colour is behind the text.
 fn paint_tag(painter: &Painter, o: &OutlineLayout, v: &View, i: usize, tokens: &Tokens) {
     let Some(p) = o.paras.get(i) else { return };
-    let Some(tag) = p.tag else { return };
+    let Some(tag) = p.tag.filter(|t| t.has_icon()) else { return };
     let top = v.to_screen(o.pos);
     let (a, b) = p.first_row();
     let side = (p.size_px * 0.85).clamp(6.0, 60.0);
@@ -189,35 +202,13 @@ fn paint_tag(painter: &Painter, o: &OutlineLayout, v: &View, i: usize, tokens: &
                 painter.add(Shape::Path(PathShape::line(pts, Stroke::new((s * 0.15).max(1.5), tokens.accent))));
             }
         }
-        Tag::Important => {
-            let outer = side * 0.6;
-            let inner = outer * 0.45;
-            let pts: Vec<Pos2> = (0..10)
-                .map(|k| {
-                    let ang = std::f32::consts::PI * (k as f32) / 5.0 - std::f32::consts::FRAC_PI_2;
-                    let rad = if k % 2 == 0 { outer } else { inner };
-                    pos2(c.x + rad * ang.cos(), c.y + rad * ang.sin())
-                })
-                .collect();
-            let gold = Color32::from_rgb(0xF2, 0xB7, 0x05);
-            // A star isn't convex: draw it as five triangles around the centre plus the core.
-            for k in 0..5 {
-                let (Some(tip), Some(l), Some(rr)) = (pts.get(k * 2), pts.get((k * 2 + 9) % 10), pts.get(k * 2 + 1)) else { continue };
-                painter.add(Shape::convex_polygon(vec![*l, *tip, *rr], gold, Stroke::NONE));
+        other => {
+            if let Some(icon) = crate::icons::tag_icon(other) {
+                let ink = if tokens.dark { Color32::from_rgb(0xE6, 0xE6, 0xEA) } else { Color32::from_rgb(0x44, 0x44, 0x4A) };
+                crate::icons::paint_styled(painter, Rect::from_center_size(c, vec2(side * 1.15, side * 1.15)), icon, crate::icons::Style::new(ink, tokens.accent));
             }
-            let core: Vec<Pos2> = (0..5).filter_map(|k| pts.get(k * 2 + 1).copied()).collect();
-            painter.add(Shape::convex_polygon(core, gold, Stroke::NONE));
-            let mut outline = pts.clone();
-            if let Some(f) = pts.first() {
-                outline.push(*f);
-            }
-            painter.add(Shape::line(outline, Stroke::new(1.0, mix(gold, Color32::BLACK, 0.3))));
         }
-        Tag::Question => {
-            let r = side * 0.55;
-            painter.circle_filled(c, r, Color32::from_rgb(0x7A, 0x4F, 0xC9));
-            painter.text(c + vec2(0.0, r * 0.05), Align2::CENTER_CENTER, "?", FontId::proportional(r * 1.6), Color32::WHITE);
-        }
+
     }
 }
 

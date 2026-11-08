@@ -23,7 +23,8 @@ pub use notebook::{EntryPath, Notebook, SearchHit, Section, SectionEntry, Sectio
 pub use notecraft_geom as geom;
 pub use notecraft_geom::{Point, Rect, Size};
 pub use page::{
-    ElementKind, ImageElement, ImageFormat, ListKind, Outline, Page, PageBackground, PageElement, ParaStyle, Paragraph, Printout, RuleLines, Run, Tag,
+    Align, ElementKind, ImageElement, ImageFormat, ListKind, ListStyle, Outline, Page, PageBackground, PageElement, ParaStyle, Paragraph, Printout,
+    RuleLines, Run, Tag,
 };
 
 use chrono::{DateTime, Utc};

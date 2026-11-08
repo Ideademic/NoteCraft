@@ -433,7 +433,7 @@ fn vertical(o: &OutlineLayout, pos: TextPos, goal_x: f32, down: bool) -> TextPos
     let mut base = 0;
     for (i, r) in q.galley.rows.iter().enumerate() {
         if i == row {
-            let col = r.char_at(goal_x - q.text_x - r.pos.x).0;
+            let col = r.char_at(goal_x - q.galley_x() - r.pos.x).0;
             return TextPos::new(para, (base + col).min(q.chars));
         }
         base += r.char_count_including_newline().0;
@@ -442,7 +442,7 @@ fn vertical(o: &OutlineLayout, pos: TextPos, goal_x: f32, down: bool) -> TextPos
 }
 
 fn caret_x(o: &OutlineLayout, pos: TextPos) -> f32 {
-    o.paras.get(pos.para).map_or(0.0, |p| p.text_x + p.galley.pos_from_cursor(CCursor::new(pos.char)).left())
+    o.paras.get(pos.para).map_or(0.0, |p| p.galley_x() + p.galley.pos_from_cursor(CCursor::new(pos.char)).left())
 }
 
 fn home_end(o: &OutlineLayout, pos: TextPos, end: bool) -> TextPos {

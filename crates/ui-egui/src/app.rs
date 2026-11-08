@@ -425,6 +425,7 @@ impl NoteApp {
 
     /// Per-frame work that isn't drawing: theme, autosave, delivered files, the dirty flag.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        crate::fonts::sync(ctx);
         let system = self
             .system_dark
             .or_else(|| self.services.prefers_dark.as_ref().and_then(|f| f()))

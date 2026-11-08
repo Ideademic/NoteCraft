@@ -376,6 +376,7 @@ pub fn current_format(state: &CanvasState, session: &Session) -> Option<CurrentF
 pub fn show(ui: &mut egui::Ui, state: &mut CanvasState, session: &mut Session, tokens: &Tokens, services: &Services) {
     let rect = ui.available_rect_before_wrap();
     let id = ui.scope_id().with("nc_canvas");
+    crate::fonts::sync(ui.ctx());
     sync(state, session);
     let resp = ui.interact(rect, id, Sense::click_and_drag());
     state.last_rect = Some(rect);

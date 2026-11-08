@@ -1,15 +1,17 @@
-//! How runs and paragraphs look: font families and sizes, the paragraph styles' sizes and
-//! colours (headings in blues, Quote in grey italics, Code in the monospace face), list markers
-//! and numbering, and the colour mapping for dark pages.
+//! How runs and paragraphs look: fonts and sizes, the paragraph styles' sizes and colours
+//! (headings in blues, Quote in grey italics, Code in Consolas), alignment, list markers and
+//! numbering, highlight tags, and the colour mapping for dark pages.
 //!
-//! NoteCraft draws with egui's built-in faces (one proportional weight and a monospace one); a
-//! run's font name is kept in the note and drawn with the closest of the two. Bold has no face of
-//! its own, so [`super::layout`] paints bold runs a second time, nudged sideways.
+//! A run is drawn in its own font ([`crate::fonts`]): the installed family's real Regular, Bold,
+//! Italic or Bold Italic face, its metric-compatible substitute, or a face of the same kind. Only
+//! a family without the style draws it itself: italic slanted by egui, bold painted a second time
+//! nudged sideways by [`super::text`] (the overlay job of [`jobs`]).
 
 use egui::text::{LayoutJob, TextFormat};
-use egui::{Color32, FontFamily, FontId, Stroke};
-use notecraft_doc::{ListKind, ParaStyle, Paragraph, Run};
+use egui::{Color32, FontId, Stroke};
+use notecraft_doc::{Align, ListKind, ListStyle, ParaStyle, Paragraph, Run};
 
+use crate::fonts;
 use crate::theme::{Tokens, color32, contrast, luminance, mix};
 
 /// Indent per list level, points.
@@ -20,9 +22,6 @@ pub const MARKER_W: f32 = 18.0;
 pub const TAG_W: f32 = 20.0;
 /// Space above a heading that follows other text, points.
 pub const HEADING_SPACE: f32 = 6.0;
-
-/// Monospace font names: these runs draw in egui's monospace face.
-const MONO: [&str; 9] = ["consolas", "courier new", "courier", "lucida console", "menlo", "monaco", "cascadia code", "cascadia mono", "monospace"];
 
 /// Colours the page's text is drawn with this frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -95,10 +94,20 @@ fn style_bold(style: ParaStyle) -> bool {
     matches!(style, ParaStyle::Heading3 | ParaStyle::Heading5)
 }
 
-/// The face a run draws with.
-pub fn family(run_font: Option<&str>, style: ParaStyle) -> FontFamily {
-    let mono = style == ParaStyle::Code || run_font.is_some_and(|f| MONO.contains(&f.trim().to_ascii_lowercase().as_str()));
-    if mono { FontFamily::Monospace } else { FontFamily::Proportional }
+/// The font a paragraph style draws runs without a font of their own in.
+pub fn default_font(style: ParaStyle) -> &'static str {
+    if style == ParaStyle::Code { fonts::DEFAULT_MONO_FONT } else { fonts::DEFAULT_FONT }
+}
+
+/// The font a run is in: its own, else its paragraph style's.
+pub fn run_font(run: &Run, style: ParaStyle) -> &str {
+    run.font.as_deref().map(str::trim).filter(|f| !f.is_empty()).unwrap_or_else(|| default_font(style))
+}
+
+/// The face a run draws with. `named`: the font provider is active ([`fonts::active`]); until
+/// then egui's own faces stand in.
+pub fn face(run: &Run, style: ParaStyle, named: bool) -> fonts::Face {
+    fonts::face(run_font(run, style), is_bold(run, style), is_italic(run, style), named)
 }
 
 /// Font size in points for a run (its own size, else the style's), clamped.
@@ -118,49 +127,79 @@ pub fn is_bold(run: &Run, style: ParaStyle) -> bool {
     run.bold || style_bold(style)
 }
 
-/// The egui format for `run` in a paragraph of `style`.
-pub fn run_format(run: &Run, style: ParaStyle, scale: f32, ink: &Ink) -> TextFormat {
+/// Is the run italic (its own flag or the style's)?
+pub fn is_italic(run: &Run, style: ParaStyle) -> bool {
+    run.italic || style_italic(style)
+}
+
+/// The egui format for `run` in a paragraph of `style`, and whether its bold must be painted
+/// (the face has no bold). `highlight`: the paragraph's highlight tag colour, behind runs without
+/// a highlight of their own.
+pub fn run_format(run: &Run, style: ParaStyle, scale: f32, ink: &Ink, named: bool, highlight: Option<Color32>) -> (TextFormat, bool) {
     let size = px(size_pt(run, style), scale);
-    let font = FontId::new(size, family(run.font.as_deref(), style));
+    let face = face(run, style, named);
+    let font = FontId::new(size, face.family);
     let mut color = run.color.map(color32).map_or_else(|| style_color(style, ink).unwrap_or(ink.text), |c| ink.adapt(c));
     if run.link.is_some() && run.color.is_none() {
         color = ink.link;
     }
-    let background = run.highlight.map_or(Color32::TRANSPARENT, color32);
+    let background = run.highlight.map(color32).or(highlight).unwrap_or(Color32::TRANSPARENT);
     if background != Color32::TRANSPARENT && ink.dark && run.color.is_none() {
         // Light text on a yellow highlight is unreadable: highlighted text stays dark.
         color = Color32::from_rgb(0x1F, 0x1F, 0x1F);
     }
     let line = Stroke::new((size / 14.0).clamp(1.0, 4.0), color);
-    TextFormat {
+    let format = TextFormat {
         font_id: font,
         color,
         background,
         expand_bg: 0.0,
-        italics: run.italic || style_italic(style),
+        italics: face.fake_italic,
         underline: if run.underline || run.link.is_some() { line } else { Stroke::NONE },
         strikethrough: if run.strike { line } else { Stroke::NONE },
         ..TextFormat::default()
+    };
+    (format, face.fake_bold)
+}
+
+/// egui's alignment for a paragraph's rows.
+fn halign(a: Align) -> egui::Align {
+    match a {
+        Align::Center => egui::Align::Center,
+        Align::Right => egui::Align::RIGHT,
+        Align::Left | Align::Justify => egui::Align::LEFT,
     }
 }
 
-/// The paragraph's text as a layout job, and (when any of it is bold) the overlay job that
-/// paints only the bold runs (see the module docs). Newlines in a run become spaces so character
-/// indices stay the same.
-pub fn jobs(p: &Paragraph, scale: f32, wrap_px: f32, ink: &Ink) -> (LayoutJob, Option<LayoutJob>) {
-    let mut job = LayoutJob { wrap: egui::text::TextWrapping::wrap_at_width(wrap_px.max(8.0)), ..LayoutJob::default() };
-    let mut bold = LayoutJob { wrap: egui::text::TextWrapping::wrap_at_width(wrap_px.max(8.0)), ..LayoutJob::default() };
-    let mut any_bold = false;
+/// Where a galley laid out with [`jobs`] for `align` goes, from the left of its text area of
+/// `wrap_px`: centred and right-aligned rows are placed around x = 0 by egui.
+pub fn align_dx(align: Align, wrap_px: f32) -> f32 {
+    match align {
+        Align::Center => wrap_px.max(8.0) / 2.0,
+        Align::Right => wrap_px.max(8.0),
+        Align::Left | Align::Justify => 0.0,
+    }
+}
+
+/// The paragraph's text as a layout job, and (when a run is bold in a face without a bold) the
+/// overlay job that paints only those runs again, nudged sideways. Newlines in a run become
+/// spaces so character indices stay the same. `named`: see [`face`].
+pub fn jobs(p: &Paragraph, scale: f32, wrap_px: f32, ink: &Ink, named: bool) -> (LayoutJob, Option<LayoutJob>) {
+    let wrap = egui::text::TextWrapping::wrap_at_width(wrap_px.max(8.0));
+    let base = LayoutJob { wrap, halign: halign(p.align), justify: p.align == Align::Justify, ..LayoutJob::default() };
+    let mut job = base.clone();
+    let mut bold = base;
+    let mut any_fake = false;
+    let highlight = p.tag.and_then(notecraft_doc::Tag::highlight).map(color32);
     for r in &p.runs {
         if r.text.is_empty() {
             continue;
         }
         let text: String = r.text.chars().map(|c| if c == '\n' || c == '\r' { ' ' } else { c }).collect();
-        let f = run_format(r, p.style, scale, ink);
-        let b = is_bold(r, p.style);
-        any_bold |= b;
+        let (f, fake_bold) = run_format(r, p.style, scale, ink, named, highlight);
+        any_fake |= fake_bold;
         let overlay = TextFormat {
-            color: if b { f.color } else { Color32::TRANSPARENT },
+            color: if fake_bold { f.color } else { Color32::TRANSPARENT },
             background: Color32::TRANSPARENT,
             underline: Stroke::NONE,
             strikethrough: Stroke::NONE,
@@ -170,14 +209,14 @@ pub fn jobs(p: &Paragraph, scale: f32, wrap_px: f32, ink: &Ink) -> (LayoutJob, O
         bold.append(&text, 0.0, overlay);
     }
     if job.sections.is_empty() {
-        // An empty paragraph still has a line of its style's height.
-        let empty = Run::default();
-        job.append("", 0.0, run_format(&empty, p.style, scale, ink));
+        // An empty paragraph still has a line of its style's height (in its font).
+        let empty = p.runs.first().map(|r| Run { text: String::new(), ..r.clone() }).unwrap_or_default();
+        job.append("", 0.0, run_format(&empty, p.style, scale, ink, named, None).0);
     }
-    (job, any_bold.then_some(bold))
+    (job, any_fake.then_some(bold))
 }
 
-/// How far the bold overlay is nudged, pixels, for a font of `size_px`.
+/// How far a painted bold is nudged, pixels, for a font of `size_px`.
 pub fn bold_offset(size_px: f32) -> f32 {
     (size_px * 0.055).clamp(0.45, 3.0)
 }
@@ -185,16 +224,19 @@ pub fn bold_offset(size_px: f32) -> f32 {
 /// The list marker of a paragraph.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Marker {
-    /// Drawn in code by level: disc, circle, square.
-    Bullet(u8),
-    /// "1.", "a.", "i." …
+    /// Drawn in code: disc, circle, square, dash or arrow.
+    Bullet(ListStyle),
+    /// "1.", "a.", "IV." …
     Number(String),
 }
 
-/// Each paragraph's marker: bullets by indent, and numbers counted per level (a paragraph at a
-/// lower level, or a non-numbered one at the same level, starts the count again).
+/// Each paragraph's marker. Numbers count per level and numbering style (as MS-ONE counts list
+/// items with the same format at the same level); a paragraph at a lower level, or another kind
+/// at the same level, starts the count again.
 pub fn markers(paras: &[Paragraph]) -> Vec<Option<Marker>> {
-    let mut counters = [0u32; notecraft_doc::page::MAX_INDENT as usize + 1];
+    const LEVELS: usize = notecraft_doc::page::MAX_INDENT as usize + 1;
+    let mut counters = [0u32; LEVELS];
+    let mut styles: [Option<ListStyle>; LEVELS] = [None; LEVELS];
     let mut out = Vec::with_capacity(paras.len());
     for p in paras {
         let level = usize::from(p.indent.min(notecraft_doc::page::MAX_INDENT));
@@ -202,21 +244,24 @@ pub fn markers(paras: &[Paragraph]) -> Vec<Option<Marker>> {
         for c in counters.iter_mut().skip(level + 1) {
             *c = 0;
         }
-        match p.list {
-            Some(ListKind::Numbered) => {
-                let n = counters.get(level).copied().unwrap_or(0).saturating_add(1);
-                if let Some(c) = counters.get_mut(level) {
+        let style = p.marker_style();
+        match (p.list, style) {
+            (Some(ListKind::Numbered), Some(st)) => {
+                let same = styles.get(level).copied().flatten() == Some(st);
+                let n = if same { counters.get(level).copied().unwrap_or(0).saturating_add(1) } else { 1 };
+                if let (Some(c), Some(s)) = (counters.get_mut(level), styles.get_mut(level)) {
                     *c = n;
+                    *s = Some(st);
                 }
-                out.push(Some(Marker::Number(number_label(n, p.indent))));
+                out.push(Some(Marker::Number(st.label(n))));
             }
-            Some(ListKind::Bullet) => {
+            (Some(ListKind::Bullet), Some(st)) => {
                 if let Some(c) = counters.get_mut(level) {
                     *c = 0;
                 }
-                out.push(Some(Marker::Bullet(p.indent)));
+                out.push(Some(Marker::Bullet(st)));
             }
-            None => {
+            _ => {
                 if let Some(c) = counters.get_mut(level) {
                     *c = 0;
                 }
@@ -227,53 +272,9 @@ pub fn markers(paras: &[Paragraph]) -> Vec<Option<Marker>> {
     out
 }
 
-/// "3." at level 0, "c." at level 1, "iii." at level 2, then again.
+/// "3." at level 0, "c." at level 1, "iii." at level 2, then again (the default numbering).
 pub fn number_label(n: u32, indent: u8) -> String {
-    match indent % 3 {
-        0 => format!("{n}."),
-        1 => format!("{}.", letters(n)),
-        _ => format!("{}.", roman(n)),
-    }
-}
-
-fn letters(mut n: u32) -> String {
-    let mut s = Vec::new();
-    while n > 0 && s.len() < 8 {
-        let d = ((n - 1) % 26) as u8;
-        s.push(char::from(b'a' + d));
-        n = (n - 1) / 26;
-    }
-    s.iter().rev().collect()
-}
-
-fn roman(n: u32) -> String {
-    if n == 0 || n >= 4000 {
-        return n.to_string();
-    }
-    const TABLE: [(u32, &str); 13] = [
-        (1000, "m"),
-        (900, "cm"),
-        (500, "d"),
-        (400, "cd"),
-        (100, "c"),
-        (90, "xc"),
-        (50, "l"),
-        (40, "xl"),
-        (10, "x"),
-        (9, "ix"),
-        (5, "v"),
-        (4, "iv"),
-        (1, "i"),
-    ];
-    let mut out = String::new();
-    let mut n = n;
-    for (v, s) in TABLE {
-        while n >= v {
-            out.push_str(s);
-            n -= v;
-        }
-    }
-    out
+    ListStyle::by_level(ListKind::Numbered, indent).label(n)
 }
 
 #[cfg(test)]
@@ -281,7 +282,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn numbering_by_level() {
+    fn numbering_by_level_and_style() {
         assert_eq!(number_label(3, 0), "3.");
         assert_eq!(number_label(3, 1), "c.");
         assert_eq!(number_label(27, 1), "aa.");
@@ -298,15 +299,45 @@ mod tests {
         assert_eq!(m[1], Some(Marker::Number("a.".into())));
         assert_eq!(m[2], Some(Marker::Number("b.".into())));
         assert_eq!(m[3], Some(Marker::Number("2.".into())));
+        // A chosen style counts on its own; another style at the same level starts again.
+        ps[3].list_style = Some(ListStyle::UpperRoman);
+        ps.push(Paragraph { list: Some(ListKind::Numbered), list_style: Some(ListStyle::UpperRoman), ..Paragraph::plain("e") });
+        ps.push(Paragraph { list: Some(ListKind::Bullet), list_style: Some(ListStyle::Arrow), ..Paragraph::plain("f") });
+        let m = markers(&ps);
+        assert_eq!(m[3], Some(Marker::Number("I.".into())));
+        assert_eq!(m[4], Some(Marker::Number("II.".into())));
+        assert_eq!(m[5], Some(Marker::Bullet(ListStyle::Arrow)));
     }
 
     #[test]
-    fn mono_and_sizes() {
-        assert_eq!(family(Some("Consolas"), ParaStyle::Normal), FontFamily::Monospace);
-        assert_eq!(family(Some("Calibri"), ParaStyle::Code), FontFamily::Monospace);
-        assert_eq!(family(None, ParaStyle::Normal), FontFamily::Proportional);
+    fn fonts_and_sizes() {
+        assert_eq!(run_font(&Run::default(), ParaStyle::Normal), "Calibri");
+        assert_eq!(run_font(&Run::default(), ParaStyle::Code), "Consolas");
+        assert_eq!(run_font(&Run { font: Some("  ".into()), ..Run::default() }, ParaStyle::Normal), "Calibri");
+        assert_eq!(run_font(&Run { font: Some("Georgia".into()), ..Run::default() }, ParaStyle::Code), "Georgia");
+        assert_eq!(face(&Run { font: Some("Consolas".into()), ..Run::default() }, ParaStyle::Normal, false).family, egui::FontFamily::Monospace);
+        let named = face(&Run { bold: true, ..Run::default() }, ParaStyle::Normal, true);
+        assert!(matches!(&named.family, egui::FontFamily::Name(n) if n.starts_with("nc:Calibri:bn@")));
         let r = Run { size: Some(f32::NAN), ..Run::default() };
         assert_eq!(size_pt(&r, ParaStyle::Heading1), 16.0);
         assert_eq!(px(11.0, 1.0), 11.0);
+    }
+
+    #[test]
+    fn alignment_and_highlight_tags_shape_the_job() {
+        let ink = Ink { text: Color32::BLACK, paper: Color32::WHITE, dark: false, link: Color32::BLUE };
+        let mut p = Paragraph { align: Align::Center, tag: Some(notecraft_doc::Tag::Definition), ..Paragraph::plain("word") };
+        let (job, _) = jobs(&p, 1.0, 200.0, &ink, false);
+        assert_eq!(job.halign, egui::Align::Center);
+        assert_ne!(job.sections[0].format.background, Color32::TRANSPARENT, "the tag's highlight");
+        assert_eq!(align_dx(Align::Center, 200.0), 100.0);
+        assert_eq!(align_dx(Align::Right, 200.0), 200.0);
+        p.align = Align::Justify;
+        let (job, _) = jobs(&p, 1.0, 200.0, &ink, false);
+        assert!(job.justify && job.halign == egui::Align::LEFT);
+        // Without the provider every bold run is painted; an empty paragraph keeps a line.
+        let b = Paragraph { runs: vec![Run { text: "b".into(), bold: true, ..Run::default() }], ..Paragraph::default() };
+        assert!(jobs(&b, 1.0, 100.0, &ink, false).1.is_some());
+        assert_eq!(jobs(&Paragraph::default(), 1.0, 100.0, &ink, false).0.sections.len(), 1);
     }
 }

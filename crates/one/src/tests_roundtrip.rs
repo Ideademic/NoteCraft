@@ -6,7 +6,8 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use notecraft_doc::page::CONTENT_ORIGIN;
 use notecraft_doc::{
-    Color, ElementKind, Guid, ImageElement, ImageFormat, InkPoint, InkStroke, InkTool, ListKind, Notebook, Outline, Page, PageBackground,
+    Align, Color, ElementKind, Guid, ImageElement, ImageFormat, InkPoint, InkStroke, InkTool, ListKind, ListStyle, Notebook, Outline, Page,
+    PageBackground,
     PageElement, ParaStyle, Paragraph, Point, Printout, RuleLines, Run, Section, SectionEntry, SectionGroup, Size, Tag,
 };
 
@@ -46,6 +47,17 @@ fn rich_outline() -> Outline {
     ];
     for s in [ParaStyle::Heading2, ParaStyle::Heading3, ParaStyle::Heading4, ParaStyle::Heading5, ParaStyle::Heading6, ParaStyle::Title] {
         paragraphs.push(Paragraph { style: s, ..Paragraph::plain(s.name()) });
+    }
+    for a in Align::ALL {
+        paragraphs.push(Paragraph { align: a, ..Paragraph::plain(a.name()) });
+    }
+    for st in ListStyle::BULLETS.into_iter().chain(ListStyle::NUMBERS) {
+        // A level's own default style reads back as no style, so each sits where it isn't one.
+        let indent = if st == ListStyle::by_level(st.kind(), 1) { 0 } else { 1 };
+        paragraphs.push(Paragraph { list: Some(st.kind()), list_style: Some(st), indent, ..Paragraph::plain(st.name()) });
+    }
+    for t in Tag::ALL.into_iter().skip(1) {
+        paragraphs.push(Paragraph { tag: Some(t), align: Align::Center, ..Paragraph::plain(t.label()) });
     }
     Outline { pos: CONTENT_ORIGIN, width: 432.0, paragraphs }
 }

@@ -1,0 +1,21 @@
+[package]
+name = "notecraft-fonts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "NoteCraft's fonts: the installed fonts (craft-font-catalog), the metric-compatible faces bundled from craft-fonts, the substitutes for a missing font, and fonts the user adds (TTF, OTF, WOFF, WOFF2)"
+
+[lints]
+workspace = true
+
+[dependencies]
+craft-font-catalog = { workspace = true }
+skrifa = { workspace = true }
+wuff = { workspace = true }
+brotli-decompressor = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+# egui's own faces (Ubuntu Light, Hack) as real fonts for the tests.
+epaint_default_fonts = { workspace = true }

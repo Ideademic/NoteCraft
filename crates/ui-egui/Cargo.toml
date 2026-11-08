@@ -14,7 +14,10 @@ notecraft-doc = { workspace = true }
 notecraft-engine = { workspace = true }
 egui = { workspace = true, features = ["default_fonts"] }
 egui_extras = { workspace = true }
-craft-ui = { workspace = true }
+# `system_fonts`: installed fonts for characters a note's font lacks (other scripts), desktop only.
+craft-ui = { workspace = true, features = ["system_fonts"] }
+# The installed, bundled and added fonts the canvas draws with (`fonts`).
+notecraft-fonts = { workspace = true }
 craft-i18n = { workspace = true }
 craft-window = { workspace = true }
 serde = { workspace = true }

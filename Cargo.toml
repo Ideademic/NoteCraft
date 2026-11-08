@@ -23,6 +23,7 @@ notecraft-formats = { path = "crates/formats" }
 notecraft-printout = { path = "crates/printout" }
 notecraft-engine = { path = "crates/engine" }
 notecraft-ui-egui = { path = "crates/ui-egui" }
+notecraft-fonts = { path = "crates/fonts" }
 
 # foundation
 thiserror = "2"
@@ -46,11 +47,26 @@ cab = "0.6"
 # public specs: no crate needed.
 craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f9049f9270955caffb5bee5997aebf7", version = "=0.1.0", default-features = false, features = ["raster", "write"] }
 
+# fonts
+# The installed fonts (MIT OR Apache-2.0, storytold/craft-libs, the craft-ui rev): discovery on a
+# background thread, family/style lookup, loading. Its `system` feature asks CoreText,
+# DirectWrite or fontconfig through fontique (MIT OR Apache-2.0), which craft-ui's
+# `system_fonts` already builds.
+craft-font-catalog = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0", version = "=0.1.0" }
+# Checking a face parses before egui gets it: the version epaint parses with (MIT OR Apache-2.0).
+skrifa = { version = "0.44", default-features = false, features = ["std"] }
+# WOFF / WOFF2 fonts added in the browser (MIT); its brotli decoder, used ahead of it so a
+# hostile file's glyph point counts are checked first (BSD-3-Clause OR MIT; already in the lock).
+wuff = "0.2.9"
+brotli-decompressor = "5"
+
 # ui (same versions and craft-libs revs as WordCraft)
 egui = "0.37"
 egui_extras = { version = "0.37", default-features = false }
 eframe = { version = "0.37", default-features = false }
 egui_kittest = "0.37"
+# egui's bundled faces, as real font files in tests.
+epaint_default_fonts = "0.37"
 # A clock that works on native and in the browser (`performance.now()`, `Date.now()`).
 web-time = "1.1"
 rfd = "0.17"

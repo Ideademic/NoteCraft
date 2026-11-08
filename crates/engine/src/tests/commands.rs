@@ -184,6 +184,73 @@ fn paragraph_formatting() {
 }
 
 #[test]
+fn list_styles_are_kept_and_toggle_per_style() {
+    use notecraft_doc::ListStyle;
+    let (mut s, o) = session_with("one\ntwo\nthree");
+    let all = json!({"outline": o.to_string()});
+    s.run(ids::FORMAT_BULLETS, &with(all.clone(), json!({"style": "square"}))).unwrap();
+    let styles: Vec<_> = outline(&s, o).paragraphs.iter().map(|p| p.marker_style()).collect();
+    assert_eq!(styles, vec![Some(ListStyle::Square); 3]);
+    // Another style switches style instead of toggling the list off.
+    s.run(ids::FORMAT_BULLETS, &with(all.clone(), json!({"style": "arrow"}))).unwrap();
+    assert!(outline(&s, o).paragraphs.iter().all(|p| p.list == Some(ListKind::Bullet) && p.marker_style() == Some(ListStyle::Arrow)));
+    // The same style again toggles it off.
+    s.run(ids::FORMAT_BULLETS, &with(all.clone(), json!({"style": "arrow"}))).unwrap();
+    assert!(outline(&s, o).paragraphs.iter().all(|p| p.list.is_none() && p.list_style.is_none()));
+    // Numbering by name or by sample; a bullet style isn't a numbering style.
+    s.run(ids::FORMAT_NUMBERING, &with(all.clone(), json!({"style": "I."}))).unwrap();
+    assert!(outline(&s, o).paragraphs.iter().all(|p| p.marker_style() == Some(ListStyle::UpperRoman)));
+    assert!(matches!(s.run(ids::FORMAT_NUMBERING, &with(all.clone(), json!({"style": "disc"}))), Err(CmdError::Params(_))));
+    assert!(matches!(s.run(ids::FORMAT_BULLETS, &with(all.clone(), json!({"style": 5}))), Err(CmdError::Params(_))));
+    // Enter carries the style to the new paragraph.
+    s.run(ids::TEXT_SPLIT_PARAGRAPH, &json!({"outline": o.to_string(), "at": {"para": 2, "char": 5}})).unwrap();
+    assert_eq!(outline(&s, o).paragraphs[3].marker_style(), Some(ListStyle::UpperRoman));
+    // The button without a style toggles off whatever numbering style is there.
+    s.run(ids::FORMAT_NUMBERING, &all).unwrap();
+    assert!(outline(&s, o).paragraphs.iter().all(|p| p.list.is_none()));
+}
+
+#[test]
+fn alignment_and_tags() {
+    use notecraft_doc::Align;
+    let (mut s, o) = session_with("one\ntwo\nthree");
+    s.run(ids::FORMAT_ALIGN, &json!({"outline": o.to_string(), "paras": [0, 1], "align": "center"})).unwrap();
+    let aligns: Vec<_> = outline(&s, o).paragraphs.iter().map(|p| p.align).collect();
+    assert_eq!(aligns, vec![Align::Center, Align::Center, Align::Left]);
+    s.run(ids::FORMAT_ALIGN, &json!({"outline": o.to_string(), "para": 2, "align": "justify"})).unwrap();
+    assert_eq!(outline(&s, o).paragraphs[2].align, Align::Justify);
+    let same = s.run(ids::FORMAT_ALIGN, &json!({"outline": o.to_string(), "para": 2, "align": "justify"})).unwrap();
+    assert!(!same.changed, "nothing to change");
+    assert!(matches!(s.run(ids::FORMAT_ALIGN, &json!({"outline": o.to_string(), "align": "middle"})), Err(CmdError::Params(_))));
+    assert!(matches!(s.run(ids::FORMAT_ALIGN, &json!({"outline": o.to_string()})), Err(CmdError::Params(_))));
+    s.run(ids::TEXT_SPLIT_PARAGRAPH, &json!({"outline": o.to_string(), "at": {"para": 0, "char": 3}})).unwrap();
+    assert_eq!(outline(&s, o).paragraphs[1].align, Align::Center, "Enter keeps the alignment");
+
+    for t in Tag::ALL {
+        s.run(ids::FORMAT_TAG, &json!({"outline": o.to_string(), "para": 0, "tag": t.name()})).unwrap();
+        assert_eq!(outline(&s, o).paragraphs[0].tag, Some(t), "{t:?}");
+    }
+    // Toggling the same tag removes it; a label works as a name.
+    s.run(ids::FORMAT_TAG, &json!({"outline": o.to_string(), "para": 0, "tag": "Critical"})).unwrap();
+    assert_eq!(outline(&s, o).paragraphs[0].tag, None);
+    s.run(ids::FORMAT_TAG, &json!({"outline": o.to_string(), "tag": "Remember for later"})).unwrap();
+    assert!(outline(&s, o).paragraphs.iter().all(|p| p.tag == Some(Tag::RememberForLater)));
+    // A checked To Do stays checked when tagged To Do again with `value: true`.
+    s.run(ids::FORMAT_TAG, &json!({"outline": o.to_string(), "para": 1, "tag": "toDo"})).unwrap();
+    s.run(ids::FORMAT_TOGGLE_TODO, &json!({"outline": o.to_string(), "para": 1})).unwrap();
+    s.run(ids::FORMAT_TAG, &json!({"outline": o.to_string(), "para": 1, "tag": "toDo", "value": true})).unwrap();
+    assert_eq!(outline(&s, o).paragraphs[1].tag, Some(Tag::ToDo { checked: true }));
+    // null removes every tag.
+    s.run(ids::FORMAT_TAG, &json!({"outline": o.to_string(), "tag": null})).unwrap();
+    assert!(outline(&s, o).paragraphs.iter().all(|p| p.tag.is_none()));
+    assert!(matches!(s.run(ids::FORMAT_TAG, &json!({"outline": o.to_string(), "tag": "sparkly"})), Err(CmdError::Params(_))));
+    assert!(matches!(s.run(ids::FORMAT_TAG, &json!({"outline": o.to_string()})), Err(CmdError::Params(_))));
+    // Every Mod+N shortcut names a tag, To Do first.
+    assert_eq!(crate::cmd::format::tag_key(Tag::Phone), Some("Mod+9"));
+    assert_eq!(crate::cmd::format::tag_key(Tag::Idea), None);
+}
+
+#[test]
 fn inserting_pictures_printouts_files_and_dates() {
     let mut s = Session::new_default();
     let out = s.run(ids::INSERT_IMAGE, &json!({"bytesBase64": png_b64(40, 20), "name": "a.png", "x": 10, "y": 20, "alt": "logo"})).unwrap();

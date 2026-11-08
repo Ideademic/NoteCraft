@@ -46,6 +46,8 @@ pub const FORMAT_BULLETS: &str = "format.bullets";
 pub const FORMAT_NUMBERING: &str = "format.numbering";
 pub const FORMAT_INDENT: &str = "format.indent";
 pub const FORMAT_OUTDENT: &str = "format.outdent";
+pub const FORMAT_ALIGN: &str = "format.align";
+pub const FORMAT_TAG: &str = "format.tag";
 pub const FORMAT_TAG_TODO: &str = "format.tag.todo";
 pub const FORMAT_TOGGLE_TODO: &str = "format.toggleTodo";
 pub const FORMAT_CLEAR: &str = "format.clear";
@@ -127,6 +129,8 @@ pub const ALL: &[&str] = &[
     FORMAT_NUMBERING,
     FORMAT_INDENT,
     FORMAT_OUTDENT,
+    FORMAT_ALIGN,
+    FORMAT_TAG,
     FORMAT_TAG_TODO,
     FORMAT_TOGGLE_TODO,
     FORMAT_CLEAR,

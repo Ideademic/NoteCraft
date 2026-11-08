@@ -34,10 +34,22 @@ pub enum Icon {
     AlignLeft,
     AlignCenter,
     AlignRight,
+    Justify,
     // Tags
     ToDo,
     Important,
     Question,
+    /// Remember for later: text on a yellow highlight.
+    RememberForLater,
+    /// Definition: text on a green highlight.
+    Definition,
+    /// The Highlight tag: text on a yellow highlight with a marker.
+    HighlightTag,
+    Contact,
+    Address,
+    Phone,
+    Idea,
+    Critical,
     // Insert
     InsertSpace,
     Table,
@@ -133,9 +145,18 @@ impl Icon {
         Icon::AlignLeft,
         Icon::AlignCenter,
         Icon::AlignRight,
+        Icon::Justify,
         Icon::ToDo,
         Icon::Important,
         Icon::Question,
+        Icon::RememberForLater,
+        Icon::Definition,
+        Icon::HighlightTag,
+        Icon::Contact,
+        Icon::Address,
+        Icon::Phone,
+        Icon::Idea,
+        Icon::Critical,
         Icon::InsertSpace,
         Icon::Table,
         Icon::Printout,
@@ -302,6 +323,7 @@ fn drawing(icon: Icon, style: Style) -> Drawing {
         Icon::AlignLeft => D::AlignLeft,
         Icon::AlignCenter => D::AlignCenter,
         Icon::AlignRight => D::AlignRight,
+        Icon::Justify => D::Justify,
         Icon::Table => D::Table,
         Icon::Printout => D::Object,
         Icon::Picture => D::Picture,
@@ -353,6 +375,14 @@ fn extra_drawing(icon: Icon, style: Style) -> Drawing {
         Icon::ToDo => Extra::Checkbox,
         Icon::Important => Extra::Important,
         Icon::Question => Extra::Question,
+        Icon::RememberForLater => Extra::Marked(TAG_YELLOW, false),
+        Icon::Definition => Extra::Marked(TAG_GREEN, false),
+        Icon::HighlightTag => Extra::Marked(TAG_YELLOW, true),
+        Icon::Contact => Extra::Contact,
+        Icon::Address => Extra::Address,
+        Icon::Phone => Extra::Phone,
+        Icon::Idea => Extra::Idea,
+        Icon::Critical => Extra::Critical,
         Icon::InsertSpace => Extra::InsertSpace,
         Icon::Attach => Extra::Attach,
         Icon::DateTime => Extra::DateTime,
@@ -377,7 +407,31 @@ fn extra_drawing(icon: Icon, style: Style) -> Drawing {
     Drawing::Extra(x)
 }
 
+/// The highlight tags' colours (Remember for later and Highlight; Definition).
+const TAG_YELLOW: Color32 = Color32::from_rgb(0xFF, 0xF2, 0x00);
+const TAG_GREEN: Color32 = Color32::from_rgb(0x92, 0xD0, 0x50);
+
+/// The icon a tag shows in menus and before tagged text; `None` for To Do, which draws its own
+/// check box with its tick.
+pub fn tag_icon(tag: notecraft_doc::Tag) -> Option<Icon> {
+    use notecraft_doc::Tag;
+    Some(match tag {
+        Tag::ToDo { .. } => return None,
+        Tag::Important => Icon::Important,
+        Tag::Question => Icon::Question,
+        Tag::RememberForLater => Icon::RememberForLater,
+        Tag::Definition => Icon::Definition,
+        Tag::Highlight => Icon::HighlightTag,
+        Tag::Contact => Icon::Contact,
+        Tag::Address => Icon::Address,
+        Tag::Phone => Icon::Phone,
+        Tag::Idea => Icon::Idea,
+        Tag::Critical => Icon::Critical,
+    })
+}
+
 /// A notebook icon in the notebook's own colour (the notebook pane, the File menu lists).
+
 pub fn paint_notebook(painter: &Painter, rect: Rect, color: Color32) {
     deck::extra::paint_mode(painter, rect, Extra::Notebook(crate::theme::opaque(color)), Color32::from_gray(0x80), Mode::Colour);
 }

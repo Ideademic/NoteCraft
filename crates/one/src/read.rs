@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use notecraft_doc::page::{DEFAULT_OUTLINE_WIDTH, MAX_ELEMENTS_PER_PAGE, MAX_INDENT, MAX_PAGE_LEVEL, MAX_PARAGRAPHS};
 use notecraft_doc::{
-    Color, ElementKind, Guid, ImageElement, ImageFormat, InkStroke, ListKind, Outline, Page, PageBackground, PageElement, ParaStyle, Paragraph,
+    Align, Color, ElementKind, Guid, ImageElement, ImageFormat, InkStroke, ListKind, ListStyle, Outline, Page, PageBackground, PageElement,
+    ParaStyle, Paragraph,
     Point, Printout, RuleLines, Run, Section, Size, SourceInfo, Tag,
 };
 use notecraft_onestore::{ExtendedGuid, FileKind, Object, ObjectSpace, PropertySet, Store};
@@ -300,10 +301,14 @@ impl Reader {
     /// One outline element's content as paragraphs.
     fn outline_element(&mut self, v: &View<'_>, oe: &Object, indent: u32, pos: Point, out: &mut Vec<Paragraph>, parts: &mut PageParts) {
         let indent = indent.min(u32::from(MAX_INDENT)) as u8;
-        let list = v.children(&oe.props, prop::LIST_NODES).first().map(|l| list_kind(&l.props));
+        let marker = v.children(&oe.props, prop::LIST_NODES).first().map(|l| list_marker(&l.props));
+        let list = marker.map(|(k, _)| k);
+        // A style that is the level's default stays implicit, so a NoteCraft paragraph reads back
+        // as it was written.
+        let list_style = marker.and_then(|(k, st)| st.filter(|st| *st != ListStyle::by_level(k, indent)));
         let content = v.children(&oe.props, prop::CONTENT_CHILD_NODES);
         let Some(c) = content.first() else {
-            out.push(Paragraph { indent, list, ..Paragraph::plain("") });
+            out.push(Paragraph { indent, list, list_style, ..Paragraph::plain("") });
             return;
         };
         let here = Point::new(pos.x, pos.y + out.len() as f32 * 18.0);
@@ -312,6 +317,7 @@ impl Reader {
                 let mut para = self.rich_text(v, c);
                 para.indent = indent;
                 para.list = list;
+                para.list_style = list_style;
                 out.push(para);
             }
             jcid::TABLE_NODE => {
@@ -390,14 +396,19 @@ impl Reader {
         if runs.is_empty() {
             runs.push(formats.first().map(|o| run_format(&o.props)).unwrap_or_default());
         }
-        let style = v
-            .children(p, prop::PARAGRAPH_STYLE)
-            .first()
-            .and_then(|s| string(&s.props, prop::PARAGRAPH_STYLE_ID))
-            .map_or(ParaStyle::Normal, |s| para_style(&s));
+        let style_obj = v.children(p, prop::PARAGRAPH_STYLE);
+        let style = style_obj.first().and_then(|s| string(&s.props, prop::PARAGRAPH_STYLE_ID)).map_or(ParaStyle::Normal, |s| para_style(&s));
         let style = string(p, prop::NC_PARA_STYLE).and_then(|s| ParaStyle::parse(&s)).unwrap_or(style);
+        // ParagraphAlignment on the paragraph, else on its style (§2.2.44).
+        let aligned = p.uint(prop::PARAGRAPH_ALIGNMENT).or_else(|| style_obj.first().and_then(|s| s.props.uint(prop::PARAGRAPH_ALIGNMENT)));
+        let align = match (p.uint(prop::NC_PARA_ALIGN), aligned) {
+            (Some(3), _) => Align::Justify,
+            (_, Some(1)) => Align::Center,
+            (_, Some(2)) => Align::Right,
+            _ => Align::Left,
+        };
         let tag = self.note_tag(v, p);
-        Paragraph { runs, indent: 0, list: None, tag, style }
+        Paragraph { runs, indent: 0, list: None, list_style: None, tag, style, align }
     }
 
     fn note_tag(&mut self, v: &View<'_>, p: &PropertySet) -> Option<Tag> {
@@ -405,18 +416,31 @@ impl Reader {
         for state in p.sets(prop::NOTE_TAG_STATES) {
             let def = v.children(state, prop::NOTE_TAG_DEFINITION_OID).first().map(|o| &o.props);
             let shape = def.and_then(|d| d.uint(prop::NOTE_TAG_SHAPE)).or_else(|| state.uint(prop::NOTE_TAG_SHAPE)).unwrap_or(0);
-            let label = def.and_then(|d| string(d, prop::NOTE_TAG_LABEL)).unwrap_or_default().to_lowercase();
+            let raw_label = def.and_then(|d| string(d, prop::NOTE_TAG_LABEL)).unwrap_or_default();
+            let label = raw_label.to_lowercase();
             let task = state.uint(prop::ACTION_ITEM_TYPE).is_some_and(|t| (100..=105).contains(&t));
             let done = state.uint(prop::ACTION_ITEM_STATUS).is_some_and(|s| s & 1 == 1);
-            let tag = match shape {
+            let own = def.and_then(|d| string(d, prop::NC_TAG)).and_then(|n| Tag::parse(&n));
+            let highlight = def.and_then(|d| d.u32(prop::NOTE_TAG_HIGHLIGHT_COLOR)).and_then(from_colorref);
+            let tag = match (own, shape) {
+                (Some(Tag::ToDo { .. }), _) => Some(Tag::ToDo { checked: done }),
+                (Some(t), _) => Some(t),
                 _ if task => Some(Tag::ToDo { checked: done }),
-                1..=12 | 28 | 30 | 32 | 48 | 50 | 52 | 69 | 71 | 73 | 89..=99 => Some(Tag::ToDo { checked: done }),
-                13 | 34 | 40 | 54 | 61 | 75 => Some(Tag::Important),
-                15 | 111 => Some(Tag::Question),
+                // NoteTagShape (§2.3.86): every check box is a To Do here.
+                (_, 1..=12 | 28 | 30 | 32 | 48 | 50 | 52 | 69 | 71 | 73 | 89..=99) => Some(Tag::ToDo { checked: done }),
+                (_, 13 | 34 | 40 | 54 | 61 | 75) => Some(Tag::Important),
+                (_, 15 | 111) => Some(Tag::Question),
+                (_, 17 | 115) => Some(Tag::Critical),
+                (_, 18 | 114 | 118) => Some(Tag::Contact),
+                (_, 21) => Some(Tag::Idea),
+                (_, 23) => Some(Tag::Address),
+                (_, 109 | 110) => Some(Tag::Phone),
                 _ if label.contains("to do") => Some(Tag::ToDo { checked: done }),
-                _ if label.contains("important") => Some(Tag::Important),
-                _ if label.contains("question") => Some(Tag::Question),
-                _ => None,
+                _ => Tag::parse(&raw_label).or_else(|| {
+                    // A highlight tag in another language: by its colour, green for Definition.
+                    let c = highlight.filter(|_| shape == 0)?;
+                    Some(if c.g > c.r && c.g > c.b { Tag::Definition } else { Tag::Highlight })
+                }),
             };
             match (found, tag) {
                 (None, Some(t)) => found = Some(t),
@@ -472,10 +496,25 @@ pub(crate) fn para_style(id: &str) -> ParaStyle {
     }
 }
 
-/// NumberListFormat ([MS-ONE] §2.3.20): numbered when it holds U+FFFD.
-fn list_kind(p: &PropertySet) -> ListKind {
-    let numbered = p.bytes(prop::NUMBER_LIST_FORMAT).is_some_and(|b| b.as_chunks::<2>().0.iter().skip(1).any(|c| *c == [0xFD, 0xFF]));
-    if numbered { ListKind::Numbered } else { ListKind::Bullet }
+/// NumberListFormat ([MS-ONE] §2.3.20): numbered when it holds U+FFFD, whose next character is
+/// the MSONFC number format ([MS-OSHARED] §2.2.1.3); otherwise a bullet, whose character gives
+/// its shape. The style is `None` for formats NoteCraft doesn't draw.
+fn list_marker(p: &PropertySet) -> (ListKind, Option<ListStyle>) {
+    let units: Vec<u16> = p.bytes(prop::NUMBER_LIST_FORMAT).map(|b| b.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect()).unwrap_or_default();
+    let chars = units.get(1..).unwrap_or_default();
+    if let Some(i) = chars.iter().position(|u| *u == 0xFFFD) {
+        let style = match chars.get(i + 1) {
+            Some(0) => Some(ListStyle::Decimal),
+            Some(1) => Some(ListStyle::UpperRoman),
+            Some(2) => Some(ListStyle::LowerRoman),
+            Some(3) => Some(ListStyle::UpperAlpha),
+            Some(4) => Some(ListStyle::LowerAlpha),
+            _ => None,
+        };
+        return (ListKind::Numbered, style);
+    }
+    let style = char::decode_utf16(chars.iter().copied()).filter_map(std::result::Result::ok).find(|c| !c.is_whitespace()).and_then(ListStyle::from_bullet_char);
+    (ListKind::Bullet, style)
 }
 
 /// NoteCraft's printout tag on a picture or embedded file: the group and page index.
@@ -527,6 +566,24 @@ mod tests {
         assert_eq!(hyperlink_target("HYPERLINK \"https://example.com/a?b=1\""), Some("https://example.com/a?b=1".into()));
         assert_eq!(hyperlink_target("HYPERLINK nope"), None);
         assert_eq!(hyperlink_target("PAGE"), None);
+    }
+
+    #[test]
+    fn number_list_formats_of_other_writers() {
+        let fmt = |units: &[u16]| {
+            let mut p = PropertySet::default();
+            p.push(prop::NUMBER_LIST_FORMAT, notecraft_onestore::PropertyValue::Bytes(units.iter().flat_map(|u| u.to_le_bytes()).collect()));
+            list_marker(&p)
+        };
+        // A symbol font's private-use bullet, an "(a)" number, a format NoteCraft doesn't draw.
+        assert_eq!(fmt(&[1, 0xF0B7]), (ListKind::Bullet, Some(ListStyle::Disc)));
+        assert_eq!(fmt(&[4, u16::from(b'('), 0xFFFD, 4, u16::from(b')')]), (ListKind::Numbered, Some(ListStyle::LowerAlpha)));
+        assert_eq!(fmt(&[3, 0xFFFD, 0x17, u16::from(b'.')]), (ListKind::Numbered, None));
+        assert_eq!(fmt(&[1, u16::from(b'*')]), (ListKind::Bullet, None));
+        // Truncated or empty data is a plain bullet, never a panic.
+        assert_eq!(fmt(&[]), (ListKind::Bullet, None));
+        assert_eq!(fmt(&[9, 0xFFFD]), (ListKind::Numbered, None));
+        assert_eq!(fmt(&[2, 0xD800, 0xDC00]), (ListKind::Bullet, None));
     }
 
     #[test]

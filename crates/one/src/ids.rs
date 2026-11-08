@@ -131,12 +131,18 @@ pub mod prop {
     pub const PARAGRAPH_STYLE_ID: u32 = 0x1C00_345A;
     pub const ACTION_ITEM_TYPE: u32 = 0x1000_3463;
     pub const NOTE_TAG_SHAPE: u32 = 0x1000_3464;
+    /// [MS-ONE] NoteTagHighlightColor (on the tag definition): a COLORREF painted behind the
+    /// tagged text.
+    pub const NOTE_TAG_HIGHLIGHT_COLOR: u32 = 0x1400_3465;
     pub const NOTE_TAG_PROPERTY_STATUS: u32 = 0x1400_3467;
     pub const NOTE_TAG_LABEL: u32 = 0x1C00_3468;
     pub const NOTE_TAG_CREATED: u32 = 0x1400_346E;
     pub const NOTE_TAG_COMPLETED: u32 = 0x1400_346F;
     pub const ACTION_ITEM_STATUS: u32 = 0x1000_3470;
     pub const ACTION_ITEM_SCHEMA_VERSION: u32 = 0x0C00_3473;
+    /// [MS-ONE] §2.3.94 ParagraphAlignment (on jcidRichTextOENode and jcidParagraphStyleObject):
+    /// 0 left, 1 center, 2 right. (BodyTextAlignment, §2.3.17, is always 0 and ignored.)
+    pub const PARAGRAPH_ALIGNMENT: u32 = 0x0C00_3477;
     pub const NOTE_TAG_DEFINITION_OID: u32 = 0x2000_3488;
     /// MS-ONE's table prints 0x04003489; MS-ONE §2.2.88 and the sample files make it an array
     /// of property values (type 0x10).
@@ -193,6 +199,11 @@ pub mod prop {
     pub const NC_FONT_SIZE: u32 = 0x17FC_0009;
     /// Paragraph: the NoteCraft paragraph style name (UTF-16).
     pub const NC_PARA_STYLE: u32 = 0x1FFC_000A;
+    /// Paragraph: 3 for justified (ParagraphAlignment has no such value; it says left then).
+    pub const NC_PARA_ALIGN: u32 = 0x0FFC_000B;
+    /// Note tag definition: the NoteCraft tag name ([`notecraft_doc::Tag::name`], UTF-16), so a
+    /// tag reads back exactly even where its shape and label are shared or translated.
+    pub const NC_TAG: u32 = 0x1FFC_000C;
 
     // .onetoc2 (MS-ONE names these without numbering them; NoteCraft-chosen, see README).
     /// TOC: the entries (sections and section groups) in order.

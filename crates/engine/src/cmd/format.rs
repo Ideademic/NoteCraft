@@ -12,14 +12,14 @@
 //!   touches.
 
 use notecraft_doc::page::MAX_INDENT;
-use notecraft_doc::{Color, ListKind, Outline, ParaStyle, Paragraph, Run, Tag};
+use notecraft_doc::{Align, Color, ListKind, ListStyle, Outline, ParaStyle, Paragraph, Run, Tag};
 use serde_json::{Value, json};
 
 use super::has_page;
 use super::text::{clamp_size, clean_font, range, range_or_all, with_outline};
 use crate::ids::{
-    FORMAT_BOLD, FORMAT_BULLETS, FORMAT_CLEAR, FORMAT_COLOR, FORMAT_FONT, FORMAT_HIGHLIGHT, FORMAT_INDENT, FORMAT_ITALIC, FORMAT_NUMBERING,
-    FORMAT_OUTDENT, FORMAT_SIZE, FORMAT_STRIKE, FORMAT_STYLE, FORMAT_TAG_TODO, FORMAT_TOGGLE_TODO, FORMAT_UNDERLINE,
+    FORMAT_ALIGN, FORMAT_BOLD, FORMAT_BULLETS, FORMAT_CLEAR, FORMAT_COLOR, FORMAT_FONT, FORMAT_HIGHLIGHT, FORMAT_INDENT, FORMAT_ITALIC,
+    FORMAT_NUMBERING, FORMAT_OUTDENT, FORMAT_SIZE, FORMAT_STRIKE, FORMAT_STYLE, FORMAT_TAG, FORMAT_TAG_TODO, FORMAT_TOGGLE_TODO, FORMAT_UNDERLINE,
 };
 use crate::text::{self, TextPos};
 use crate::{CmdError, CmdOutput, CmdResult, CommandSpec, Session, p};
@@ -47,10 +47,22 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new(FORMAT_STYLE, "Styles", style)
             .when(has_page)
             .params(sel!(r##", "style": "normal"|"heading1".."heading6"|"title"|"quote"|"code""##)),
-        CommandSpec::new(FORMAT_BULLETS, "Bullets", bullets).key("Mod+.").when(has_page).params(sel!(r##", "value"?: bool"##)),
-        CommandSpec::new(FORMAT_NUMBERING, "Numbering", numbering).key("Mod+/").when(has_page).params(sel!(r##", "value"?: bool"##)),
+        CommandSpec::new(FORMAT_BULLETS, "Bullets", bullets)
+            .key("Mod+.")
+            .when(has_page)
+            .params(sel!(r##", "style"?: "disc"|"circle"|"square"|"dash"|"arrow" (default: by level), "value"?: bool"##)),
+        CommandSpec::new(FORMAT_NUMBERING, "Numbering", numbering)
+            .key("Mod+/")
+            .when(has_page)
+            .params(sel!(r##", "style"?: "decimal"|"lowerAlpha"|"upperAlpha"|"lowerRoman"|"upperRoman" (or "1.", "a.", "A.", "i.", "I."; default: by level), "value"?: bool"##)),
         CommandSpec::new(FORMAT_INDENT, "Increase Indent", indent).key("Alt+Shift+Right").when(has_page).params(sel!("")),
         CommandSpec::new(FORMAT_OUTDENT, "Decrease Indent", outdent).key("Alt+Shift+Left").when(has_page).params(sel!("")),
+        CommandSpec::new(FORMAT_ALIGN, "Paragraph Alignment", align)
+            .when(has_page)
+            .params(sel!(r##", "align": "left"|"center"|"right"|"justify""##)),
+        CommandSpec::new(FORMAT_TAG, "Tag", tag).when(has_page).params(sel!(
+            r##", "tag": "toDo"|"important"|"question"|"rememberForLater"|"definition"|"highlight"|"contact"|"address"|"phone"|"idea"|"critical" | null (remove every tag), "value"?: bool (default: toggle)"##
+        )),
         CommandSpec::new(FORMAT_TAG_TODO, "To Do Tag", tag_todo).key("Mod+1").when(has_page).params(sel!(r##", "value"?: bool"##)),
         CommandSpec::new(FORMAT_TOGGLE_TODO, "Check To Do", toggle_todo).when(has_page).params(sel!(r##", "checked"?: bool"##)),
     ]
@@ -197,12 +209,97 @@ fn style(s: &mut Session, params: &Value) -> CmdResult {
     })
 }
 
+/// Bullets or numbering, optionally in a `style`: on unless every paragraph already has it (in
+/// that style, when one is given), or as `value` says. Off removes the list and its style.
 fn list(s: &mut Session, params: &Value, kind: ListKind) -> CmdResult {
     let value = p::bool(params, "value");
+    let style = match params.get("style") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(name)) => {
+            let st = ListStyle::parse(name).filter(|st| st.kind() == kind).ok_or_else(|| {
+                let what = if kind == ListKind::Bullet { "bullet" } else { "numbering" };
+                CmdError::Params(format!("unknown {what} style `{}`", name.chars().take(20).collect::<String>()))
+            })?;
+            Some(st)
+        }
+        Some(_) => return Err(CmdError::Params("`style` must be a string".into())),
+    };
     apply_paras(s, params, &|ps| {
-        let on = value.unwrap_or_else(|| !ps.iter().all(|pg| pg.list == Some(kind)));
+        let has = |pg: &Paragraph| pg.list == Some(kind) && style.is_none_or(|st| pg.marker_style() == Some(st));
+        let on = value.unwrap_or_else(|| !ps.iter().all(has));
         for pg in ps {
-            pg.list = on.then_some(kind);
+            if on {
+                pg.list = Some(kind);
+                if style.is_some() {
+                    pg.list_style = style;
+                }
+            } else if pg.list == Some(kind) || value == Some(false) {
+                pg.list = None;
+                pg.list_style = None;
+            }
+        }
+    })
+}
+
+fn align(s: &mut Session, params: &Value) -> CmdResult {
+    let name = p::req_str(params, "align")?;
+    let a = Align::parse(name).ok_or_else(|| CmdError::Params(format!("unknown alignment `{}`", name.chars().take(20).collect::<String>())))?;
+    apply_paras(s, params, &|ps| {
+        for pg in ps {
+            pg.align = a;
+        }
+    })
+}
+
+/// The tags Mod+1 … Mod+9 put on (as in OneNote's default tag list); Mod+0 removes them all.
+pub const TAG_KEYS: [(&str, Tag); 9] = [
+    ("Mod+1", Tag::ToDo { checked: false }),
+    ("Mod+2", Tag::Important),
+    ("Mod+3", Tag::Question),
+    ("Mod+4", Tag::RememberForLater),
+    ("Mod+5", Tag::Definition),
+    ("Mod+6", Tag::Highlight),
+    ("Mod+7", Tag::Contact),
+    ("Mod+8", Tag::Address),
+    ("Mod+9", Tag::Phone),
+];
+/// Removes every tag from the paragraphs (`format.tag` with `"tag": null`).
+pub const TAG_REMOVE_KEY: &str = "Mod+0";
+
+/// The shortcut that puts `tag` on, if it has one.
+pub fn tag_key(tag: Tag) -> Option<&'static str> {
+    TAG_KEYS.iter().find(|(_, t)| t.name() == tag.name()).map(|(k, _)| *k)
+}
+
+/// A tag: on for every paragraph the range touches unless all already have it (or `value`
+/// says). A paragraph holds one tag, so putting one on replaces another; a To Do keeps its tick.
+/// `"tag": null` removes every tag.
+fn tag(s: &mut Session, params: &Value) -> CmdResult {
+    let wanted = match params.get("tag") {
+        Some(Value::Null) => None,
+        Some(Value::String(name)) => {
+            Some(Tag::parse(name).ok_or_else(|| CmdError::Params(format!("unknown tag `{}`", name.chars().take(24).collect::<String>())))?)
+        }
+        _ => return Err(CmdError::Params("`tag` (a tag name or null) is required".into())),
+    };
+    let value = p::bool(params, "value");
+    apply_paras(s, params, &|ps| {
+        let Some(t) = wanted else {
+            for pg in ps.iter_mut() {
+                pg.tag = None;
+            }
+            return;
+        };
+        let has = |pg: &Paragraph| pg.tag.is_some_and(|x| x.name() == t.name());
+        let on = value.unwrap_or_else(|| !ps.iter().all(has));
+        for pg in ps {
+            if on {
+                if !has(pg) {
+                    pg.tag = Some(t);
+                }
+            } else if has(pg) {
+                pg.tag = None;
+            }
         }
     })
 }

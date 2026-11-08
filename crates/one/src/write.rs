@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use notecraft_doc::page::{MAX_INDENT, TITLE_ORIGIN};
-use notecraft_doc::{ElementKind, Guid, ImageElement, ListKind, Outline, Page, PageElement, ParaStyle, Paragraph, Point, Run, Section, Tag};
+use notecraft_doc::{Align, ElementKind, Guid, ImageElement, ListStyle, Outline, Page, PageElement, ParaStyle, Paragraph, Point, Run, Section, Tag};
 use notecraft_onestore::{ExtendedGuid, FileKind, ObjectSpace, PropertySet, PropertyValue, Store};
 
 use crate::build::{SpaceBuilder, element_object_id};
@@ -93,7 +93,8 @@ struct PageWriter {
     created: u32,
     styles: HashMap<&'static str, ExtendedGuid>,
     formats: HashMap<String, ExtendedGuid>,
-    tags: HashMap<u16, ExtendedGuid>,
+    /// Tag definitions by NoteCraft tag name.
+    tags: HashMap<&'static str, ExtendedGuid>,
 }
 
 /// Writes one page as its object space; also returns the page metadata (copied into the
@@ -461,25 +462,54 @@ impl PageWriter {
             let state = self.tag_state(tag);
             rt.push(prop::NOTE_TAG_STATES, PropertyValue::Sets(vec![state]));
         }
+        // ParagraphAlignment (§2.3.94) knows left, center and right; justified text says left
+        // there and keeps the rest in a private property.
+        match para.align {
+            Align::Left => {}
+            Align::Center => {
+                rt.push(prop::PARAGRAPH_ALIGNMENT, PropertyValue::U8(1));
+            }
+            Align::Right => {
+                rt.push(prop::PARAGRAPH_ALIGNMENT, PropertyValue::U8(2));
+            }
+            Align::Justify => {
+                rt.push(prop::PARAGRAPH_ALIGNMENT, PropertyValue::U8(0)).push(prop::NC_PARA_ALIGN, PropertyValue::U8(3));
+            }
+        }
         let rt = self.b.add(jcid::RICH_TEXT_OE_NODE, rt);
-        let list = para.list.map(|k| self.list_node(k));
+        let list = para.marker_style().map(|st| self.list_node(st));
         let oe = self.oe_props(rt, children, list);
         self.b.add(jcid::OUTLINE_ELEMENT_NODE, oe)
     }
 
-    fn list_node(&mut self, kind: ListKind) -> ExtendedGuid {
+    /// A jcidNumberListNode for a marker style. NumberListFormat (§2.3.20) is the character
+    /// count, then the characters: a bullet character, or U+FFFD and an MSONFC number format
+    /// ([MS-OSHARED] §2.2.1.3) followed by a full stop.
+    fn list_node(&mut self, style: ListStyle) -> ExtendedGuid {
         let mut p = PropertySet::default();
         p.push(prop::LAST_MODIFIED_TIME, PropertyValue::U32(self.modified));
-        match kind {
-            ListKind::Bullet => {
-                // NumberListFormat: the length, then "•" (§2.3.20).
-                p.push(prop::NUMBER_LIST_FORMAT, PropertyValue::Bytes(vec![1, 0, 0x22, 0x20]))
-                    .push(prop::LIST_FONT, wz_bytes("Calibri"))
+        match style.bullet_char() {
+            Some(c) => {
+                let mut units = [0u16; 2];
+                let enc = c.encode_utf16(&mut units);
+                let mut f: Vec<u16> = vec![enc.len() as u16];
+                f.extend_from_slice(enc);
+                // Calibri has • and –; the other shapes come from a symbol face.
+                let font = if matches!(style, ListStyle::Disc | ListStyle::Dash) { "Calibri" } else { "Segoe UI Symbol" };
+                p.push(prop::NUMBER_LIST_FORMAT, PropertyValue::Bytes(f.iter().flat_map(|u| u.to_le_bytes()).collect()))
+                    .push(prop::LIST_FONT, wz_bytes(font))
                     .push(prop::LIST_MSAA_INDEX, PropertyValue::U16(1));
             }
-            ListKind::Numbered => {
-                // "<U+FFFD><msonfcArabic>." : 1., 2., 3. …
-                p.push(prop::NUMBER_LIST_FORMAT, PropertyValue::Bytes(vec![3, 0, 0xFD, 0xFF, 0, 0, 0x2E, 0]))
+            None => {
+                let nfc: u16 = match style {
+                    ListStyle::UpperRoman => 1,
+                    ListStyle::LowerRoman => 2,
+                    ListStyle::UpperAlpha => 3,
+                    ListStyle::LowerAlpha => 4,
+                    _ => 0,
+                };
+                let f = [3u16, 0xFFFD, nfc, u16::from(b'.')];
+                p.push(prop::NUMBER_LIST_FORMAT, PropertyValue::Bytes(f.iter().flat_map(|u| u.to_le_bytes()).collect()))
                     .push(prop::FONT, wz_bytes("Calibri"))
                     .push(prop::LANGUAGE_ID, PropertyValue::U32(LCID_EN_US));
             }
@@ -487,25 +517,39 @@ impl PageWriter {
         self.b.add(jcid::NUMBER_LIST_NODE, p)
     }
 
-    /// A NoteTagState (§2.2.42) and its shared definition.
+    /// A NoteTagState (§2.2.42) and its shared definition. Shapes are MS-ONE's NoteTagShape
+    /// values (§2.3.86): the highlight tags have no icon (0) and a NoteTagHighlightColor instead.
     fn tag_state(&mut self, tag: Tag) -> PropertySet {
-        let (shape, label, item, checkable, checked) = match tag {
-            Tag::ToDo { checked } => (3u16, "To Do", 0u16, true, checked),
-            Tag::Important => (13, "Important", 1, false, false),
-            Tag::Question => (15, "Question", 2, false, false),
+        let (shape, checkable, checked) = match tag {
+            Tag::ToDo { checked } => (3u16, true, checked),
+            Tag::Important => (13, false, false),
+            Tag::Question => (15, false, false),
+            Tag::Critical => (17, false, false),
+            Tag::Contact => (18, false, false),
+            Tag::Idea => (21, false, false),
+            Tag::Address => (23, false, false),
+            Tag::Phone => (109, false, false),
+            Tag::RememberForLater | Tag::Definition | Tag::Highlight => (0, false, false),
         };
-        let def = match self.tags.get(&shape) {
+        let item = Tag::ALL.iter().position(|t| t.name() == tag.name()).unwrap_or(0) as u16;
+        let def = match self.tags.get(tag.name()) {
             Some(d) => *d,
             None => {
                 let mut d = PropertySet::default();
-                d.push(prop::NOTE_TAG_LABEL, wz_bytes(label))
-                    // hasLabel | hasIcon
-                    .push(prop::NOTE_TAG_PROPERTY_STATUS, PropertyValue::U32(0x9))
-                    .push(prop::NOTE_TAG_SHAPE, PropertyValue::U16(shape))
-                    .push(prop::ACTION_ITEM_SCHEMA_VERSION, PropertyValue::U8(0))
-                    .push(prop::ACTION_ITEM_TYPE, PropertyValue::U16(item));
+                let highlight = tag.highlight();
+                // NoteTagPropertyStatus: hasLabel, plus hasIcon or hasHighlightColor.
+                let status = if highlight.is_some() { 0x1 | 0x4 } else { 0x1 | 0x8 };
+                d.push(prop::NOTE_TAG_LABEL, wz_bytes(tag.label()))
+                    .push(prop::NOTE_TAG_PROPERTY_STATUS, PropertyValue::U32(status))
+                    .push(prop::NOTE_TAG_SHAPE, PropertyValue::U16(shape));
+                if let Some(c) = highlight {
+                    d.push(prop::NOTE_TAG_HIGHLIGHT_COLOR, PropertyValue::U32(to_colorref(c)));
+                }
+                d.push(prop::ACTION_ITEM_SCHEMA_VERSION, PropertyValue::U8(0))
+                    .push(prop::ACTION_ITEM_TYPE, PropertyValue::U16(item))
+                    .push(prop::NC_TAG, wz_bytes(tag.name()));
                 let id = self.b.add(jcid::NOTE_TAG_DEFINITION, d);
-                self.tags.insert(shape, id);
+                self.tags.insert(tag.name(), id);
                 id
             }
         };
