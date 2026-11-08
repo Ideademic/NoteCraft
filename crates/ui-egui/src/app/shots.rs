@@ -36,6 +36,27 @@ pub const RIBBON_SHOTS: [&str; 8] = [
     "ribbon-tabs-only",
 ];
 
+/// Options' language picker (open; the `ui_shot` example clicks it) and the Check for Updates
+/// window answered "up to date" without the network.
+pub const PLATFORM_SHOTS: [&str; 2] = ["options-language-menu", "update-up-to-date"];
+
+/// The states of [`PLATFORM_SHOTS`]; `false` for other names.
+fn prepare_platform(app: &mut NoteApp, shot: &str) -> bool {
+    match shot {
+        "options-language-menu" => crate::backstage::open(app, BackstagePage::Options),
+        "update-up-to-date" => {
+            crate::backstage::open(app, BackstagePage::About);
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                app.updates = crate::updates::Updates::default().with_source(std::sync::Arc::new(|| Ok(None)));
+            }
+            crate::updates::check(app);
+        }
+        _ => return false,
+    }
+    true
+}
+
 /// The ribbon states of [`RIBBON_SHOTS`]; `false` for other names.
 fn prepare_ribbon(app: &mut NoteApp, shot: &str) -> bool {
     use crate::ribbon::display::{RibbonDisplay, RibbonLayout};
@@ -63,7 +84,7 @@ fn prepare_ribbon(app: &mut NoteApp, shot: &str) -> bool {
 
 /// Puts `app` in the state named `shot` (unknown names leave it as it is).
 pub fn prepare(app: &mut NoteApp, shot: &str) {
-    if prepare_ribbon(app, shot) {
+    if prepare_ribbon(app, shot) || prepare_platform(app, shot) {
         return;
     }
     match shot {

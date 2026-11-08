@@ -27,6 +27,11 @@ image = { workspace = true }
 # Files picked in the browser travel to the engine as base64 (`bytesBase64` params).
 base64 = { workspace = true }
 
+# Release checks, the update prompt and the self-update (desktop only; the web build has nothing
+# to update).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+craft-update = { workspace = true }
+
 [dev-dependencies]
 # Headless window tests and the `ui_shot` example (renders PNGs offscreen with wgpu).
 egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }

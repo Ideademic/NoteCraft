@@ -53,11 +53,15 @@ eframe = { version = "0.37", default-features = false }
 egui_kittest = "0.37"
 # A clock that works on native and in the browser (`performance.now()`, `Date.now()`).
 web-time = "1.1"
-rfd = "0.17"
 arboard = { version = "3.7", default-features = false, features = ["wayland-data-control"] }
 craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }
 craft-i18n = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }
 craft-window = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0", features = ["egui"] }
+# Release checks, the update prompt and the self-update, at WordCraft's rev (desktop only).
+craft-update = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f9049f9270955caffb5bee5997aebf7", version = "=0.1.0", features = ["egui"] }
+# Native file dialogs that never block the event loop (rfd's modal loop re-enters winit on macOS
+# and aborts the app). Desktop only.
+craft-dialogs = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f9049f9270955caffb5bee5997aebf7", version = "=0.1.0" }
 craft-web-host = { git = "https://github.com/storytold/craft-libs", rev = "2e2312ddaf21bc3d85cd3395d0955c7d239306f6", version = "0.1.0" }
 
 # web

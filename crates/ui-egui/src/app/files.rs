@@ -7,7 +7,7 @@ use notecraft_engine::ids;
 use serde_json::{Value, json};
 
 use crate::NoteApp;
-use crate::services::OpenPurpose;
+use crate::services::{FolderFor, OpenPurpose, PathRequest};
 use crate::tl;
 
 /// What File › Export saves.
@@ -59,7 +59,7 @@ pub fn export_name(app: &NoteApp, scope: ExportScope, format: ExportFormat) -> S
 /// the browser as a download.
 pub fn export(app: &mut NoteApp, scope: ExportScope, format: ExportFormat) {
     let name = export_name(app, scope, format);
-    let (id, mut params) = match (scope, format) {
+    let (id, params) = match (scope, format) {
         (_, ExportFormat::Onepkg) => (ids::FILE_EXPORT_ONEPKG, json!({ "id": app.session.current.notebook })),
         (ExportScope::Page, ExportFormat::Html) => (ids::FILE_EXPORT_HTML, json!({ "scope": "page" })),
         (_, ExportFormat::Html) => (ids::FILE_EXPORT_HTML, json!({ "scope": "section" })),
@@ -68,17 +68,17 @@ pub fn export(app: &mut NoteApp, scope: ExportScope, format: ExportFormat) {
         (ExportScope::Page, ExportFormat::Text) => ("file.exportText", json!({ "scope": "page" })),
         (_, ExportFormat::Text) => ("file.exportText", json!({ "scope": "section" })),
     };
-    if let Some(pick) = app.services.pick_save.as_ref() {
-        let Some(path) = pick(&name) else { return };
-        if let Some(m) = params.as_object_mut() {
-            m.insert("path".into(), json!(path.to_string_lossy()));
-        }
-        if app.run(id, params).is_ok() {
-            app.set_status(crate::i18n::fmt_plain(tl!("Exported to {path}"), &[("path", &path.to_string_lossy())]), false);
-        }
+    save_as(app, name, id, params);
+}
+
+/// Saves what command `id` writes: on the desktop the save dialog asks where (the command then
+/// runs with `params` plus `path`, see [`answer_path`]); on the web the command hands back the
+/// bytes and they download (or go to the hosting page).
+pub fn save_as(app: &mut NoteApp, name: String, id: &str, params: Value) {
+    if let Some(ask) = app.services.ask_path.as_ref() {
+        ask(PathRequest::Save { name, id: id.to_owned(), params });
         return;
     }
-    // No save dialog (web): the command hands back the bytes.
     let Ok(out) = app.run(id, params) else { return };
     let name = out.value.get("fileName").and_then(Value::as_str).map_or(name, str::to_owned);
     match bytes_of(&out.value) {
@@ -125,26 +125,11 @@ pub fn open_path(app: &mut NoteApp, path: &str) {
     }
 }
 
-/// Asks for a file (or folder) to open or import, then opens it.
+/// Asks for a file (or folder) to open or import; it opens when the answer comes
+/// ([`answer_path`], or the inbox on the web).
 pub fn pick_and_open(app: &mut NoteApp, purpose: OpenPurpose) {
-    if purpose == OpenPurpose::NotebookFolder {
-        if let Some(p) = app.services.pick_folder.as_ref().and_then(|f| f()) {
-            open_path(app, &p.to_string_lossy());
-        }
-        return;
-    }
-    if let Some(pick) = app.services.pick_open.as_ref() {
-        let Some(p) = pick(purpose) else { return };
-        let path = p.to_string_lossy().into_owned();
-        if purpose == OpenPurpose::Import {
-            let lower = path.to_ascii_lowercase();
-            let id = if lower.ends_with(".onepkg") { ids::FILE_IMPORT_ONEPKG } else { ids::FILE_IMPORT_ONE };
-            if app.run(id, json!({ "path": path })).is_ok() {
-                app.ui.backstage = false;
-            }
-        } else {
-            open_path(app, &path);
-        }
+    if let Some(ask) = app.services.ask_path.as_ref() {
+        ask(if purpose == OpenPurpose::NotebookFolder { PathRequest::Folder(FolderFor::OpenNotebook) } else { PathRequest::Open(purpose) });
         return;
     }
     match app.services.open_async.as_ref() {
@@ -153,18 +138,54 @@ pub fn pick_and_open(app: &mut NoteApp, purpose: OpenPurpose) {
     }
 }
 
-/// Insert › Pictures / File Printout / File Attachment: asks for a file and inserts it.
+/// Insert › Pictures / File Printout / File Attachment: asks for a file; it is inserted when the
+/// answer comes.
 pub fn pick_and_insert(app: &mut NoteApp, purpose: OpenPurpose) {
-    if let Some(pick) = app.services.pick_open.as_ref() {
-        let Some(p) = pick(purpose) else { return };
-        let Some(id) = insert_command(purpose) else { return };
-        let params = crate::widgets::selection_params(app, json!({ "path": p.to_string_lossy() }));
-        app.act(id, params);
+    if let Some(ask) = app.services.ask_path.as_ref() {
+        ask(PathRequest::Open(purpose));
         return;
     }
     match app.services.open_async.as_ref() {
         Some(open) => open(purpose),
         None => app.set_status(tl!("Inserting files isn't available here."), true),
+    }
+}
+
+/// Asks for a folder (desktop); it is used when the answer comes.
+pub fn choose_folder(app: &mut NoteApp, purpose: FolderFor) {
+    if let Some(ask) = app.services.ask_path.as_ref() {
+        ask(PathRequest::Folder(purpose));
+    }
+}
+
+/// The host's answer to a [`PathRequest`]: the chosen path, acted on as the request says.
+pub fn answer_path(app: &mut NoteApp, request: PathRequest, path: &std::path::Path) {
+    let text = path.to_string_lossy().into_owned();
+    match request {
+        PathRequest::Open(OpenPurpose::Import) => {
+            let id = if text.to_ascii_lowercase().ends_with(".onepkg") { ids::FILE_IMPORT_ONEPKG } else { ids::FILE_IMPORT_ONE };
+            if app.run(id, json!({ "path": text })).is_ok() {
+                app.ui.backstage = false;
+            }
+        }
+        PathRequest::Open(OpenPurpose::Notebook | OpenPurpose::NotebookFolder) | PathRequest::Folder(FolderFor::OpenNotebook) => {
+            open_path(app, &text);
+        }
+        PathRequest::Open(purpose) => {
+            let Some(id) = insert_command(purpose) else { return };
+            let params = crate::widgets::selection_params(app, json!({ "path": text }));
+            app.act(id, params);
+        }
+        PathRequest::Folder(FolderFor::NewNotebook) => app.ui.new_notebook_dir = Some(text),
+        PathRequest::Folder(FolderFor::DefaultLocation) => app.ui.prefs.notebooks_dir = Some(text),
+        PathRequest::Save { id, mut params, .. } => {
+            if let Some(m) = params.as_object_mut() {
+                m.insert("path".into(), json!(text));
+            }
+            if app.run(&id, params).is_ok() {
+                app.set_status(crate::i18n::fmt_plain(tl!("Exported to {path}"), &[("path", &text)]), false);
+            }
+        }
     }
 }
 
@@ -239,6 +260,56 @@ mod tests {
         assert!(png_from_rgba(2, 2, &[0; 4]).is_none(), "wrong length");
         assert!(png_from_rgba(0, 0, &[]).is_none());
         assert!(png_from_rgba(usize::MAX, 2, &[]).is_none());
+    }
+
+    /// An app whose dialogs record what they were asked (the host's side of [`PathRequest`]).
+    fn with_dialogs() -> (NoteApp, std::rc::Rc<std::cell::RefCell<Vec<PathRequest>>>) {
+        let asked = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let log = asked.clone();
+        let services = crate::Services { ask_path: Some(Box::new(move |r| log.borrow_mut().push(r))), ..crate::Services::default() };
+        (NoteApp::new(notecraft_engine::Session::new_default(), services), asked)
+    }
+
+    #[test]
+    fn dialogs_ask_and_the_answer_comes_later() {
+        let (mut app, asked) = with_dialogs();
+        assert!(app.services.has_dialogs());
+        pick_and_open(&mut app, OpenPurpose::NotebookFolder);
+        pick_and_insert(&mut app, OpenPurpose::Picture);
+        choose_folder(&mut app, FolderFor::DefaultLocation);
+        export(&mut app, ExportScope::Page, ExportFormat::Markdown);
+        let asked = std::mem::take(&mut *asked.borrow_mut());
+        assert_eq!(asked.len(), 4, "{asked:?}");
+        assert_eq!(asked[0], PathRequest::Folder(FolderFor::OpenNotebook));
+        assert_eq!(asked[1], PathRequest::Open(OpenPurpose::Picture));
+        assert_eq!(asked[1].filter().map(|(_, e)| e.contains(&"png".to_owned())), Some(true));
+        assert!(matches!(&asked[3], PathRequest::Save { name, id, .. } if name == "Welcome to NoteCraft.md" && id == ids::FILE_EXPORT_MARKDOWN));
+        assert_eq!(asked[3].filter().map(|(_, e)| e), Some(vec!["md".to_owned()]));
+        // Nothing happened yet: the answers do it.
+        assert_eq!(app.ui.prefs.notebooks_dir, None);
+        let dir = std::env::temp_dir().join(format!("nc-dialogs-{}", std::process::id()));
+        answer_path(&mut app, asked[2].clone(), &dir);
+        assert_eq!(app.ui.prefs.notebooks_dir.as_deref(), Some(dir.to_string_lossy().as_ref()));
+        answer_path(&mut app, PathRequest::Folder(FolderFor::NewNotebook), &dir);
+        assert_eq!(app.ui.new_notebook_dir.as_deref(), Some(dir.to_string_lossy().as_ref()));
+        let _ = std::fs::create_dir_all(&dir);
+        let out = dir.join("page.md");
+        answer_path(&mut app, asked[3].clone(), &out);
+        assert!(std::fs::read_to_string(&out).is_ok_and(|t| t.contains("Welcome")), "the export ran with the chosen path");
+        assert!(app.ui.status.as_deref().is_some_and(|s| s.starts_with("Exported to")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn without_dialogs_or_a_picker_nothing_is_asked() {
+        let mut app = NoteApp::new(notecraft_engine::Session::new_default(), crate::Services::default());
+        assert!(!app.services.has_dialogs());
+        pick_and_open(&mut app, OpenPurpose::Notebook);
+        assert!(app.ui.status_error);
+        choose_folder(&mut app, FolderFor::NewNotebook);
+        assert_eq!(app.ui.new_notebook_dir, None);
+        assert_eq!(PathRequest::Save { name: "noext".into(), id: String::new(), params: json!({}) }.filter(), None);
+        assert_eq!(PathRequest::Open(OpenPurpose::Attachment).filter(), None);
     }
 
     #[test]
