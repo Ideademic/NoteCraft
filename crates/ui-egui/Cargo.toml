@@ -12,6 +12,8 @@ workspace = true
 notecraft-geom = { workspace = true }
 notecraft-doc = { workspace = true }
 notecraft-engine = { workspace = true }
+# What kept content (equations, recordings…) is, for its placeholder on the page.
+notecraft-one = { workspace = true }
 # The Print page's preview (sheet pictures) and paper sizes.
 notecraft-pdf = { workspace = true }
 egui = { workspace = true, features = ["default_fonts"] }

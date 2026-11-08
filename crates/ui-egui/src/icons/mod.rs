@@ -125,6 +125,11 @@ pub enum Icon {
     Unread,
     MarkRead,
     RecentEdits,
+    // Review
+    Spelling,
+    WordCount,
+    Language,
+    Link,
     // Window buttons
     Minimize,
     Maximize,
@@ -232,6 +237,10 @@ impl Icon {
         Icon::Unread,
         Icon::MarkRead,
         Icon::RecentEdits,
+        Icon::Spelling,
+        Icon::WordCount,
+        Icon::Language,
+        Icon::Link,
         Icon::Minimize,
         Icon::Maximize,
         Icon::Restore,
@@ -381,6 +390,10 @@ fn drawing(icon: Icon, style: Style) -> Drawing {
         Icon::Options => D::Settings,
         Icon::About => D::Help,
         Icon::Close => D::Close,
+        Icon::Spelling => D::Spelling,
+        Icon::WordCount => D::SlideNumber,
+        Icon::Language => D::Language,
+        Icon::Link => D::Link,
         _ => return extra_drawing(icon, style),
     };
     Drawing::Deck(d)

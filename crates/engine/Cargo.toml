@@ -22,3 +22,9 @@ thiserror = { workspace = true }
 log = { workspace = true }
 chrono = { workspace = true }
 base64 = { workspace = true }
+# Review › Spelling: the proofing commands (`proof.*`).
+craft-proof = { workspace = true }
+# Link addresses are checked as the PDF export does (`craft_pdf::safe_url`).
+craft-pdf = { workspace = true }
+# The spelling queue's time budget in the browser.
+web-time = { workspace = true }

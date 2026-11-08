@@ -102,6 +102,15 @@ pub fn show(app: &mut NoteApp, ui: &mut Ui) {
                 .frame(Frame::NONE.fill(t.panel))
                 .show(ui, |ui| panes::history::recent_edits_pane(ui, app));
         }
+        if app.ui.review.spelling.is_some() {
+            Panel::right("nc_spelling")
+                .default_size(panes::spelling::PANE_W)
+                .size_range(200.0..=420.0)
+                .resizable(true)
+                .show_separator_line(false)
+                .frame(Frame::NONE.fill(t.panel))
+                .show(ui, |ui| panes::spelling::pane(ui, app));
+        }
         let tint = app.session.current_section().map_or(t.page_list, |s| t.section_tint(s.color));
         if app.ui.bin_view.is_some() {
             Panel::right("nc_bin_pages")
@@ -153,6 +162,7 @@ pub fn show(app: &mut NoteApp, ui: &mut Ui) {
 fn finish(app: &mut NoteApp, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     panes::remember_page(&ctx, app);
+    crate::review::dialogs(&ctx, app);
     prompt(&ctx, app);
     crate::updates::show(app, &ctx);
     app.ui.keytips.paint(&ctx, &app.tokens);

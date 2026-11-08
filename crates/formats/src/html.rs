@@ -74,9 +74,10 @@ pub fn section_to_html_with(section: &Section, opts: HtmlOptions) -> String {
         let _ = write!(out, "<li class=\"sub{}\"><a href=\"#page-{}\">{}</a></li>", p.level.min(2), i + 1, esc(p.display_title()));
     }
     out.push_str("</ol></nav>\n");
+    let anchors: std::collections::HashMap<notecraft_doc::Guid, usize> = section.pages.iter().enumerate().map(|(i, p)| (p.id, i + 1)).collect();
     for (i, p) in section.pages.iter().enumerate() {
         let _ = write!(out, "<section class=\"page-section\" id=\"page-{}\">", i + 1);
-        out.push_str(&page_body(p, opts));
+        out.push_str(&page_body(&local_links(p, &anchors), opts));
         out.push_str("</section>\n");
     }
     out.push_str("</body>\n</html>\n");
@@ -395,11 +396,34 @@ fn run_html(r: &Run, out: &mut String) {
     }
 }
 
-/// Links kept in exports: web, mail and OneNote links only (no `javascript:` and the like).
+/// `page` with its `notecraft:` links to pages of the same export pointing at their places in
+/// the file (`#page-3`).
+fn local_links(page: &Page, anchors: &std::collections::HashMap<notecraft_doc::Guid, usize>) -> Page {
+    let mut p = page.clone();
+    for el in &mut p.elements {
+        let notecraft_doc::ElementKind::Outline(o) = &mut el.kind else { continue };
+        for para in &mut o.paragraphs {
+            for r in &mut para.runs {
+                let target =
+                    r.link.as_deref().and_then(notecraft_doc::link::InternalLink::parse).and_then(|l| l.page).and_then(|id| anchors.get(&id));
+                if let Some(n) = target {
+                    r.link = Some(format!("#page-{n}"));
+                }
+            }
+        }
+    }
+    p
+}
+
+/// Links kept in exports: web, mail, OneNote and NoteCraft links only (no `javascript:` and the
+/// like). A section export points NoteCraft links to its own pages at their places in the file.
 pub(crate) fn safe_href(href: &str) -> Option<&str> {
     let h = href.trim();
+    if h.strip_prefix("#page-").is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())) {
+        return Some(h);
+    }
     let lower = h.to_ascii_lowercase();
-    ["http://", "https://", "mailto:", "onenote:"].iter().any(|s| lower.starts_with(s)).then_some(h)
+    ["http://", "https://", "mailto:", "onenote:", "notecraft:"].iter().any(|s| lower.starts_with(s)).then_some(h)
 }
 
 /// Escapes text for HTML content and attribute values.
@@ -502,6 +526,30 @@ mod tests {
         assert!(html.contains("<span class=\"tag\" aria-label=\"Idea\">\u{1F4A1}</span> idea"), "{html}");
         assert!(html.contains("<mark class=\"tag\" title=\"Definition\" style=\"background-color:#92d050\">def</mark>"), "{html}");
         assert!(html.contains("<p>left</p>"));
+    }
+
+    #[test]
+    fn notecraft_links_point_inside_a_section_export() {
+        let mut s = Section::new("Work", Color::WHITE);
+        let target = Page::new("Target");
+        let elsewhere =
+            notecraft_doc::link::InternalLink::to_page(notecraft_doc::Guid::new(), notecraft_doc::Guid::new(), notecraft_doc::Guid::new(), "Away")
+                .to_url();
+        let here = notecraft_doc::link::InternalLink::to_page(notecraft_doc::Guid::new(), s.id, target.id, "Target").to_url();
+        let mut page = Page::new("From");
+        let mut o = Outline::with_text(Point::ZERO, "");
+        o.paragraphs[0].runs = vec![
+            Run { text: "in".into(), link: Some(here.clone()), ..Run::default() },
+            Run { text: "out".into(), link: Some(elsewhere.clone()), ..Run::default() },
+        ];
+        page.elements.push(PageElement::new(ElementKind::Outline(o)));
+        s.pages.push(page.clone());
+        s.pages.push(target);
+        let html = section_to_html(&s).unwrap();
+        assert!(html.contains("<a href=\"#page-2\">in</a>"), "{html}");
+        assert!(html.contains(&format!("<a href=\"{}\">out</a>", esc(&elsewhere))), "a page outside the export keeps its link");
+        assert!(page_to_html(&page).unwrap().contains(&esc(&here)), "a page export keeps NoteCraft links");
+        assert_eq!(safe_href("#page-x"), None);
     }
 
     #[test]

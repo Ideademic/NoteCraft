@@ -84,7 +84,7 @@ pub fn fit_page_width(app: &mut NoteApp) {
     }
 }
 
-fn page_color_menu(ui: &mut Ui, app: &mut NoteApp) {
+pub fn page_color_menu(ui: &mut Ui, app: &mut NoteApp) {
     let current = app.session.current_page().and_then(|p| p.background.color).map(color32);
     if crate::widgets::check_item(ui, current.is_none(), tl!("No Color")) {
         app.act(ids::VIEW_PAGE_COLOR, json!({ "color": null }));
@@ -108,7 +108,7 @@ pub fn rule_label(r: RuleLines) -> &'static str {
     }
 }
 
-fn rule_lines_menu(ui: &mut Ui, app: &mut NoteApp) {
+pub fn rule_lines_menu(ui: &mut Ui, app: &mut NoteApp) {
     let current = app.session.current_page().map(|p| p.background.rule).unwrap_or_default();
     widgets::menu_heading(ui, tl!("Rule Lines"));
     for r in [RuleLines::Narrow, RuleLines::College, RuleLines::Standard, RuleLines::Wide] {

@@ -774,6 +774,20 @@ pub struct Paragraph {
     pub tag: Option<Tag>,
     pub style: ParaStyle,
     pub align: Align,
+    /// Proofing language (a BCP 47 tag such as `en-GB`); `None` uses the app's default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lang: Option<String>,
+}
+
+/// Longest language tag a paragraph keeps (hostile files and commands).
+pub const MAX_LANG_TAG: usize = 35;
+
+/// A language tag as a paragraph keeps it: trimmed, letters, digits and `-` only (`_` becomes
+/// `-`), at most [`MAX_LANG_TAG`] characters; `None` when nothing of it is left.
+pub fn clean_lang(tag: &str) -> Option<String> {
+    let t: String = tag.trim().chars().map(|c| if c == '_' { '-' } else { c }).filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+    let t = t.trim_matches('-');
+    (!t.is_empty() && t.len() <= MAX_LANG_TAG).then(|| t.to_owned())
 }
 
 impl Paragraph {
@@ -786,9 +800,10 @@ impl Paragraph {
         self.runs.iter().map(|r| r.text.as_str()).collect()
     }
 
-    /// Hostile-input bounds: indent clamped.
+    /// Hostile-input bounds: indent clamped, language tag cleaned.
     pub fn sanitized(mut self) -> Paragraph {
         self.indent = self.indent.min(MAX_INDENT);
+        self.lang = self.lang.as_deref().and_then(clean_lang);
         self
     }
 

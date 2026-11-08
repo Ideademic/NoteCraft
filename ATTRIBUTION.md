@@ -41,3 +41,12 @@ from its `fonts/latin-manifest.txt` at build time (`crates/fonts/build.rs`, see 
 | `docs/images/ink.png` | Ideademic and NoteCraft contributors | original (headless render of NoteCraft by `crates/ui-egui/examples/ui_shot.rs`) | MIT OR Apache-2.0 | Screenshot of NoteCraft: the Draw tab |
 | `docs/images/printout.png` | Ideademic and NoteCraft contributors | original (headless render of NoteCraft by `crates/ui-egui/examples/ui_shot.rs`) | MIT OR Apache-2.0 | Screenshot of NoteCraft: a page with text, ink and a picture |
 | `docs/images/dark.png` | Ideademic and NoteCraft contributors | original (headless render of NoteCraft by `crates/ui-egui/examples/ui_shot.rs`) | MIT OR Apache-2.0 | Screenshot of NoteCraft in dark mode |
+
+## Data built into the app
+
+Not files in this repository: data NoteCraft's dependencies embed in the binaries at build time.
+
+| Data | Author | Source | Licence | Notes |
+|---|---|---|---|---|
+| English word list (Moby Words) | Grady Ward | Moby Project, as packaged in [storytold/craft-libs](https://github.com/storytold/craft-libs) `crates/proof/data/en-words.dic` (craft-proof) | Public domain (`LicenseRef-Public-Domain`) | Review › Spelling's English when a build has no SCOWL dictionaries; always embedded by craft-proof |
+| English spelling dictionaries (SCOWL: en-US, en-GB, en-CA, en-AU) | Kevin Atkinson and the SCOWL contributors | [SCOWL](http://wordlist.aspell.net/), via [storytold/craft-i18n](https://github.com/storytold/craft-i18n) `language-data/en-*` | SCOWL licence (permissive, MIT-style; its notice ships in `language-data/en-us/LICENCE-SCOWL.txt` and is embedded with the data) | Embedded by craft-proof only when the build sets `CRAFT_I18N_DIR`; Review › Spelling then uses them instead of the Moby list |

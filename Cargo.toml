@@ -86,6 +86,12 @@ craft-update = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbf
 # and aborts the app). Desktop only.
 craft-dialogs = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f9049f9270955caffb5bee5997aebf7", version = "=0.1.0" }
 craft-web-host = { git = "https://github.com/storytold/craft-libs", rev = "2e2312ddaf21bc3d85cd3395d0955c7d239306f6", version = "0.1.0" }
+# Spelling (Review tab), at craft-web-host's rev. English comes from SCOWL when the build has
+# craft-i18n's language data (CRAFT_I18N_DIR), else from the built-in public-domain Moby list;
+# other languages from installed Hunspell dictionaries. Builds for wasm32.
+craft-proof = { git = "https://github.com/storytold/craft-libs", rev = "2e2312ddaf21bc3d85cd3395d0955c7d239306f6" }
+# Desktop: open attachments and links with the system's app for them (MIT; already in the lock).
+open = "5"
 
 # web
 js-sys = "0.3"

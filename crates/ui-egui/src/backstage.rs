@@ -161,13 +161,13 @@ fn heading(ui: &mut Ui, text: &str) {
     ui.add_space(10.0);
 }
 
-fn subheading(ui: &mut Ui, text: &str) {
+pub(crate) fn subheading(ui: &mut Ui, text: &str) {
     let t = crate::Tokens::get(ui.ctx());
     ui.add_space(8.0);
     ui.label(egui::RichText::new(text).font(regular(17.0)).color(t.accent_text));
 }
 
-fn dim(ui: &mut Ui, text: &str) {
+pub(crate) fn dim(ui: &mut Ui, text: &str) {
     let t = crate::Tokens::get(ui.ctx());
     ui.label(egui::RichText::new(text).font(regular(12.5)).color(t.text_dim));
 }
@@ -498,6 +498,7 @@ fn options(ui: &mut Ui, app: &mut NoteApp) {
     subheading(ui, tl!("Ribbon"));
     crate::ribbon::display::options(ui, app);
     options::updates(ui, app);
+    crate::review::options_section(ui, app);
     subheading(ui, tl!("Recent Notebooks"));
     if flat_button(ui, tl!("Clear the List"), false, !app.session.recent.entries.is_empty()) {
         app.session.recent.entries.clear();

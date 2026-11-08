@@ -111,6 +111,12 @@ pub struct Prefs {
     pub language: String,
     /// Desktop: look for a newer release when the app starts (File › Options).
     pub check_for_updates: bool,
+    /// Review › Spelling: red wavy lines under misspelled words as you type (File › Options).
+    pub check_spelling: bool,
+    /// Words added to the dictionary (Add to Dictionary), lower case.
+    pub user_words: Vec<String>,
+    /// The proofing language of text without one (a BCP 47 tag); empty follows the system.
+    pub proofing_language: String,
 }
 
 impl Default for Prefs {
@@ -130,6 +136,9 @@ impl Default for Prefs {
             recent_fonts: Vec::new(),
             language: crate::i18n::AUTO.to_owned(),
             check_for_updates: true,
+            check_spelling: true,
+            user_words: Vec::new(),
+            proofing_language: String::new(),
         }
     }
 }
@@ -150,6 +159,9 @@ impl Prefs {
         p.recent_fonts.truncate(MAX_RECENT_FONTS);
         p.qat.retain(|id| QAT_CHOICES.contains(&id.as_str()));
         p.window = p.window.and_then(WindowGeometry::sanitized);
+        p.user_words.retain(|w| !w.trim().is_empty() && w.chars().count() <= 64);
+        p.user_words.truncate(100_000);
+        p.proofing_language = notecraft_doc::page::clean_lang(&p.proofing_language).unwrap_or_default();
         // Junk follows the system. A well-formed code this build has no catalog for is kept (it
         // follows the system meanwhile), so a build with that language shows it again.
         let tag_like = |s: &str| !s.is_empty() && s.len() <= 35 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
@@ -272,6 +284,8 @@ pub struct UiState {
     pub bin_opened_at: Location,
     /// History ▸ Recent Edits is open, for this period (`history.recentEdits`'s `since`).
     pub recent_edits: Option<String>,
+    /// Review: the Spelling pane, the link and word count dialogs ([`crate::review`]).
+    pub review: crate::review::ReviewUi,
     pub prefs: Prefs,
 }
 
@@ -307,6 +321,7 @@ impl Default for UiState {
             bin_view: None,
             bin_opened_at: Location::default(),
             recent_edits: None,
+            review: crate::review::ReviewUi::default(),
             prefs,
         }
     }
@@ -370,6 +385,7 @@ impl NoteApp {
         self.ui.ribbon_layout = prefs.ribbon_layout;
         self.ui.ribbon_display = prefs.ribbon_display;
         self.ui.ribbon_peek = false;
+        crate::review::load_prefs(&mut self.session, &prefs);
         self.ui.prefs = prefs;
         self.applied_dark = None;
     }
@@ -533,6 +549,7 @@ impl NoteApp {
         crate::updates::tick(self, ctx);
         keys::handle(self, ctx);
         crate::backstage::print::poll(self, ctx);
+        crate::review::tick(self, ctx);
         if let Some(hook) = &self.services.on_dirty {
             hook(self.session.is_dirty());
         }
@@ -598,3 +615,5 @@ impl NoteApp {
 mod tests;
 #[cfg(test)]
 mod tests_history;
+#[cfg(test)]
+mod tests_review;
