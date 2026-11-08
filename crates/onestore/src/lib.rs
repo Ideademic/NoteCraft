@@ -11,7 +11,7 @@
 //!   ([`txlog`], §2.3.3), both CRCs ([`crc`]: RFC 3309 for `.one`, MsoCrc32 for `.onetoc2`).
 //!   Every length and offset is checked against the buffer; recursion and counts are bounded;
 //!   hostile input returns an [`Error`], never panics.
-//! - Writer: one revision, one transaction, an empty free chunk list, exact
+//! - Writer: one revision per object space and context, one transaction, an empty free chunk list, exact
 //!   `cbExpectedFileLength`.
 //! - The desktop variant (`guidFileFormat` for .one / .onetoc2) is read and written; the
 //!   FSSHTTP-packaged variant (OneDrive downloads) is detected and reported as
@@ -85,6 +85,31 @@ pub struct ObjectSpace {
     /// Root objects: (root role, object id). Role 1 is the default content root (§2.1.8).
     pub roots: Vec<(u32, ExtendedGuid)>,
     pub objects: Vec<Object>,
+    /// The object space's other revisions labelled with revision role 1 in a context other
+    /// than the default one (§2.1.7, `RevisionManifestStart7FND.gctxid`): a page's version
+    /// history ([MS-ONE] §2.1.17, §2.1.18). Each is self-contained.
+    pub contexts: Vec<ContextRevision>,
+}
+
+/// A revision of an object space in a non-default context: its objects and root objects.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct ContextRevision {
+    /// The context (`gctxid`): an ExtendedGUID other than nil.
+    pub context: ExtendedGuid,
+    pub roots: Vec<(u32, ExtendedGuid)>,
+    pub objects: Vec<Object>,
+}
+
+impl ContextRevision {
+    /// The root object with `role`.
+    pub fn root(&self, role: u32) -> Option<ExtendedGuid> {
+        self.roots.iter().find(|(r, _)| *r == role).map(|(_, id)| *id)
+    }
+
+    /// Object id → index into [`ContextRevision::objects`].
+    pub fn index(&self) -> std::collections::HashMap<ExtendedGuid, usize> {
+        self.objects.iter().enumerate().map(|(i, o)| (o.id, i)).collect()
+    }
 }
 
 impl ObjectSpace {
@@ -96,6 +121,11 @@ impl ObjectSpace {
     /// Object id → index into [`ObjectSpace::objects`].
     pub fn index(&self) -> std::collections::HashMap<ExtendedGuid, usize> {
         self.objects.iter().enumerate().map(|(i, o)| (o.id, i)).collect()
+    }
+
+    /// The revision in `context`, if the object space has one.
+    pub fn context(&self, context: ExtendedGuid) -> Option<&ContextRevision> {
+        self.contexts.iter().find(|c| c.context == context)
     }
 }
 
@@ -130,12 +160,13 @@ impl Store {
 }
 
 /// Parses a `.one` or `.onetoc2` file: every object space at its current revision (default
-/// context, revision role 1), counting only committed transactions.
+/// context, revision role 1) plus its revisions in other contexts ([`ObjectSpace::contexts`]),
+/// counting only committed transactions.
 pub fn read(bytes: &[u8]) -> Result<Store> {
     read::read(bytes)
 }
 
-/// Writes a store as a fresh desktop-format file: one revision per object space in one
+/// Writes a store as a fresh desktop-format file: one revision per object space and context in one
 /// transaction, no free chunk list, legacy fields at their required values.
 pub fn write(store: &Store) -> Result<Vec<u8>> {
     write::write(store)

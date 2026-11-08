@@ -92,8 +92,26 @@ pub fn show(app: &mut NoteApp, ui: &mut Ui) {
                 .frame(Frame::NONE.fill(t.notebook_pane))
                 .show(ui, |ui| panes::notebook_bar(ui, app));
         }
+        panes::history::fix_bin_view(app);
+        if app.ui.recent_edits.is_some() {
+            Panel::right("nc_recent_edits")
+                .default_size(panes::history::RECENT_W)
+                .size_range(200.0..=480.0)
+                .resizable(true)
+                .show_separator_line(false)
+                .frame(Frame::NONE.fill(t.panel))
+                .show(ui, |ui| panes::history::recent_edits_pane(ui, app));
+        }
         let tint = app.session.current_section().map_or(t.page_list, |s| t.section_tint(s.color));
-        if app.ui.page_list_open {
+        if app.ui.bin_view.is_some() {
+            Panel::right("nc_bin_pages")
+                .default_size(PAGE_LIST_WIDTH)
+                .size_range(150.0..=480.0)
+                .resizable(true)
+                .show_separator_line(false)
+                .frame(Frame::NONE.fill(t.page_list))
+                .show(ui, |ui| panes::history::bin_page_list(ui, app));
+        } else if app.ui.page_list_open {
             Panel::right("nc_pages")
                 .default_size(PAGE_LIST_WIDTH)
                 .size_range(150.0..=480.0)
@@ -111,14 +129,22 @@ pub fn show(app: &mut NoteApp, ui: &mut Ui) {
     let band = app.session.current_section().map_or(t.canvas, |s| t.section_tint(s.color));
     CentralPanel::default().frame(Frame::NONE.fill(band)).show(ui, |ui| {
         ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-        if !app.ui.full_page_view {
-            panes::section_tabs(ui, app);
+        if app.ui.bin_view.is_some() {
+            panes::history::bin_tabs(ui, app);
+            panes::history::bin_page_banner(ui, app);
+        } else {
+            if !app.ui.full_page_view {
+                panes::section_tabs(ui, app);
+            }
+            panes::history::banner(ui, app);
         }
         app.canvas_rect = Some(ui.available_rect_before_wrap());
         let mut tokens = app.tokens.clone();
-        tokens.canvas = band;
+        tokens.canvas = if app.ui.bin_view.is_some() { t.canvas } else { band };
         app.canvas.hide_title = app.ui.hide_page_title;
-        canvas::show(ui, &mut app.canvas, &mut app.session, &tokens, &app.services);
+        if !panes::history::preview(ui, app, &tokens) {
+            canvas::show(ui, &mut app.canvas, &mut app.session, &tokens, &app.services);
+        }
     });
     finish(app, ui);
 }
@@ -139,7 +165,7 @@ fn prompt(ctx: &egui::Context, app: &mut NoteApp) {
     let (title, body, yes, no) = match &p {
         Prompt::DeleteSection { name, .. } => (
             crate::i18n::fmt_plain(tl!("Delete \u{201c}{name}\u{201d}?"), &[("name", name)]),
-            tl!("The section and all its pages are deleted. You can undo this with Ctrl+Z.").to_owned(),
+            tl!("The section and its pages go to the Notebook Recycle Bin (History tab) for 60 days. You can undo this with Ctrl+Z.").to_owned(),
             tl!("Delete"),
             Some(tl!("Cancel")),
         ),
@@ -159,6 +185,7 @@ fn prompt(ctx: &egui::Context, app: &mut NoteApp) {
             Some(tl!("Discard")),
         ),
         Prompt::Message { title, body } => (title.clone(), body.clone(), tl!("OK"), None),
+        Prompt::Confirm { title, body, yes, .. } => (title.clone(), body.clone(), yes.as_str(), Some(tl!("Cancel"))),
     };
     let mut answer: Option<bool> = None;
     let modal = egui::Modal::new(egui::Id::unique("nc_prompt")).backdrop_color(egui::Color32::TRANSPARENT).frame(
@@ -196,6 +223,10 @@ fn prompt(ctx: &egui::Context, app: &mut NoteApp) {
             app.ui.info_notebook = None;
         }
         Prompt::Recovery { .. } => app.ui.recovery_answer = Some(yes),
+        Prompt::Confirm { command, params, .. } if yes => {
+            app.act(&command, params);
+            panes::history::fix_bin_view(app);
+        }
         _ => {}
     }
 }

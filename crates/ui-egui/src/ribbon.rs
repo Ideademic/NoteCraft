@@ -1,4 +1,4 @@
-//! The ribbon: the tab row (File, Home, Insert, Draw, View) on the accent band under the title
+//! The ribbon: the tab row (File, Home, Insert, Draw, History, View) on the accent band under the title
 //! bar, and the selected tab's commands on a light body. File opens the backstage.
 //!
 //! The body has two layouts ([`display::RibbonLayout`]): Classic, groups of large and small
@@ -10,6 +10,7 @@
 
 pub mod display;
 pub mod draw;
+pub mod history;
 pub mod home;
 pub mod insert;
 pub mod simplified;
@@ -37,11 +38,12 @@ pub enum RibbonTab {
     Home,
     Insert,
     Draw,
+    History,
     View,
 }
 
 impl RibbonTab {
-    pub const ALL: [RibbonTab; 5] = [RibbonTab::File, RibbonTab::Home, RibbonTab::Insert, RibbonTab::Draw, RibbonTab::View];
+    pub const ALL: [RibbonTab; 6] = [RibbonTab::File, RibbonTab::Home, RibbonTab::Insert, RibbonTab::Draw, RibbonTab::History, RibbonTab::View];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -49,6 +51,7 @@ impl RibbonTab {
             RibbonTab::Home => tl!("Home"),
             RibbonTab::Insert => tl!("Insert"),
             RibbonTab::Draw => tl!("Draw"),
+            RibbonTab::History => tl!("History"),
             RibbonTab::View => tl!("View"),
         }
     }
@@ -60,6 +63,7 @@ impl RibbonTab {
             RibbonTab::Home => "home",
             RibbonTab::Insert => "insert",
             RibbonTab::Draw => "draw",
+            RibbonTab::History => "history",
             RibbonTab::View => "view",
         }
     }
@@ -184,6 +188,7 @@ fn classic(ui: &mut Ui, app: &mut NoteApp, full: Rect) {
                     RibbonTab::File | RibbonTab::Home => home::show(ui, app),
                     RibbonTab::Insert => insert::show(ui, app),
                     RibbonTab::Draw => draw::show(ui, app),
+                    RibbonTab::History => history::show(ui, app),
                     RibbonTab::View => view::show(ui, app),
                 }
             });

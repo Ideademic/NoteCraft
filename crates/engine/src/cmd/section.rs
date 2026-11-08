@@ -1,6 +1,6 @@
 //! Sections and section groups: new, rename, delete, colour, move.
 
-use notecraft_doc::{Color, Page, Section, SectionEntry, SectionGroup};
+use notecraft_doc::{Color, DeletedSection, Page, Section, SectionEntry, SectionGroup};
 use serde_json::{Value, json};
 
 use super::{has_notebook, has_section, id_or};
@@ -62,9 +62,11 @@ fn rename(s: &mut Session, params: &Value) -> CmdResult {
     Ok(CmdOutput::ok())
 }
 
-/// Deletes a section or section group; the current one moves to the next section.
+/// Deletes a section or section group into the notebook's recycle bin; the current one moves
+/// to the next section.
 fn delete(s: &mut Session, params: &Value) -> CmdResult {
     let id = id_or(params, s.current.section, "section")?;
+    let s_now = s.now();
     let nb = s
         .notebooks
         .iter_mut()
@@ -73,7 +75,38 @@ fn delete(s: &mut Session, params: &Value) -> CmdResult {
     // The section after it in tab order becomes current (or the one before, at the end).
     let order: Vec<_> = nb.all_sections().iter().map(|s| s.id).collect();
     let next = order.iter().position(|x| *x == id).and_then(|i| order.get(i + 1).or_else(|| i.checked_sub(1).and_then(|j| order.get(j)))).copied();
-    nb.remove_entry(id);
+    // Into the recycle bin, with where it was (a group's sections go one by one, remembering
+    // the group).
+    let path = nb.path_of(id).unwrap_or_default();
+    let parent = path.last().copied();
+    let index = nb.entries_mut(parent).and_then(|e| e.iter().position(|x| x.id() == id)).unwrap_or(0);
+    let now = s_now;
+    let _ = index;
+    match nb.remove_entry(id) {
+        Some(SectionEntry::Section(section)) => {
+            nb.recycle_bin.sections.push(DeletedSection { section, deleted: now, group_path: path, index });
+        }
+        Some(SectionEntry::Group(g)) => {
+            let mut stack = vec![(g, path)];
+            while let Some((g, path)) = stack.pop() {
+                let mut inner = path.clone();
+                inner.push(g.id);
+                if inner.len() > notecraft_doc::notebook::MAX_GROUP_DEPTH {
+                    continue;
+                }
+                for (i, e) in g.entries.into_iter().enumerate() {
+                    match e {
+                        SectionEntry::Section(section) => {
+                            nb.recycle_bin.sections.push(DeletedSection { section, deleted: now, group_path: inner.clone(), index: i })
+                        }
+                        SectionEntry::Group(sub) => stack.push((sub, inner.clone())),
+                    }
+                }
+            }
+        }
+        None => {}
+    }
+    nb.recycle_bin.cap();
     // The current section was it, or inside the deleted group (`normalize_location` falls back
     // to the first section when `next` went too).
     if s.current.section.is_some_and(|c| !s.notebooks.iter().any(|n| n.section(c).is_some())) {

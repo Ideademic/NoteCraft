@@ -2,7 +2,7 @@
 //!
 //! Usage: `notecraft [notebook folder | .onetoc2 | .onepkg | .one]…`; `--help` prints `USAGE`.
 //!
-//! At start it reads its settings (`prefs.json`, `recent.json` in the settings folder), offers to
+//! At start it reads its settings (`prefs.json`, `recent.json`, `read.json` in the settings folder), offers to
 //! restore notebooks a crash left unsaved, reopens the notebooks that were open last time (or the
 //! default "My Notebook"), then the files on the command line. Changes autosave; on exit
 //! everything is saved and the settings written.
@@ -41,6 +41,8 @@ const ICON_PNG: &[u8] = include_bytes!("../../../assets/app-icon/hicolor/256x256
 struct Saved {
     prefs: String,
     recent: String,
+    /// `read.json`: the pages the user has seen (History ▸ Unread).
+    read: String,
 }
 
 /// The eframe app: [`NoteApp`] does everything; this keeps its settings on disk.
@@ -79,7 +81,8 @@ impl App {
         let Some(dir) = &self.settings else { return };
         let prefs = self.app.prefs().to_json();
         let recent = self.app.session.recent.to_json();
-        if prefs == self.saved.prefs && recent == self.saved.recent {
+        let read = self.app.read_state_json();
+        if prefs == self.saved.prefs && recent == self.saved.recent && read == self.saved.read {
             return;
         }
         if let Err(e) = std::fs::create_dir_all(dir) {
@@ -96,6 +99,12 @@ impl App {
             match std::fs::write(dir.join("recent.json"), &recent) {
                 Ok(()) => self.saved.recent = recent,
                 Err(e) => log::warn!("writing the recent list: {e}"),
+            }
+        }
+        if read != self.saved.read {
+            match std::fs::write(dir.join("read.json"), &read) {
+                Ok(()) => self.saved.read = read,
+                Err(e) => log::warn!("writing the read marks: {e}"),
             }
         }
     }
@@ -209,6 +218,7 @@ fn main() -> eframe::Result {
     let settings = services::settings_dir();
     let prefs = Prefs::from_json(&read(settings.as_deref(), "prefs.json"));
     let recent_json = read(settings.as_deref(), "recent.json");
+    let read_json = read(settings.as_deref(), "read.json");
     let mac = cfg!(target_os = "macos");
     let frame = craft_window::Choice::probe(craft_window::Prefix::new("NOTECRAFT")).into_frame();
     let mut viewport = egui::ViewportBuilder::default()
@@ -260,6 +270,7 @@ fn main() -> eframe::Result {
             }
             let mut app = NoteApp::new(session, services::desktop());
             app.load_prefs(prefs);
+            app.load_read_state(&read_json);
             app.integrated_titlebar = mac;
             app.window_buttons = if mac { None } else { frame.layout().cloned() };
             app.offer_recovery(names);

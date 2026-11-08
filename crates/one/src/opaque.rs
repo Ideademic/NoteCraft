@@ -228,6 +228,7 @@ mod tests {
             id: g(100),
             roots: vec![],
             objects: vec![Object::new(g(1), 0x0006_0022, table), Object::new(g(2), 0x0006_0023, row), Object::new(g(9), 1, PropertySet::default())],
+            ..ObjectSpace::default()
         };
         let data = capture(&space, &space.index(), g(1)).unwrap();
         let mut b = SpaceBuilder::new(ExtendedGuid::from_guid(Guid::new(), 1));

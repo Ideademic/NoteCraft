@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::page::{CONTENT_ORIGIN, ElementKind, Outline, PageElement};
-use crate::{Color, Guid, InkPoint, InkStroke, InkTool, Page};
+use crate::{Color, Guid, InkPoint, InkStroke, InkTool, Page, RecycleBin};
 
 /// Deepest section-group nesting walked (hostile files): deeper entries are ignored by the
 /// helpers here and should be refused by readers.
@@ -23,6 +23,13 @@ pub struct Notebook {
     pub color: Color,
     /// Sections and section groups, in tab order.
     pub sections: Vec<SectionEntry>,
+    /// Deleted sections and pages (History ▸ Notebook Recycle Bin).
+    #[serde(default, skip_serializing_if = "RecycleBin::is_empty")]
+    pub recycle_bin: RecycleBin,
+    /// History ▸ Disable History for this Notebook: no page versions are kept (MS-ONE
+    /// EnableHistory false in the table of contents).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub history_disabled: bool,
 }
 
 /// A section or a section group.
@@ -146,7 +153,14 @@ const SWEEP: (f32, f32, f32) = (33.0, 377.0, 156.5);
 impl Notebook {
     /// An empty notebook.
     pub fn new(name: impl Into<String>) -> Notebook {
-        Notebook { id: Guid::new(), name: name.into(), color: Color::NOTECRAFT, sections: Vec::new() }
+        Notebook {
+            id: Guid::new(),
+            name: name.into(),
+            color: Color::NOTECRAFT,
+            sections: Vec::new(),
+            recycle_bin: RecycleBin::default(),
+            history_disabled: false,
+        }
     }
 
     /// The notebook a first start opens: "My Notebook" ▸ "Quick Notes" ▸ "Welcome to NoteCraft",

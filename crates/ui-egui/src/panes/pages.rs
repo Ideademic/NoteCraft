@@ -1,7 +1,9 @@
 //! The page list on the right: "+ Add Page" at the top, then the section's pages (subpages
 //! indented), tinted with the section's colour, the current page in a stronger tint. Drag a page
 //! to reorder (its subpages come along); right-click for New Page, New Subpage, Rename, Delete,
-//! Make Subpage and Promote Subpage. It collapses to a thin bar.
+//! Make Subpage and Promote Subpage. Unread pages (changed since last seen) are bold; with History ▸
+//! Page Versions on, each page's versions follow it in a lighter style. It collapses to a thin
+//! bar.
 
 use egui::{Align2, Rect, Sense, Stroke, Ui, pos2, vec2};
 use notecraft_doc::Guid;
@@ -80,6 +82,7 @@ pub fn page_list(ui: &mut Ui, app: &mut NoteApp) {
             ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
             for (i, row) in rows.iter().enumerate() {
                 row_rects.push(draw_row(ui, app, row, i, &rows));
+                super::history::version_rows(ui, app, row.id, row.level);
             }
             if rows.is_empty() {
                 ui.add_space(12.0);
@@ -96,7 +99,8 @@ fn draw_row(ui: &mut Ui, app: &mut NoteApp, row: &Row, index: usize, rows: &[Row
     let t = app.tokens.clone();
     let color = app.session.current_section().map(|s| s.color);
     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click_and_drag());
-    let current = app.session.current.page == Some(row.id);
+    // While one of its versions is open, the version row is the selected one.
+    let current = app.session.current.page == Some(row.id) && app.session.viewing_version.is_none();
     let title = if row.title.trim().is_empty() { tl!("Untitled page") } else { row.title.as_str() };
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, current, title));
     if current {
@@ -114,7 +118,8 @@ fn draw_row(ui: &mut Ui, app: &mut NoteApp, row: &Row, index: usize, rows: &[Row
         let font = regular(if row.level == 0 { 13.0 } else { 12.5 });
         let shown = fit_text(ui.ctx(), title, &font, (r.max.x - x - 8.0).max(0.0));
         let color = if row.title.trim().is_empty() { t.text_dim } else { t.text };
-        if current {
+        // Bold: the current page, and pages changed since the user last saw them (History).
+        if current || app.session.is_unread(row.id) {
             paint_strong(ui.painter(), pos2(x, r.center().y), Align2::LEFT_CENTER, &shown, font, color);
         } else {
             ui.painter().text(pos2(x, r.center().y), Align2::LEFT_CENTER, &shown, font, color);

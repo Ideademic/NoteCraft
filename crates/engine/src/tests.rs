@@ -1,4 +1,5 @@
 mod commands;
+mod history;
 mod lifecycle;
 mod roundtrip;
 

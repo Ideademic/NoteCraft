@@ -36,6 +36,82 @@ pub const RIBBON_SHOTS: [&str; 8] = [
     "ribbon-tabs-only",
 ];
 
+/// The History tab and its views.
+pub const HISTORY_SHOTS: [&str; 5] = ["tab-history", "simplified-history", "history-recycle-bin", "history-versions", "history-recent-edits"];
+
+/// The History states of [`HISTORY_SHOTS`]; `false` for other names.
+fn prepare_history(app: &mut NoteApp, shot: &str) -> bool {
+    use notecraft_engine::ids;
+    let run = |app: &mut NoteApp, id: &str, p: serde_json::Value| app.run(id, p).ok().map(|o| o.value);
+    let id_of = |v: Option<serde_json::Value>| v.and_then(|v| v.get("id").and_then(serde_json::Value::as_str).map(str::to_owned));
+    match shot {
+        "tab-history" => app.ui.ribbon_tab = RibbonTab::History,
+        "simplified-history" => {
+            app.ui.ribbon_layout = crate::ribbon::display::RibbonLayout::Simplified;
+            app.ui.ribbon_tab = RibbonTab::History;
+        }
+        "history-recycle-bin" => {
+            app.ui.ribbon_tab = RibbonTab::History;
+            for (title, text) in
+                [("Trip ideas", "Lisbon in May\nPorto by train"), ("Old agenda", "Budget review\nHiring plan"), ("Scratch", "phone: call back")]
+            {
+                let page = id_of(run(app, ids::PAGE_NEW, json!({ "title": title })));
+                run(app, ids::OUTLINE_NEW, json!({ "x": 36, "y": 108, "text": text }));
+                run(app, ids::PAGE_DELETE, json!({ "id": page }));
+            }
+            let sec = id_of(run(app, ids::SECTION_NEW, json!({ "name": "Archive 2025" })));
+            run(app, ids::PAGE_RENAME, json!({ "title": "Year in review" }));
+            run(app, ids::SECTION_DELETE, json!({ "id": sec }));
+            crate::panes::history::open_bin(app);
+            if let Some(v) = app.ui.bin_view.as_mut() {
+                // The oldest deletion: a page with text.
+                let first =
+                    app.session.current_notebook().and_then(|n| n.recycle_bin.pages.iter().find(|d| d.page.title == "Trip ideas")).map(|d| d.page.id);
+                v.page = first.or(v.page);
+            }
+        }
+        "history-versions" => {
+            app.ui.ribbon_tab = RibbonTab::History;
+            let page = app.session.current.page;
+            // Versions kept over a morning of edits (made here directly: the session keeps at most
+            // one every five minutes, by the clock).
+            if let Some(p) = page.and_then(|id| app.session.page_mut(id)) {
+                let base = p.modified;
+                let mut older = p.clone();
+                for (i, title) in ["Welcome (first notes)", "Welcome to NoteCraft (draft)", "Welcome to NoteCraft"].into_iter().enumerate() {
+                    older.title = title.to_owned();
+                    if i == 0 {
+                        older.ink.clear();
+                    }
+                    older.modified = base - chrono::Duration::minutes(90 - 30 * i as i64);
+                    p.versions.push(notecraft_doc::PageVersion::of(&older));
+                }
+            }
+            app.session.revision += 1;
+            run(app, ids::HISTORY_SHOW_VERSIONS, json!({ "value": true }));
+            let v = page.and_then(|id| app.session.current_page().filter(|p| p.id == id)).and_then(|p| p.versions.first()).map(|v| v.id);
+            run(app, ids::HISTORY_VIEW_VERSION, json!({ "page": page, "version": v }));
+        }
+        "history-recent-edits" => {
+            app.ui.ribbon_tab = RibbonTab::History;
+            for title in ["Shopping list", "Book notes"] {
+                run(app, ids::PAGE_NEW, json!({ "title": title }));
+            }
+            // A page changed elsewhere since it was last seen: unread, so bold.
+            let unread = id_of(run(app, ids::PAGE_NEW, json!({ "title": "Edited on my phone" })));
+            if let Some(g) = unread.as_deref().and_then(notecraft_doc::Guid::parse) {
+                app.session.read_state.mark_unread(g);
+            }
+            if let Some(first) = app.session.current_section().and_then(|s| s.pages.first()).map(|p| p.id) {
+                run(app, ids::NAV_PAGE, json!({ "id": first }));
+            }
+            app.ui.recent_edits = Some("7d".into());
+        }
+        _ => return false,
+    }
+    true
+}
+
 /// The ribbon states of [`RIBBON_SHOTS`]; `false` for other names.
 fn prepare_ribbon(app: &mut NoteApp, shot: &str) -> bool {
     use crate::ribbon::display::{RibbonDisplay, RibbonLayout};
@@ -63,7 +139,7 @@ fn prepare_ribbon(app: &mut NoteApp, shot: &str) -> bool {
 
 /// Puts `app` in the state named `shot` (unknown names leave it as it is).
 pub fn prepare(app: &mut NoteApp, shot: &str) {
-    if prepare_ribbon(app, shot) {
+    if prepare_ribbon(app, shot) || prepare_history(app, shot) {
         return;
     }
     match shot {

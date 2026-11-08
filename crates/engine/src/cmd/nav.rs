@@ -32,5 +32,7 @@ fn page(s: &mut Session, params: &Value) -> CmdResult {
     let (nb, sec) =
         s.notebooks.iter().find_map(|n| n.section_of_page(id).map(|sec| (n.id, sec))).ok_or_else(|| CmdError::Params(format!("no page {id}")))?;
     s.current = Location { notebook: Some(nb), section: Some(sec), page: Some(id) };
+    // The page itself, not one of its versions.
+    s.viewing_version = None;
     Ok(CmdOutput::unchanged())
 }

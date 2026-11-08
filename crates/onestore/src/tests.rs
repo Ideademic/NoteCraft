@@ -34,6 +34,7 @@ fn section_store() -> Store {
                     Object::new(eg(2), 0x0002_0031, PropertySet::default()),
                     Object::new(eg(3), 0x0006_0008, series),
                 ],
+                ..ObjectSpace::default()
             },
             ObjectSpace {
                 id: page_space,
@@ -43,6 +44,7 @@ fn section_store() -> Store {
                     Object::new(eg(5), 0x0012_004D, style),
                     Object::file(eg(6), 0x0008_0039, Arc::new(b"\x89PNG\r\n\x1a\nfake".to_vec()), ".png"),
                 ],
+                ..ObjectSpace::default()
             },
         ],
         warnings: Vec::new(),
@@ -69,6 +71,7 @@ fn toc_store() -> Store {
                 Object::new(eg(2), 0x0002_0001, entry.clone()),
                 Object::new(eg(3), 0x0002_0001, entry),
             ],
+            ..ObjectSpace::default()
         }],
         warnings: Vec::new(),
     }
@@ -92,6 +95,52 @@ fn section_round_trip() {
     assert_eq!(header.transactions, 1);
     let back = read(&bytes).unwrap();
     assert_eq!(back, normalized(store));
+}
+
+/// A section store whose page space has revisions in two more contexts (a version history), one
+/// with a file data object shared with the default revision.
+fn store_with_contexts() -> Store {
+    let mut store = section_store();
+    let page = &mut store.spaces[1];
+    let shared = page.objects.iter().find_map(|o| o.file_data.clone()).unwrap();
+    let mut a = PropertySet::default();
+    a.push(0x37FC_0021, PropertyValue::Ids(vec![ExtendedGuid::new([0xCD; 16], 1)])).push(0x18001D77, PropertyValue::U64(42));
+    let mut manifest = PropertySet::default();
+    manifest.push(0x24001C1F, PropertyValue::Ids(vec![eg(41)]));
+    page.contexts = vec![
+        ContextRevision { context: ExtendedGuid::new([0x7F; 16], 1), roots: vec![(1, eg(30))], objects: vec![Object::new(eg(30), 0x0006_003D, a)] },
+        ContextRevision {
+            context: ExtendedGuid::new([0xCD; 16], 1),
+            roots: vec![(1, eg(40)), (2, eg(4))],
+            objects: vec![
+                Object::new(eg(40), 0x0006_0037, manifest),
+                Object::new(eg(41), 0x0006_000B, PropertySet::default()),
+                Object::new(eg(4), 0x0002_0030, PropertySet::default()),
+                Object::file(eg(42), 0x0008_0039, shared, ".png"),
+            ],
+        },
+    ];
+    store
+}
+
+#[test]
+fn context_revisions_round_trip() {
+    let store = store_with_contexts();
+    let bytes = write(&store).unwrap();
+    let back = read(&bytes).unwrap();
+    assert_eq!(back, normalized(store.clone()));
+    let page = &back.spaces[1];
+    assert_eq!(page.contexts.len(), 2);
+    assert!(page.context(ExtendedGuid::new([0xCD; 16], 1)).is_some_and(|c| c.root(2) == Some(eg(4))));
+    // The default revision is what it was: other contexts don't leak into it.
+    assert_eq!(page.objects.len(), 3);
+    // Duplicate or nil contexts are refused.
+    let mut bad = store.clone();
+    bad.spaces[1].contexts[1].context = bad.spaces[1].contexts[0].context;
+    assert!(write(&bad).is_err());
+    let mut bad = store;
+    bad.spaces[1].contexts[0].context = ExtendedGuid::NIL;
+    assert!(write(&bad).is_err());
 }
 
 #[test]
@@ -134,7 +183,7 @@ impl XorShift {
 
 #[test]
 fn hostile_input_never_panics() {
-    let good = [write(&section_store()).unwrap(), write(&toc_store()).unwrap()];
+    let good = [write(&section_store()).unwrap(), write(&toc_store()).unwrap(), write(&store_with_contexts()).unwrap()];
     let mut rng = XorShift(0x9E37_79B9_7F4A_7C15);
     for base in &good {
         // Every truncation.

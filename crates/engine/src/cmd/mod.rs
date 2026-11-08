@@ -4,6 +4,7 @@ pub mod draw;
 pub mod edit;
 pub mod file;
 pub mod format;
+pub mod history;
 pub mod ink_shape;
 pub mod insert;
 pub mod nav;
@@ -39,6 +40,7 @@ pub fn all() -> Vec<CommandSpec> {
     v.extend(file::specs());
     v.extend(nav::specs());
     v.extend(search::specs());
+    v.extend(history::specs());
     v
 }
 

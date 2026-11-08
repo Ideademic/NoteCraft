@@ -28,7 +28,8 @@ fn is_reserved_folder(name: &str) -> bool {
 pub fn notebook_files(notebook: &Notebook) -> Result<Vec<NotebookFile>> {
     let mut out = Vec::new();
     let top = Level { prefix: String::new(), toc_id: notebook.id, name: notebook.name.clone(), ancestor: Guid::NIL, depth: 0 };
-    folder_files(&notebook.sections, &top, notebook.color, &mut out)?;
+    folder_files(&notebook.sections, &top, notebook.color, notebook.history_disabled, &mut out)?;
+    out.extend(crate::recycle_bin_files(&notebook.recycle_bin)?);
     Ok(out)
 }
 
@@ -42,7 +43,7 @@ struct Level {
     depth: usize,
 }
 
-fn folder_files(entries: &[SectionEntry], lv: &Level, color: notecraft_doc::Color, out: &mut Vec<NotebookFile>) -> Result<()> {
+fn folder_files(entries: &[SectionEntry], lv: &Level, color: notecraft_doc::Color, no_history: bool, out: &mut Vec<NotebookFile>) -> Result<()> {
     if lv.depth > MAX_GROUP_DEPTH {
         return Err(Error::Format("section groups nested too deeply".into()));
     }
@@ -62,13 +63,13 @@ fn folder_files(entries: &[SectionEntry], lv: &Level, color: notecraft_doc::Colo
                 let gid = if g.id.is_nil() { Guid::new() } else { g.id };
                 let inner =
                     Level { prefix: format!("{}{folder}/", lv.prefix), toc_id: gid, name: g.name.clone(), ancestor: lv.toc_id, depth: lv.depth + 1 };
-                folder_files(&g.entries, &inner, color, out)?;
+                folder_files(&g.entries, &inner, color, false, out)?;
                 toc_entries.push(TocEntry::Group { folder_name: folder });
                 ids.push(gid);
             }
         }
     }
-    let t = NotebookToc { id: lv.toc_id, name: lv.name.clone(), color, entries: toc_entries };
+    let t = NotebookToc { id: lv.toc_id, name: lv.name.clone(), color, entries: toc_entries, history_disabled: no_history && lv.depth == 0 };
     out.push(NotebookFile { path: format!("{}{TOC_FILE_NAME}", lv.prefix), bytes: toc::write(&t, &ids, lv.ancestor)? });
     Ok(())
 }
@@ -102,11 +103,21 @@ pub fn notebook_from_files(files: &[NotebookFile], name: &str) -> Result<(Notebo
     items.retain(|(p, _)| !p.is_empty() && !p.iter().any(|c| *c == ".." || *c == "."));
     let mut skipped = 0;
     let (entries, toc) = folder(&items, 0, &mut skipped)?;
+    // The recycle bin: the `.one` files directly in its folder.
+    let bin_files: Vec<(&str, &[u8])> = items
+        .iter()
+        .filter_map(|(p, b)| match p.as_slice() {
+            [dir, file] if is_reserved_folder(dir) => Some((*file, *b)),
+            _ => None,
+        })
+        .collect();
     let notebook = Notebook {
         id: toc.as_ref().map_or_else(Guid::new, |t| t.id),
         name: toc.as_ref().map(|t| t.name.clone()).filter(|n| !n.trim().is_empty()).unwrap_or_else(|| name.to_owned()),
         color: toc.as_ref().map_or(notecraft_doc::Color::NOTECRAFT, |t| t.color),
         sections: entries,
+        recycle_bin: crate::read_recycle_bin(&bin_files),
+        history_disabled: toc.as_ref().is_some_and(|t| t.history_disabled),
     };
     Ok((notebook, skipped))
 }

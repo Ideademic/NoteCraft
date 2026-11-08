@@ -97,7 +97,7 @@ inserts.
 |---|---|---|---|---|
 | `section.new` | `Mod+T` | yes | `{"name"?: string, "group"?: guid, "notebook"?: guid}` | New section (one empty page) at the end of the notebook or `group`; made current. → `{id, page}` |
 | `section.rename` |  | yes | `{"id"?: guid, "name": string}` | Renames a section or a section group. A renamed section's file follows the new name on the next save. |
-| `section.delete` |  | yes | `{"id"?: guid}` | Deletes a section or group; the next section becomes current. Its file goes to `OneNote_RecycleBin/` on save. |
+| `section.delete` |  | yes | `{"id"?: guid}` | Deletes a section or group into the notebook's recycle bin (a group's sections one by one, remembering where they were); the next section becomes current. On disk it moves to `OneNote_RecycleBin/` on save. |
 | `section.color` |  | yes | `{"id"?: guid, "color": "#rrggbb"}` | Sets the section colour. |
 | `section.move` |  | yes | `{"id"?: guid, "index": number, "group"?: guid \| null, "notebook"?: guid}` | Moves a section or group to `index` in `group` (null: top level) of `notebook`. |
 | `sectionGroup.new` |  | yes | `{"name"?: string, "parent"?: guid}` | New section group. → `{id}` |
@@ -108,7 +108,7 @@ inserts.
 |---|---|---|---|---|
 | `page.new` | `Mod+N` | yes | `{"section"?: guid, "title"?: string}` | New page after the current page's family; made current. → `{id}` |
 | `page.newSubpage` | `Mod+Shift+Alt+N` | yes | `{"title"?: string}` | New subpage under the current page. → `{id}` |
-| `page.delete` |  | yes | `{"id"?: guid}` | Deletes a page (its subpages move up a level where needed). |
+| `page.delete` |  | yes | `{"id"?: guid}` | Deletes a page into the notebook's recycle bin (its subpages move up a level where needed). |
 | `page.rename` |  | yes | `{"id"?: guid, "title": string}` | Sets the page title. |
 | `page.move` |  | yes | `{"id"?: guid, "index": number, "section"?: guid}` | Moves a page and its subpages to `index` in `section`. |
 | `page.indent` | `Mod+Alt+]` | yes | `{"id"?: guid}` | Makes the page (and its subpages) a subpage. |
@@ -212,6 +212,29 @@ inserts.
 | `nav.page` |  | — | `{"id": guid}` | Goes to a page. |
 | `search` | `Mod+E` | — | `{"query": string, "scope"?: "all" (default)\|"notebook"\|"section", "limit"?: number} -> {"hits": [{"notebook", "notebookName", "section", "sectionName", "page", "pageTitle", "snippet"}], "truncated": bool}` | Searches page titles and text in the open notebooks (case-insensitive; one hit per page). |
 
+### History
+
+The notebook recycle bin, page versions, unread pages and recent edits. Deleted pages and sections stay in the recycle bin for 60 days (expired when the notebook is opened). Page versions are kept automatically: the first time a page changes in a session (the page as it was), then at most one every 5 minutes while it is edited; at most 20 per page. Read marks are the user's, not the notebook's: they don't touch undo.
+
+| id | shortcut | undo | params | effect / output |
+|---|---|---|---|---|
+| `history.recycleBin` |  | — | `{"notebook"?: guid} -> {"notebook", "sections": [{"id", "name", "color", "deleted", "pages": [{"id", "title", "level"}]}], "pages": [{"id", "title", "deleted", "section", "sectionName"}]}` | Lists the recycle bin, newest deletion first (`deleted`: RFC 3339). |
+| `history.restore` |  | yes | `{"id": guid, "to"?: guid} -> {"notebook", "section", "page"}` | Restores a deleted page (into `to`, else the section it came from, else the first section) or section (into `to`: a section group or the notebook id, else the group it was in), or one page of a deleted section; goes to it. |
+| `history.deleteForever` |  | yes | `{"id": guid}` | Removes a page or section from the recycle bin for good (undo still brings it back this session). |
+| `history.emptyRecycleBin` |  | yes | `{"notebook"?: guid}` | Empties the notebook's recycle bin (the UI asks first). |
+| `history.versions` |  | — | `{"page"?: guid} -> [{"id", "saved", "title"}]` | The page's versions, newest first. |
+| `history.viewVersion` |  | — | `{"page"?: guid, "version": guid \| null}` | Opens a version read-only (`Session::viewing_version`), going to its page; `null` closes it. Going to another page closes it too. |
+| `history.restoreVersion` |  | yes | `{"page"?: guid, "version"?: guid (default: the one open)}` | Makes the page what the version was; the page as it was becomes a version. |
+| `history.deleteVersion` |  | yes | `{"page"?: guid, "version"?: guid (default: the one open)}` | Deletes one version. |
+| `history.deleteAllVersions` |  | yes | `{"scope"?: "page"\|"section" (default)\|"notebook", "id"?: guid} -> {"deleted": number}` | Deletes every version in the page, section or notebook. |
+| `history.showVersions` |  | — | `{"value"?: bool (default: toggle)} -> {"value"}` | Page Versions / Hide Page Versions: whether the page list shows versions under their pages. |
+| `history.disableHistory` |  | yes | `{"notebook"?: guid, "value"?: bool (default: toggle)}` | Disable History for this Notebook: no versions are kept (stored as MS-ONE EnableHistory in the table of contents). Existing versions stay. |
+| `history.markRead` |  | — | `{"scope"?: "page" (default)\|"section"\|"notebook", "id"?: guid}` | Marks pages read. |
+| `history.markUnread` |  | — | `{"scope"?: "page" (default)\|"section"\|"notebook", "id"?: guid}` | Marks pages unread. |
+| `history.toggleRead` |  | — | `{"page"?: guid} -> {"unread": bool}` | Mark as Read / Unread for one page. |
+| `history.nextUnread` |  | — | `{} -> {"page"} \| null` | Goes to the next unread page after the current one (all open notebooks, wrapping round). |
+| `history.recentEdits` |  | — | `{"since"?: "today"\|"yesterday"\|"7d" (default)\|"14d"\|"30d"\|"6m"\|"all", "utcOffsetMinutes"?: number} -> [{"page", "title", "section", "sectionName", "notebook", "notebookName", "modified", "unread"}]` | Pages changed in the period, newest first (at most 500). "today" and "yesterday" follow the local day. |
+
 ## Session lifecycle (Rust API, not commands)
 
 For the apps; see the rustdoc of `notecraft_engine::io` for details.
@@ -223,5 +246,6 @@ For the apps; see the rustdoc of `notecraft_engine::io` for details.
 | Web saving | `io::MemoryStorage { format: MemoryFormat::Onepkg \| Json, on_write, .. }`; or keep the whole session in browser storage with `Session::to_blob()` / `Session::from_blob(bytes)` (JSON; unsaved state kept). |
 | Autosave | call `session.tick(now_secs)` every frame or timer (monotonic seconds): saves 2 s after the last change, at most 30 s after the first unsaved one; failures go to `notices` and retry after another delay. `session.save_dirty()` saves now (quit). |
 | Crash recovery (desktop) | at start: `session.enable_recovery(dir)`, then `session.recovery_candidates()` → `[RecoveryInfo {path, savedAt, notebooks}]`; offer `session.restore_recovery(&path)` (reopens them, unsaved changes marked) or `Session::discard_recovery(&path)`. `tick` keeps a snapshot of unsaved notebooks (worker thread, at most every 5 s) and removes it once saved. On a clean exit: `save_dirty()` then `end_recovery()`. |
+| Unread pages | `session.read_state` (`unread::ReadState`): load with `ReadState::from_json`, store `to_json()` in the app's settings. A notebook opened for the first time counts as read; `session.is_unread(page)` afterwards says whether a page changed since it was last seen. |
 | Recent notebooks | `session.recent` (`RecentNotebooks`): load with `RecentNotebooks::from_json`, store `to_json()` in the app's settings; updated by `notebook.open` and by the first save of a new notebook. |
 | Notices | `session.notices`: messages for the user, oldest first; the UI shows and drains them. |
