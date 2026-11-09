@@ -65,7 +65,7 @@ craft-print = { git = "https://github.com/storytold/craft-libs", rev = "92d392cf
 # WOFF / WOFF2 fonts added in the browser (MIT); its brotli decoder, used ahead of it so a
 # hostile file's glyph point counts are checked first (BSD-3-Clause OR MIT; already in the lock).
 wuff = "0.2.9"
-brotli-decompressor = "5"
+brotli-decompressor = "6"
 
 # ui (same versions and craft-libs revs as WordCraft)
 egui = "0.37"
