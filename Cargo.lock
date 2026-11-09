@@ -3172,7 +3172,7 @@ dependencies = [
  "craft-font-catalog",
  "epaint_default_fonts",
  "log",
- "skrifa 0.44.0",
+ "skrifa 0.47.0",
  "thiserror 2.0.21",
  "wuff",
 ]
@@ -3244,7 +3244,7 @@ dependencies = [
  "notecraft-fonts",
  "notecraft-formats",
  "notecraft-geom",
- "skrifa 0.44.0",
+ "skrifa 0.47.0",
  "thiserror 2.0.21",
 ]
 

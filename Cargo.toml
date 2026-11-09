@@ -51,7 +51,7 @@ craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f
 # breaks) without egui; skrifa (MIT OR Apache-2.0, epaint's version) maps characters to glyphs
 # for the PDF text; installed fonts come from craft-font-catalog at craft-ui's rev.
 epaint = { version = "0.37", default-features = false }
-skrifa = { version = "0.44", default-features = false, features = ["std"] }
+skrifa = { version = "0.47", default-features = false, features = ["std"] }
 # The shaper epaint lays text out with (MIT), at its version: the PDF writes the same glyphs
 # (ligatures, kerning, marks) the canvas draws.
 harfrust = "0.12"
