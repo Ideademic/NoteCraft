@@ -54,7 +54,7 @@ epaint = { version = "0.37", default-features = false }
 skrifa = { version = "0.44", default-features = false, features = ["std"] }
 # The shaper epaint lays text out with (MIT), at its version: the PDF writes the same glyphs
 # (ligatures, kerning, marks) the canvas draws.
-harfrust = "0.12"
+harfrust = "0.15"
 # Geometry types of craft-pdf's interpreter (tests that read exported PDFs back).
 kurbo = "0.13"
 craft-font-catalog = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }
